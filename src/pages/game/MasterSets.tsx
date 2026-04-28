@@ -125,6 +125,8 @@ export default function MasterSets() {
     setQuantity(1);
   };
 
+  const [ownedCardIds, setOwnedCardIds] = useState<Set<string>>(new Set());
+
   const saveCard = async () => {
     if (!picked || !game) return;
     const { data: userData } = await supabase.auth.getUser();
@@ -139,13 +141,16 @@ export default function MasterSets() {
     });
     if (error) return toast.error(error.message);
     toast.success(`Added ${picked.name} ×${quantity}`);
+    const savedId = picked.id;
+    const savedSetId = setIdForCard(game, picked);
     setPicked(null);
-    // refresh owned counts for the active set
-    if (activeSet) {
-      const id = setIdForCard(game, picked);
-      if (id) {
-        setOwnedBySet((prev) => new Map(prev).set(id, (prev.get(id) ?? 0) + 1));
-      }
+    setOwnedCardIds((prev) => {
+      const next = new Set(prev);
+      next.add(savedId);
+      return next;
+    });
+    if (savedSetId) {
+      setOwnedBySet((prev) => new Map(prev).set(savedSetId, (prev.get(savedSetId) ?? 0) + 1));
     }
   };
 
@@ -164,13 +169,19 @@ export default function MasterSets() {
           set={activeSet}
           onBack={() => setActiveSet(null)}
           onPickCard={openCard}
+          ownedCardIds={ownedCardIds}
+          setOwnedCardIds={setOwnedCardIds}
         />
       ) : (
         <>
           <div className="relative mb-6 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search by name or code (e.g. Azure Sea Seven, OP14, sv1)"
+              placeholder={
+                game === "onepiece"
+                  ? "Search by name or code (e.g. Azure Sea Seven, OP14, ST21)"
+                  : "Search by name or code (e.g. Crown Zenith, sv1, swsh12)"
+              }
               className="pl-9"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -326,14 +337,17 @@ function SetView({
   set,
   onBack,
   onPickCard,
+  ownedCardIds,
+  setOwnedCardIds,
 }: {
   game: Game;
   set: SetInfo;
   onBack: () => void;
   onPickCard: (c: CardRow) => void;
+  ownedCardIds: Set<string>;
+  setOwnedCardIds: React.Dispatch<React.SetStateAction<Set<string>>>;
 }) {
   const [cards, setCards] = useState<CardRow[]>([]);
-  const [ownedIds, setOwnedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -375,13 +389,13 @@ function SetView({
           .select("card_id")
           .eq("user_id", userData.user.id)
           .eq("game", game);
-        setOwnedIds(new Set((owned ?? []).map((r) => r.card_id)));
+        setOwnedCardIds(new Set((owned ?? []).map((r) => r.card_id)));
       }
       setLoading(false);
     })();
   }, [game, set.id]);
 
-  const ownedCount = cards.filter((c) => ownedIds.has(c.id)).length;
+  const ownedCount = cards.filter((c) => ownedCardIds.has(c.id)).length;
 
   return (
     <div>
@@ -412,7 +426,7 @@ function SetView({
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           {cards.map((c) => {
             const img = cardImage(c.game, c.code, c.image_small);
-            const owned = ownedIds.has(c.id);
+            const owned = ownedCardIds.has(c.id);
             return (
               <Card
                 key={c.id}
