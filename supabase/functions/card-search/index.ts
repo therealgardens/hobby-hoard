@@ -77,34 +77,49 @@ function mapOptcgCard(c: any) {
   };
 }
 
-// Fetch a full set from optcgapi. Tries booster sets, then starter decks.
+// Fetch a full set from optcgapi. Tries booster sets, then starter decks,
+// and also resolves dual-ids like "OP14" -> "OP14-EB04" via /api/allSets/.
 async function fetchOptcgSet(setId: string): Promise<any[]> {
-  // Convert "OP14" -> "OP-14", keep "OP-14" as-is, "ST24" -> "ST-24" etc.
-  const dashed = setId.match(/^([A-Z]+)-?(\d+)$/i);
+  const upper = setId.toUpperCase();
+  const dashed = upper.match(/^([A-Z]+)-?(\d+)$/);
   const candidates: string[] = [];
   if (dashed) {
-    candidates.push(`${dashed[1].toUpperCase()}-${dashed[2]}`);
-    candidates.push(`${dashed[1].toUpperCase()}${dashed[2]}`);
+    candidates.push(`${dashed[1]}-${dashed[2]}`); // OP-14
+    candidates.push(`${dashed[1]}${dashed[2]}`);  // OP14
   } else {
-    candidates.push(setId.toUpperCase());
+    candidates.push(upper);
   }
+
+  // Look up dual ids (e.g. "OP14-EB04") from /api/allSets/
+  try {
+    const res = await fetch("https://optcgapi.com/api/allSets/");
+    if (res.ok) {
+      const arr = await res.json();
+      const norm = upper.replace(/-/g, "");
+      for (const s of arr || []) {
+        const raw = String(s.set_id || "").toUpperCase();
+        if (!raw) continue;
+        const head = raw.split("-EB")[0].split("-OP")[0].replace(/-/g, "");
+        if (head === norm && !candidates.includes(raw)) candidates.push(raw);
+      }
+    }
+  } catch (_) {}
+
   const isStarter = /^ST/i.test(setId);
-  const endpoints = isStarter
-    ? candidates.flatMap((c) => [
-        `https://optcgapi.com/api/decks/${c}/`,
-        `https://optcgapi.com/api/sets/${c}/`,
-      ])
-    : candidates.flatMap((c) => [
-        `https://optcgapi.com/api/sets/${c}/`,
-        `https://optcgapi.com/api/decks/${c}/`,
-      ]);
-  for (const url of endpoints) {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) continue;
-      const json = await res.json();
-      if (Array.isArray(json) && json.length > 0) return json;
-    } catch (_) {}
+  const tryEndpoints = (c: string) =>
+    isStarter
+      ? [`https://optcgapi.com/api/decks/${c}/`, `https://optcgapi.com/api/sets/${c}/`]
+      : [`https://optcgapi.com/api/sets/${c}/`, `https://optcgapi.com/api/decks/${c}/`];
+
+  for (const c of candidates) {
+    for (const url of tryEndpoints(c)) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) continue;
+        const json = await res.json();
+        if (Array.isArray(json) && json.length > 0) return json;
+      } catch (_) {}
+    }
   }
   return [];
 }
