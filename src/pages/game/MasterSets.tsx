@@ -169,13 +169,19 @@ export default function MasterSets() {
           set={activeSet}
           onBack={() => setActiveSet(null)}
           onPickCard={openCard}
+          ownedCardIds={ownedCardIds}
+          setOwnedCardIds={setOwnedCardIds}
         />
       ) : (
         <>
           <div className="relative mb-6 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search by name or code (e.g. Azure Sea Seven, OP14, sv1)"
+              placeholder={
+                game === "onepiece"
+                  ? "Search by name or code (e.g. Azure Sea Seven, OP14, ST21)"
+                  : "Search by name or code (e.g. Crown Zenith, sv1, swsh12)"
+              }
               className="pl-9"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
