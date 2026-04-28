@@ -146,25 +146,42 @@ export default function Decks() {
       )}
 
       <Dialog open={!!active} onOpenChange={(o) => !o && setActive(null)}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>{active?.name}</DialogTitle></DialogHeader>
-          <div className="space-y-1">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
             {analysis.map(a => {
               const ok = a.have >= a.needed;
               return (
-                <div key={a.code} className="flex items-center gap-3 p-2 rounded-lg bg-muted/40">
-                  {ok ? <Check className="h-4 w-4 text-green-600" /> : <X className="h-4 w-4 text-destructive" />}
-                  <span className="font-mono text-sm">{a.code}</span>
-                  <span className="ml-auto text-sm">{a.have} / {a.needed}</span>
+                <div key={a.code} className="relative rounded-lg overflow-hidden bg-gradient-card shadow-soft">
+                  {a.imageSmall ? (
+                    <img src={a.imageSmall} alt={a.name ?? a.code} loading="lazy" className="w-full card-aspect object-cover" />
+                  ) : (
+                    <div className="w-full card-aspect bg-muted flex items-center justify-center text-xs text-muted-foreground p-2 text-center">
+                      {a.code}<br/>(no image)
+                    </div>
+                  )}
+                  <div className="absolute top-1 right-1 flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-background/90 shadow">
+                    {ok ? <Check className="h-3 w-3 text-green-600" /> : <X className="h-3 w-3 text-destructive" />}
+                    {a.have}/{a.needed}
+                  </div>
+                  <div className="p-2">
+                    <p className="text-xs font-semibold truncate">{a.name ?? a.code}</p>
+                    <p className="text-[10px] text-muted-foreground font-mono">{a.code}</p>
+                  </div>
                 </div>
               );
             })}
-            {analysis.some(a => a.have > 0 && a.have < a.needed) && (
-              <p className="text-xs text-muted-foreground pt-2">
-                💡 You already own some copies — make sure you didn't forget them when building.
-              </p>
-            )}
           </div>
+          {analysis.some(a => a.have > 0 && a.have < a.needed) && (
+            <p className="text-xs text-muted-foreground pt-2">
+              💡 You already own some copies — make sure you didn't forget them when building.
+            </p>
+          )}
+          {analysis.some(a => !a.cardId) && (
+            <p className="text-xs text-muted-foreground">
+              ℹ️ Cards without images aren't in the cache yet — search for them once in Master Sets to fetch them.
+            </p>
+          )}
         </DialogContent>
       </Dialog>
     </div>
