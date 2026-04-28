@@ -7,7 +7,7 @@ import { CardSearch } from "@/components/CardSearch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Trash2, LayoutGrid, List } from "lucide-react";
+import { ArrowLeft, Trash2, LayoutGrid, List, Plus, ChevronLeft, ChevronRight } from "lucide-react";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,7 @@ export default function BinderDetail() {
   const [pickingPos, setPickingPos] = useState<number | null>(null);
   const [isWanted, setIsWanted] = useState(false);
   const [view, setView] = useState<"grid" | "list">("grid");
+  const [pageIdx, setPageIdx] = useState(0);
 
   const load = async () => {
     if (!binderId) return;
@@ -41,8 +42,29 @@ export default function BinderDetail() {
 
   if (!binder) return <div className="text-muted-foreground">Loading…</div>;
 
-  const total = binder.cols * binder.rows;
+  const perPage = binder.cols * binder.rows;
+  const pages = Math.max(1, (binder as any).pages ?? 1);
+  const safePageIdx = Math.min(pageIdx, pages - 1);
+  const pageStart = safePageIdx * perPage;
   const slotMap = new Map(slots.map(s => [s.position, s]));
+
+  const addPage = async () => {
+    if (!binderId) return;
+    const { error } = await supabase.from("binders").update({ pages: pages + 1 } as any).eq("id", binderId);
+    if (error) return toast.error(error.message);
+    setPageIdx(pages); // jump to the newly added page
+    load();
+  };
+  const removePage = async () => {
+    if (!binderId || pages <= 1) return;
+    if (!confirm(`Remove page ${pages}? Cards on this page will be deleted.`)) return;
+    const start = (pages - 1) * perPage;
+    const end = pages * perPage - 1;
+    await supabase.from("binder_slots").delete().eq("binder_id", binderId).gte("position", start).lte("position", end);
+    await supabase.from("binders").update({ pages: pages - 1 } as any).eq("id", binderId);
+    setPageIdx(Math.max(0, safePageIdx - (safePageIdx === pages - 1 ? 1 : 0)));
+    load();
+  };
 
   const place = async (card: Tables<"cards">) => {
     if (pickingPos === null || !binderId) return;
@@ -79,23 +101,39 @@ export default function BinderDetail() {
       <div className="flex items-end justify-between mb-6 gap-4 flex-wrap">
         <div>
           <h2 className="text-4xl font-display mb-1">{binder.name}</h2>
-          <p className="text-muted-foreground">{binder.cols}×{binder.rows} · click any slot to add a card</p>
+          <p className="text-muted-foreground">{binder.cols}×{binder.rows} · {pages} page{pages > 1 ? "s" : ""} · click any slot to add a card</p>
         </div>
-        <ToggleGroup type="single" value={view} onValueChange={(v) => v && setView(v as any)}>
-          <ToggleGroupItem value="grid" aria-label="Grid view"><LayoutGrid className="h-4 w-4" /></ToggleGroupItem>
-          <ToggleGroupItem value="list" aria-label="List view"><List className="h-4 w-4" /></ToggleGroupItem>
-        </ToggleGroup>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 mr-2">
+            <Button variant="outline" size="icon" disabled={safePageIdx === 0} onClick={() => setPageIdx(i => Math.max(0, i - 1))}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <span className="text-sm tabular-nums w-16 text-center">Page {safePageIdx + 1}/{pages}</span>
+            <Button variant="outline" size="icon" disabled={safePageIdx >= pages - 1} onClick={() => setPageIdx(i => Math.min(pages - 1, i + 1))}>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+          <Button variant="outline" size="sm" onClick={addPage}><Plus className="h-4 w-4 mr-1" />Page</Button>
+          {pages > 1 && safePageIdx === pages - 1 && (
+            <Button variant="ghost" size="sm" onClick={removePage}><Trash2 className="h-4 w-4" /></Button>
+          )}
+          <ToggleGroup type="single" value={view} onValueChange={(v) => v && setView(v as any)}>
+            <ToggleGroupItem value="grid" aria-label="Grid view"><LayoutGrid className="h-4 w-4" /></ToggleGroupItem>
+            <ToggleGroupItem value="list" aria-label="List view"><List className="h-4 w-4" /></ToggleGroupItem>
+          </ToggleGroup>
+        </div>
       </div>
 
       {view === "grid" ? (
         <Card className="p-4 bg-gradient-card shadow-card max-w-3xl mx-auto">
           <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${binder.cols}, minmax(0, 1fr))` }}>
-            {Array.from({ length: total }).map((_, i) => {
-              const slot = slotMap.get(i);
+            {Array.from({ length: perPage }).map((_, i) => {
+              const pos = pageStart + i;
+              const slot = slotMap.get(pos);
               return (
                 <div
-                  key={i}
-                  onClick={() => !slot && setPickingPos(i)}
+                  key={pos}
+                  onClick={() => !slot && setPickingPos(pos)}
                   className={cn(
                     "card-aspect rounded-lg border-2 border-dashed border-border bg-[hsl(var(--binder-empty))] flex items-center justify-center text-muted-foreground text-xs relative overflow-hidden group",
                     !slot && "cursor-pointer hover:border-primary hover:bg-muted",
@@ -122,7 +160,7 @@ export default function BinderDetail() {
                       </button>
                     </>
                   ) : (
-                    <span>+ {i + 1}</span>
+                    <span>+ {pos + 1}</span>
                   ); })()}
                 </div>
               );
@@ -131,19 +169,20 @@ export default function BinderDetail() {
         </Card>
       ) : (
         <Card className="bg-gradient-card shadow-card divide-y divide-border">
-          {Array.from({ length: total }).map((_, i) => {
-            const slot = slotMap.get(i);
+          {Array.from({ length: perPage }).map((_, i) => {
+            const pos = pageStart + i;
+            const slot = slotMap.get(pos);
             const img = cardImage(slot?.card?.game, slot?.card?.code, slot?.card?.image_small);
             return (
               <div
-                key={i}
-                onClick={() => !slot && setPickingPos(i)}
+                key={pos}
+                onClick={() => !slot && setPickingPos(pos)}
                 className={cn(
                   "flex items-center gap-3 p-2 px-4",
                   !slot && "cursor-pointer hover:bg-muted",
                 )}
               >
-                <span className="text-xs text-muted-foreground w-8 tabular-nums">#{i + 1}</span>
+                <span className="text-xs text-muted-foreground w-10 tabular-nums">#{pos + 1}</span>
                 <div className="w-10 h-14 rounded-md overflow-hidden bg-[hsl(var(--binder-empty))] flex items-center justify-center shrink-0">
                   {img ? (
                     <img
