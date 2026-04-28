@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
-import { cardImage, type Game } from "@/lib/game";
+import { cardImage, proxiedImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 
 type CardRow = Tables<"cards">;
