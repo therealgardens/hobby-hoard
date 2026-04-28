@@ -154,9 +154,11 @@ async function searchOnePiece(query: string, setId?: string) {
           }));
         }
       }
-    } catch (_) {}
+    } catch (e) { console.error("apitcg setId error", e); }
     // Fallback: optcgapi
+    console.log("apitcg empty for setId", setId, "- trying optcgapi");
     const arr = await fetchOptcgSet(setId);
+    console.log("optcgapi returned", arr.length, "cards for", setId);
     return arr.map(mapOptcgCard);
   }
 
