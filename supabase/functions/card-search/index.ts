@@ -124,61 +124,8 @@ async function fetchOptcgSet(setId: string): Promise<any[]> {
   return [];
 }
 
-async function searchOnePiece(query: string, setId?: string) {
-  // Set browse: try apitcg first (rich data + alternates), fall back to optcgapi
-  // (which covers newer/missing sets that apitcg doesn't have yet).
-  if (setId) {
-    const code = setId.toUpperCase().replace(/-/g, "");
-    const url = `https://www.apitcg.com/api/one-piece/cards?code=${code}&limit=250`;
-    try {
-      const res = await fetch(url, {
-        headers: { "x-api-key": Deno.env.get("APITCG_API_KEY") ?? "" },
-      });
-      if (res.ok) {
-        const json = await res.json();
-        const list = json.data || [];
-        if (list.length > 0) {
-          return list.map((c: any) => ({
-            game: "onepiece" as const,
-            external_id: c.id ?? c.code,
-            code: c.code ?? c.id,
-            name: c.name,
-            set_id: c.set?.id ?? c.set_id ?? null,
-            set_name: c.set?.name ?? null,
-            number: c.number ?? null,
-            rarity: c.rarity ?? null,
-            image_small: c.images?.small ?? c.image ?? null,
-            image_large: c.images?.large ?? c.image ?? null,
-            pokedex_number: null,
-            data: c,
-          }));
-        }
-      }
-    } catch (e) { console.error("apitcg setId error", e); }
-    // Fallback: optcgapi
-    console.log("apitcg empty for setId", setId, "- trying optcgapi");
-    const arr = await fetchOptcgSet(setId);
-    console.log("optcgapi returned", arr.length, "cards for", setId);
-    return arr.map(mapOptcgCard);
-  }
-
-  // Free-text search via apitcg
-  const params = new URLSearchParams();
-  if (query) {
-    if (/^[a-z]{2,3}\d{2,3}-\d+/i.test(query.trim())) {
-      params.set("code", query.trim().toUpperCase());
-    } else {
-      params.set("name", query.trim());
-    }
-  }
-  const url = `https://www.apitcg.com/api/one-piece/cards?${params.toString()}`;
-  const res = await fetch(url, {
-    headers: { "x-api-key": Deno.env.get("APITCG_API_KEY") ?? "" },
-  });
-  if (!res.ok) return [];
-  const json = await res.json();
-  const list = json.data || [];
-  return list.map((c: any) => ({
+function mapApitcgCard(c: any) {
+  return {
     game: "onepiece" as const,
     external_id: c.id ?? c.code,
     code: c.code ?? c.id,
@@ -191,7 +138,99 @@ async function searchOnePiece(query: string, setId?: string) {
     image_large: c.images?.large ?? c.image ?? null,
     pokedex_number: null,
     data: c,
-  }));
+  };
+}
+
+// Fetch ALL variants of a card from optcgapi by base code (e.g. "OP01-001"
+// returns the regular printing plus alt arts like "OP01-001_p1").
+async function fetchOptcgCardVariants(baseCode: string): Promise<any[]> {
+  try {
+    const res = await fetch(`https://optcgapi.com/api/cards/${baseCode}/`);
+    if (!res.ok) return [];
+    const json = await res.json();
+    return Array.isArray(json) ? json : [json];
+  } catch {
+    return [];
+  }
+}
+
+// Free-text search on optcgapi by name (scans allCards endpoint).
+async function searchOptcgByName(query: string): Promise<any[]> {
+  try {
+    const res = await fetch(`https://optcgapi.com/api/allCards/`);
+    if (!res.ok) return [];
+    const json = await res.json();
+    const q = query.toLowerCase();
+    return (json || []).filter((c: any) =>
+      String(c.card_name ?? c.name ?? "").toLowerCase().includes(q),
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function searchOnePiece(query: string, setId?: string) {
+  // Set browse: merge results from BOTH apitcg AND optcgapi to capture every
+  // card + every alternate art across both sources.
+  if (setId) {
+    const code = setId.toUpperCase().replace(/-/g, "");
+    const merged: any[] = [];
+
+    // apitcg (rich metadata + some alternates)
+    try {
+      const url = `https://www.apitcg.com/api/one-piece/cards?code=${code}&limit=250`;
+      const res = await fetch(url, {
+        headers: { "x-api-key": Deno.env.get("APITCG_API_KEY") ?? "" },
+      });
+      if (res.ok) {
+        const json = await res.json();
+        for (const c of json.data || []) merged.push(mapApitcgCard(c));
+      }
+    } catch (e) { console.error("apitcg setId error", e); }
+
+    // optcgapi (full set coverage including newer sets and many variants)
+    try {
+      const arr = await fetchOptcgSet(setId);
+      console.log("optcgapi returned", arr.length, "cards for", setId);
+      for (const c of arr) merged.push(mapOptcgCard(c));
+    } catch (e) { console.error("optcgapi setId error", e); }
+
+    return merged;
+  }
+
+  // Free-text search: hit both APIs and merge.
+  const merged: any[] = [];
+  const q = query.trim();
+  const isCode = /^[a-z]{2,4}\d{2,3}-\d+/i.test(q);
+
+  // apitcg
+  try {
+    const params = new URLSearchParams();
+    if (isCode) params.set("code", q.toUpperCase());
+    else params.set("name", q);
+    const url = `https://www.apitcg.com/api/one-piece/cards?${params.toString()}&limit=100`;
+    const res = await fetch(url, {
+      headers: { "x-api-key": Deno.env.get("APITCG_API_KEY") ?? "" },
+    });
+    if (res.ok) {
+      const json = await res.json();
+      for (const c of json.data || []) merged.push(mapApitcgCard(c));
+    }
+  } catch (e) { console.error("apitcg search error", e); }
+
+  // optcgapi — by code (returns all variants) or by name scan
+  try {
+    if (isCode) {
+      const base = q.toUpperCase().replace(/_.*$/, "");
+      const arr = await fetchOptcgCardVariants(base);
+      for (const c of arr) merged.push(mapOptcgCard(c));
+    } else {
+      const arr = await searchOptcgByName(q);
+      for (const c of arr) merged.push(mapOptcgCard(c));
+    }
+  } catch (e) { console.error("optcgapi search error", e); }
+
+  return merged;
 }
 
 Deno.serve(async (req) => {
