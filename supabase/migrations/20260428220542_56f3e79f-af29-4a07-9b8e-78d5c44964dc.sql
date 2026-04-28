@@ -1,0 +1,1 @@
+ALTER TABLE public.binders ADD COLUMN IF NOT EXISTS pages integer NOT NULL DEFAULT 1;

@@ -63,6 +63,7 @@ export type Database = {
           game: string
           id: string
           name: string
+          pages: number
           rows: number
           user_id: string
         }
@@ -72,6 +73,7 @@ export type Database = {
           game: string
           id?: string
           name: string
+          pages?: number
           rows?: number
           user_id: string
         }
@@ -81,6 +83,7 @@ export type Database = {
           game?: string
           id?: string
           name?: string
+          pages?: number
           rows?: number
           user_id?: string
         }
