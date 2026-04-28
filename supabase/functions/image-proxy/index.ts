@@ -9,6 +9,8 @@ const corsHeaders = {
 const ALLOWED_HOSTS = new Set([
   "en.onepiece-cardgame.com",
   "asia-en.onepiece-cardgame.com",
+  "optcgapi.com",
+  "www.apitcg.com",
   "images.pokemontcg.io",
   "assets.pokemon.com",
 ]);
