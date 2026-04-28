@@ -216,16 +216,22 @@ Deno.serve(async (req) => {
         ? await searchPokemon(query, body.setId)
         : await searchOnePiece(query, body.setId);
 
-    if (results.length) {
+    // Dedupe by external_id to avoid "ON CONFLICT cannot affect row a second time".
+    const seen = new Set<string>();
+    const deduped = results.filter((r) => {
+      if (!r.external_id || seen.has(r.external_id)) return false;
+      seen.add(r.external_id);
+      return true;
+    });
+
+    if (deduped.length) {
       const { error } = await admin
         .from("cards")
-        .upsert(results, { onConflict: "game,external_id" });
+        .upsert(deduped, { onConflict: "game,external_id" });
       if (error) console.error("upsert error", error);
     }
 
-    // Return rows from cache (with proper UUIDs). Guard against empty `ids`,
-    // which would otherwise cause `.in()` to behave unexpectedly.
-    const ids = results.map((r) => r.external_id).filter(Boolean);
+    const ids = deduped.map((r) => r.external_id);
     let cached: any[] = [];
     if (ids.length > 0) {
       const { data } = await admin
@@ -234,17 +240,22 @@ Deno.serve(async (req) => {
         .eq("game", body.game)
         .in("external_id", ids);
       cached = data ?? [];
+      // If DB lookup returned nothing (e.g. upsert failed), return the
+      // fetched results directly with synthesized ids so the UI still works.
+      if (cached.length === 0) {
+        cached = deduped.map((r) => ({
+          ...r,
+          id: r.external_id,
+          created_at: new Date().toISOString(),
+        }));
+      }
     } else if (body.setId && body.game === "onepiece") {
-      // No fresh results — fall back to anything we already have cached for this set.
       const id = body.setId.toUpperCase().replace(/-/g, "");
-      const dashed = id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
       const { data } = await admin
         .from("cards")
         .select("*")
         .eq("game", body.game)
-        .or(
-          `set_name.ilike.%[${id}]%,set_name.ilike.%[${dashed}]%,code.ilike.${id}-%`,
-        )
+        .ilike("code", `${id}-%`)
         .limit(500);
       cached = data ?? [];
     }
