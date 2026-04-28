@@ -16,21 +16,31 @@ type Deck = Tables<"decks">;
 // 4 OP01-001
 // OP01-001 x4
 // 4xOP01-001
+// 1 Lucy (OP15-002)
+// 4 Viola (OP15-040)
+// Section headers ("Leader", "Character (26)", "Event (24)") are ignored.
+const CODE_RE = /([A-Z]{2,3}\d{2,3}[A-Z]?-\d{2,4})/i;
 function parseDeckList(raw: string): { code: string; copies: number }[] {
   const out: { code: string; copies: number }[] = [];
   for (const line of raw.split("\n")) {
     const t = line.trim();
     if (!t) continue;
-    const m =
-      t.match(/^(\d+)\s*[xX]?\s*([A-Z]{2,3}\d{2,3}-\d{2,4})/i) ||
-      t.match(/^([A-Z]{2,3}\d{2,3}-\d{2,4})\s*[xX]?\s*(\d+)/i);
-    if (m) {
-      const isFirstNum = /^\d/.test(m[1]);
-      out.push({
-        code: (isFirstNum ? m[2] : m[1]).toUpperCase(),
-        copies: parseInt(isFirstNum ? m[1] : m[2], 10),
-      });
-    }
+    const codeMatch = t.match(CODE_RE);
+    if (!codeMatch) continue; // skip section headers / blank lines
+    const code = codeMatch[1].toUpperCase();
+    // Try several count patterns, in priority order:
+    // 1) "<n> ... <code>"  (e.g. "4 Viola (OP15-040)" or "4 OP15-040")
+    // 2) "<code> x<n>" or "<code> <n>"
+    // 3) "<n>x<code>"
+    let copies = 1;
+    const before = t.slice(0, codeMatch.index ?? 0);
+    const after = t.slice((codeMatch.index ?? 0) + codeMatch[1].length);
+    const mBefore = before.match(/(\d+)\s*[xX]?\s*$/) || before.match(/^\s*(\d+)\b/);
+    const mAfter = after.match(/^\s*[xX]?\s*(\d+)/);
+    if (mBefore) copies = parseInt(mBefore[1], 10);
+    else if (mAfter) copies = parseInt(mAfter[1], 10);
+    if (!copies || copies < 1) copies = 1;
+    out.push({ code, copies });
   }
   return out;
 }
