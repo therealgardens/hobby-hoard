@@ -51,7 +51,7 @@ export default function Decks() {
   const [name, setName] = useState("");
   const [raw, setRaw] = useState("");
   const [active, setActive] = useState<Deck | null>(null);
-  const [analysis, setAnalysis] = useState<{ code: string; needed: number; have: number; cardId?: string }[]>([]);
+  const [analysis, setAnalysis] = useState<{ code: string; needed: number; have: number; cardId?: string; name?: string; imageSmall?: string }[]>([]);
 
   const load = async () => {
     const { data } = await supabase.from("decks").select("*").order("created_at");
