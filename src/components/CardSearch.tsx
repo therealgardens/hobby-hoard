@@ -61,10 +61,12 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
       </form>
       {results.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          {results.map((c) => (
+          {results.map((c) => {
+            const img = cardImage(c.game, c.code, c.image_small);
+            return (
             <Card key={c.id} className="overflow-hidden bg-gradient-card shadow-soft hover:shadow-card transition-shadow">
-              {c.image_small ? (
-                <img src={c.image_small} alt={c.name} loading="lazy" className="w-full card-aspect object-cover" />
+              {img ? (
+                <img src={img} alt={c.name} loading="lazy" className="w-full card-aspect object-cover" onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")} />
               ) : (
                 <div className="w-full card-aspect bg-muted flex items-center justify-center text-muted-foreground text-xs">
                   No image
