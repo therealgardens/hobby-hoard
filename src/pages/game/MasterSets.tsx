@@ -437,6 +437,33 @@ function SetThumb({ s }: { s: SetInfo }) {
   );
 }
 
+function CardImg({ card, className, alt }: { card: CardRow; className: string; alt: string }) {
+  const candidates = useMemo(
+    () => cardImageCandidates(card.game, card.code, card.image_small ?? card.image_large),
+    [card.game, card.code, card.image_small, card.image_large],
+  );
+  const [idx, setIdx] = useState(0);
+  const src = candidates[idx];
+
+  if (!src) {
+    return (
+      <div className="w-full card-aspect bg-muted flex items-center justify-center text-muted-foreground text-xs">
+        No image
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      className={className}
+      onError={() => setIdx((i) => i + 1)}
+    />
+  );
+}
+
 function SetGrid({
   sets,
   ownedBySet,
