@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ArrowLeft, Plus, Search, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { cardImage, proxiedImage, type Game } from "@/lib/game";
+import { cardImageCandidates, proxiedImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 
 type CardRow = Tables<"cards">;
@@ -340,15 +340,7 @@ export default function MasterSets() {
           {picked && (
             <div className="grid grid-cols-[120px_1fr] gap-4">
               {(() => {
-                const img = cardImage(picked.game, picked.code, picked.image_small);
-                return img && (
-                  <img
-                    src={img}
-                    alt=""
-                    className="rounded-lg w-full"
-                    onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                  />
-                );
+                return <CardImg card={picked} className="rounded-lg w-full" alt="" />;
               })()}
               <div className="space-y-3">
                 <div>
@@ -590,7 +582,6 @@ function SetView({
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           {cards.map((c) => {
-            const img = cardImage(c.game, c.code, c.image_small);
             const owned = ownedCardIds.has(c.id);
             const wanted = wantedCardIds.has(c.id);
             const lang = ownedLangByCard.get(c.id);
@@ -624,19 +615,11 @@ function SetView({
                     <Plus className="h-4 w-4" />
                   </Button>
                 )}
-                {img ? (
-                  <img
-                    src={img}
-                    alt={c.name}
-                    loading="lazy"
-                    className={`w-full card-aspect object-cover transition-all ${owned ? "" : "opacity-60 grayscale"}`}
-                    onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                  />
-                ) : (
-                  <div className="w-full card-aspect bg-muted flex items-center justify-center text-muted-foreground text-xs">
-                    No image
-                  </div>
-                )}
+                <CardImg
+                  card={c}
+                  alt={c.name}
+                  className={`w-full card-aspect object-cover transition-all ${owned ? "" : "opacity-60 grayscale"}`}
+                />
                 <div className="p-2">
                   <p className="text-sm font-semibold truncate">{c.name}</p>
                   <p className="text-xs text-muted-foreground truncate">
