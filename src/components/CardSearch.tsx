@@ -84,7 +84,8 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
                 )}
               </div>
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
