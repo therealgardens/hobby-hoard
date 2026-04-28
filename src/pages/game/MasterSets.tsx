@@ -389,7 +389,7 @@ function SetView({
           .select("card_id")
           .eq("user_id", userData.user.id)
           .eq("game", game);
-        setOwnedIds(new Set((owned ?? []).map((r) => r.card_id)));
+        setOwnedCardIds(new Set((owned ?? []).map((r) => r.card_id)));
       }
       setLoading(false);
     })();
