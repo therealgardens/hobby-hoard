@@ -127,12 +127,13 @@ export default function BinderDetail() {
       {view === "grid" ? (
         <Card className="p-4 bg-gradient-card shadow-card max-w-3xl mx-auto">
           <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${binder.cols}, minmax(0, 1fr))` }}>
-            {Array.from({ length: total }).map((_, i) => {
-              const slot = slotMap.get(i);
+            {Array.from({ length: perPage }).map((_, i) => {
+              const pos = pageStart + i;
+              const slot = slotMap.get(pos);
               return (
                 <div
-                  key={i}
-                  onClick={() => !slot && setPickingPos(i)}
+                  key={pos}
+                  onClick={() => !slot && setPickingPos(pos)}
                   className={cn(
                     "card-aspect rounded-lg border-2 border-dashed border-border bg-[hsl(var(--binder-empty))] flex items-center justify-center text-muted-foreground text-xs relative overflow-hidden group",
                     !slot && "cursor-pointer hover:border-primary hover:bg-muted",
@@ -159,7 +160,7 @@ export default function BinderDetail() {
                       </button>
                     </>
                   ) : (
-                    <span>+ {i + 1}</span>
+                    <span>+ {pos + 1}</span>
                   ); })()}
                 </div>
               );
@@ -168,19 +169,20 @@ export default function BinderDetail() {
         </Card>
       ) : (
         <Card className="bg-gradient-card shadow-card divide-y divide-border">
-          {Array.from({ length: total }).map((_, i) => {
-            const slot = slotMap.get(i);
+          {Array.from({ length: perPage }).map((_, i) => {
+            const pos = pageStart + i;
+            const slot = slotMap.get(pos);
             const img = cardImage(slot?.card?.game, slot?.card?.code, slot?.card?.image_small);
             return (
               <div
-                key={i}
-                onClick={() => !slot && setPickingPos(i)}
+                key={pos}
+                onClick={() => !slot && setPickingPos(pos)}
                 className={cn(
                   "flex items-center gap-3 p-2 px-4",
                   !slot && "cursor-pointer hover:bg-muted",
                 )}
               >
-                <span className="text-xs text-muted-foreground w-8 tabular-nums">#{i + 1}</span>
+                <span className="text-xs text-muted-foreground w-10 tabular-nums">#{pos + 1}</span>
                 <div className="w-10 h-14 rounded-md overflow-hidden bg-[hsl(var(--binder-empty))] flex items-center justify-center shrink-0">
                   {img ? (
                     <img
