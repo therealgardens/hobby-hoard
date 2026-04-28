@@ -335,6 +335,7 @@ function SetView({
 
       // Also pull whatever is already cached locally for this set, so we still
       // show something if the live API returned nothing.
+      const dashed = set.id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
       const { data: local } = await supabase
         .from("cards")
         .select("*")
@@ -342,7 +343,7 @@ function SetView({
         .or(
           game === "pokemon"
             ? `set_id.eq.${set.id}`
-            : `set_name.ilike.%[${set.id}]%,code.ilike.${set.id}-%`,
+            : `set_name.ilike.%[${set.id}]%,set_name.ilike.%[${dashed}]%,code.ilike.${set.id}-%`,
         )
         .limit(500);
 
