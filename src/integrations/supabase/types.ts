@@ -14,7 +14,331 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      binder_slots: {
+        Row: {
+          binder_id: string
+          card_id: string | null
+          id: string
+          is_wanted: boolean
+          position: number
+          user_id: string
+        }
+        Insert: {
+          binder_id: string
+          card_id?: string | null
+          id?: string
+          is_wanted?: boolean
+          position: number
+          user_id: string
+        }
+        Update: {
+          binder_id?: string
+          card_id?: string | null
+          id?: string
+          is_wanted?: boolean
+          position?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "binder_slots_binder_id_fkey"
+            columns: ["binder_id"]
+            isOneToOne: false
+            referencedRelation: "binders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "binder_slots_card_id_fkey"
+            columns: ["card_id"]
+            isOneToOne: false
+            referencedRelation: "cards"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      binders: {
+        Row: {
+          cols: number
+          created_at: string
+          game: string
+          id: string
+          name: string
+          rows: number
+          user_id: string
+        }
+        Insert: {
+          cols?: number
+          created_at?: string
+          game: string
+          id?: string
+          name: string
+          rows?: number
+          user_id: string
+        }
+        Update: {
+          cols?: number
+          created_at?: string
+          game?: string
+          id?: string
+          name?: string
+          rows?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
+      cards: {
+        Row: {
+          code: string | null
+          created_at: string
+          data: Json | null
+          external_id: string
+          game: string
+          id: string
+          image_large: string | null
+          image_small: string | null
+          name: string
+          number: string | null
+          pokedex_number: number | null
+          rarity: string | null
+          set_id: string | null
+          set_name: string | null
+        }
+        Insert: {
+          code?: string | null
+          created_at?: string
+          data?: Json | null
+          external_id: string
+          game: string
+          id?: string
+          image_large?: string | null
+          image_small?: string | null
+          name: string
+          number?: string | null
+          pokedex_number?: number | null
+          rarity?: string | null
+          set_id?: string | null
+          set_name?: string | null
+        }
+        Update: {
+          code?: string | null
+          created_at?: string
+          data?: Json | null
+          external_id?: string
+          game?: string
+          id?: string
+          image_large?: string | null
+          image_small?: string | null
+          name?: string
+          number?: string | null
+          pokedex_number?: number | null
+          rarity?: string | null
+          set_id?: string | null
+          set_name?: string | null
+        }
+        Relationships: []
+      }
+      collection_entries: {
+        Row: {
+          card_id: string
+          created_at: string
+          game: string
+          id: string
+          language: string
+          notes: string | null
+          quantity: number
+          rarity: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          card_id: string
+          created_at?: string
+          game: string
+          id?: string
+          language?: string
+          notes?: string | null
+          quantity?: number
+          rarity?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          card_id?: string
+          created_at?: string
+          game?: string
+          id?: string
+          language?: string
+          notes?: string | null
+          quantity?: number
+          rarity?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "collection_entries_card_id_fkey"
+            columns: ["card_id"]
+            isOneToOne: false
+            referencedRelation: "cards"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      deck_cards: {
+        Row: {
+          code: string
+          copies: number
+          deck_id: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          code: string
+          copies?: number
+          deck_id: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          code?: string
+          copies?: number
+          deck_id?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "deck_cards_deck_id_fkey"
+            columns: ["deck_id"]
+            isOneToOne: false
+            referencedRelation: "decks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      decks: {
+        Row: {
+          created_at: string
+          game: string
+          id: string
+          name: string
+          raw_list: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          game?: string
+          id?: string
+          name: string
+          raw_list?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          game?: string
+          id?: string
+          name?: string
+          raw_list?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      pokedex_entries: {
+        Row: {
+          created_at: string
+          id: string
+          notes: string | null
+          pokedex_number: number
+          registered: boolean
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          notes?: string | null
+          pokedex_number: number
+          registered?: boolean
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          notes?: string | null
+          pokedex_number?: number
+          registered?: boolean
+          user_id?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          display_name: string | null
+          id: string
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string | null
+          id: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+        }
+        Relationships: []
+      }
+      wanted_cards: {
+        Row: {
+          binder_id: string | null
+          card_id: string
+          created_at: string
+          game: string
+          id: string
+          language: string | null
+          quantity: number
+          rarity: string | null
+          user_id: string
+        }
+        Insert: {
+          binder_id?: string | null
+          card_id: string
+          created_at?: string
+          game: string
+          id?: string
+          language?: string | null
+          quantity?: number
+          rarity?: string | null
+          user_id: string
+        }
+        Update: {
+          binder_id?: string | null
+          card_id?: string
+          created_at?: string
+          game?: string
+          id?: string
+          language?: string | null
+          quantity?: number
+          rarity?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wanted_cards_binder_id_fkey"
+            columns: ["binder_id"]
+            isOneToOne: false
+            referencedRelation: "binders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "wanted_cards_card_id_fkey"
+            columns: ["card_id"]
+            isOneToOne: false
+            referencedRelation: "cards"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
