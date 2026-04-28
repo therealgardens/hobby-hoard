@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { ArrowLeft, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import type { Game } from "@/lib/game";
+import { cardImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 
 type Binder = Tables<"binders">;
