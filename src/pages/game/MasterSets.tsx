@@ -408,9 +408,26 @@ function SetGridSkeleton() {
 }
 
 function SetThumb({ s }: { s: SetInfo }) {
-  const [failed, setFailed] = useState(false);
-  const src = proxiedImage(s.logo);
-  if (!src || failed) {
+  // Build a cascade of candidate URLs; advance to next on error.
+  const candidates = useMemo(() => {
+    const list: string[] = [];
+    if (s.logo) list.push(s.logo);
+    // Common One Piece card-image patterns to use as a thumbnail.
+    const id = s.id.toUpperCase();
+    list.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${id}-001.png`);
+    list.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${id}-001_p1.png`);
+    list.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${id}-002.png`);
+    list.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${id}-003.png`);
+    // apitcg logo as a final shot
+    list.push(`https://www.apitcg.com/images/sets/one-piece/${id}-logo.png`);
+    return Array.from(new Set(list));
+  }, [s.id, s.logo]);
+
+  const [idx, setIdx] = useState(0);
+  const url = candidates[idx];
+  const src = url ? proxiedImage(url) : null;
+
+  if (!src) {
     return (
       <div className="h-14 w-14 rounded bg-muted flex items-center justify-center text-xs font-mono shrink-0">
         {s.id}
@@ -423,7 +440,7 @@ function SetThumb({ s }: { s: SetInfo }) {
       alt=""
       className="h-14 w-14 object-contain rounded bg-background/40 p-1 shrink-0"
       loading="lazy"
-      onError={() => setFailed(true)}
+      onError={() => setIdx((i) => i + 1)}
     />
   );
 }
