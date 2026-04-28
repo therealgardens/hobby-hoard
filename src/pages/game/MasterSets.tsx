@@ -395,7 +395,7 @@ function SetView({
     })();
   }, [game, set.id]);
 
-  const ownedCount = cards.filter((c) => ownedIds.has(c.id)).length;
+  const ownedCount = cards.filter((c) => ownedCardIds.has(c.id)).length;
 
   return (
     <div>
