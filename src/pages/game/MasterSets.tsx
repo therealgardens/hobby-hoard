@@ -426,7 +426,7 @@ function SetView({
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           {cards.map((c) => {
             const img = cardImage(c.game, c.code, c.image_small);
-            const owned = ownedIds.has(c.id);
+            const owned = ownedCardIds.has(c.id);
             return (
               <Card
                 key={c.id}
