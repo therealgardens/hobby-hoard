@@ -119,7 +119,7 @@ export default function Decks() {
                   rows={10}
                   value={raw}
                   onChange={e => setRaw(e.target.value)}
-                  placeholder={"4 OP01-001\n4 OP01-013\n2 OP02-118"}
+                  placeholder={"Leader\n1 Lucy (OP15-002)\n\nCharacter (26)\n4 Viola (OP15-040)\n4 Leo (OP15-052)"}
                 />
               </div>
               <Button className="w-full" onClick={create}>Import</Button>
