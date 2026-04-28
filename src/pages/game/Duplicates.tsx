@@ -31,15 +31,18 @@ export default function Duplicates() {
         <Card className="p-12 text-center bg-gradient-card text-muted-foreground">No duplicates yet.</Card>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          {dupes.map(d => (
+          {dupes.map(d => {
+            const img = cardImage(d.card?.game, d.card?.code, d.card?.image_small);
+            return (
             <Card key={d.id} className="overflow-hidden bg-gradient-card">
-              {d.card?.image_small && <img src={d.card.image_small} alt={d.card.name} className="w-full card-aspect object-cover" />}
+              {img && <img src={img} alt={d.card?.name} className="w-full card-aspect object-cover" onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")} />}
               <div className="p-2">
                 <p className="text-sm font-semibold truncate">{d.card?.name}</p>
                 <p className="text-xs text-muted-foreground">×{d.quantity - 1} extra · {d.language}</p>
               </div>
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
