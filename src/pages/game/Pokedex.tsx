@@ -4,21 +4,32 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
 const TOTAL = 1025;
 
+const GENERATIONS: { label: string; from: number; to: number }[] = [
+  { label: "Gen 1", from: 1, to: 151 },
+  { label: "Gen 2", from: 152, to: 251 },
+  { label: "Gen 3", from: 252, to: 386 },
+  { label: "Gen 4", from: 387, to: 493 },
+  { label: "Gen 5", from: 494, to: 649 },
+  { label: "Gen 6", from: 650, to: 721 },
+  { label: "Gen 7", from: 722, to: 809 },
+  { label: "Gen 8", from: 810, to: 905 },
+  { label: "Gen 9", from: 906, to: 1025 },
+];
+
 const sprite = (n: number) =>
   `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${n}.png`;
-
-const titleCase = (s: string) =>
-  s.split("-").map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
 
 export default function Pokedex() {
   const [registered, setRegistered] = useState<Set<number>>(new Set());
   const [auto, setAuto] = useState<Set<number>>(new Set());
   const [filter, setFilter] = useState("");
   const [names, setNames] = useState<string[]>([]);
+  const [gen, setGen] = useState<number | null>(null); // index into GENERATIONS, or null = all
 
   const load = async () => {
     const { data: u } = await supabase.auth.getUser();
@@ -45,7 +56,6 @@ export default function Pokedex() {
     load();
   }, []);
 
-  // Load species names once (cached in localStorage).
   useEffect(() => {
     const cached = localStorage.getItem("pokedex.names.v1");
     if (cached) {
@@ -93,6 +103,10 @@ export default function Pokedex() {
   const all = useMemo(() => Array.from({ length: TOTAL }, (_, i) => i + 1), []);
 
   const matches = (n: number) => {
+    if (gen !== null) {
+      const g = GENERATIONS[gen];
+      if (n < g.from || n > g.to) return false;
+    }
     if (!filter) return true;
     const q = filter.toLowerCase().trim();
     if (String(n).padStart(4, "0").includes(q)) return true;
@@ -117,8 +131,28 @@ export default function Pokedex() {
         placeholder="Search name or number…"
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
-        className="mb-4 max-w-xs"
+        className="mb-3 max-w-xs"
       />
+
+      <div className="sticky top-0 z-10 bg-background/90 backdrop-blur py-2 mb-3 flex flex-wrap gap-1.5">
+        <Button
+          size="sm"
+          variant={gen === null ? "default" : "outline"}
+          onClick={() => setGen(null)}
+        >
+          All
+        </Button>
+        {GENERATIONS.map((g, i) => (
+          <Button
+            key={g.label}
+            size="sm"
+            variant={gen === i ? "default" : "outline"}
+            onClick={() => setGen(i)}
+          >
+            {g.label}
+          </Button>
+        ))}
+      </div>
 
       <Tabs defaultValue="manual">
         <TabsList>
