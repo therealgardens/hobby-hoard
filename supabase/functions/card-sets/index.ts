@@ -133,6 +133,13 @@ async function onePieceSets(): Promise<SetOut[]> {
     }
   }
 
+  // For sets without a logo, use the leader card image as a representative thumbnail.
+  for (const s of map.values()) {
+    if (!s.logo) {
+      s.logo = `https://en.onepiece-cardgame.com/images/cardlist/card/${s.id}-001.png`;
+    }
+  }
+
   // Sort by id (newest OP## first if numeric, ST after, etc.)
   return Array.from(map.values()).sort((a, b) => b.id.localeCompare(a.id));
 }
