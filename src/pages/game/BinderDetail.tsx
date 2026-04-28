@@ -112,7 +112,7 @@ export default function BinderDetail() {
                   </>
                 ) : (
                   <span>+ {i + 1}</span>
-                )}
+                ); })()}
               </div>
             );
           })}
