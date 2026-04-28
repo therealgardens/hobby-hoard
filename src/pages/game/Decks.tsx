@@ -78,12 +78,24 @@ export default function Decks() {
 
   const analyze = async (deck: Deck) => {
     setActive(deck);
+    setAnalysis([]);
     const { data: dcards } = await supabase.from("deck_cards").select("*").eq("deck_id", deck.id);
     if (!dcards) return;
     const codes = dcards.map(d => d.code);
-    const { data: cards } = await supabase.from("cards").select("*").eq("game", "onepiece").in("code", codes);
-    const cardByCode = new Map((cards ?? []).map(c => [c.code, c]));
-    // For have: look up collection_entries by card_id
+    let { data: cards } = await supabase.from("cards").select("*").eq("game", "onepiece").in("code", codes);
+    let cardByCode = new Map((cards ?? []).map(c => [c.code, c]));
+
+    // Auto-fetch any missing codes from the API so the deck view shows images.
+    const missing = codes.filter(c => !cardByCode.has(c));
+    if (missing.length) {
+      await Promise.all(missing.map(code =>
+        supabase.functions.invoke("card-search", { body: { game: "onepiece", query: code } })
+      ));
+      const { data: refreshed } = await supabase.from("cards").select("*").eq("game", "onepiece").in("code", codes);
+      cards = refreshed ?? cards;
+      cardByCode = new Map((cards ?? []).map(c => [c.code, c]));
+    }
+
     const cardIds = (cards ?? []).map(c => c.id);
     const { data: entries } = await supabase.from("collection_entries").select("card_id,quantity").in("card_id", cardIds);
     const haveByCard = new Map<string, number>();
@@ -96,6 +108,8 @@ export default function Decks() {
         needed: d.copies,
         have: c ? (haveByCard.get(c.id) ?? 0) : 0,
         cardId: c?.id,
+        name: c?.name,
+        imageSmall: c?.image_small ?? undefined,
       };
     }));
   };
