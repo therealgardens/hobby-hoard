@@ -51,7 +51,7 @@ export default function Decks() {
   const [name, setName] = useState("");
   const [raw, setRaw] = useState("");
   const [active, setActive] = useState<Deck | null>(null);
-  const [analysis, setAnalysis] = useState<{ code: string; needed: number; have: number; cardId?: string }[]>([]);
+  const [analysis, setAnalysis] = useState<{ code: string; needed: number; have: number; cardId?: string; name?: string; imageSmall?: string }[]>([]);
 
   const load = async () => {
     const { data } = await supabase.from("decks").select("*").order("created_at");
@@ -78,12 +78,24 @@ export default function Decks() {
 
   const analyze = async (deck: Deck) => {
     setActive(deck);
+    setAnalysis([]);
     const { data: dcards } = await supabase.from("deck_cards").select("*").eq("deck_id", deck.id);
     if (!dcards) return;
     const codes = dcards.map(d => d.code);
-    const { data: cards } = await supabase.from("cards").select("*").eq("game", "onepiece").in("code", codes);
-    const cardByCode = new Map((cards ?? []).map(c => [c.code, c]));
-    // For have: look up collection_entries by card_id
+    let { data: cards } = await supabase.from("cards").select("*").eq("game", "onepiece").in("code", codes);
+    let cardByCode = new Map((cards ?? []).map(c => [c.code, c]));
+
+    // Auto-fetch any missing codes from the API so the deck view shows images.
+    const missing = codes.filter(c => !cardByCode.has(c));
+    if (missing.length) {
+      await Promise.all(missing.map(code =>
+        supabase.functions.invoke("card-search", { body: { game: "onepiece", query: code } })
+      ));
+      const { data: refreshed } = await supabase.from("cards").select("*").eq("game", "onepiece").in("code", codes);
+      cards = refreshed ?? cards;
+      cardByCode = new Map((cards ?? []).map(c => [c.code, c]));
+    }
+
     const cardIds = (cards ?? []).map(c => c.id);
     const { data: entries } = await supabase.from("collection_entries").select("card_id,quantity").in("card_id", cardIds);
     const haveByCard = new Map<string, number>();
@@ -96,6 +108,8 @@ export default function Decks() {
         needed: d.copies,
         have: c ? (haveByCard.get(c.id) ?? 0) : 0,
         cardId: c?.id,
+        name: c?.name,
+        imageSmall: c?.image_small ?? undefined,
       };
     }));
   };
@@ -146,25 +160,42 @@ export default function Decks() {
       )}
 
       <Dialog open={!!active} onOpenChange={(o) => !o && setActive(null)}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>{active?.name}</DialogTitle></DialogHeader>
-          <div className="space-y-1">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
             {analysis.map(a => {
               const ok = a.have >= a.needed;
               return (
-                <div key={a.code} className="flex items-center gap-3 p-2 rounded-lg bg-muted/40">
-                  {ok ? <Check className="h-4 w-4 text-green-600" /> : <X className="h-4 w-4 text-destructive" />}
-                  <span className="font-mono text-sm">{a.code}</span>
-                  <span className="ml-auto text-sm">{a.have} / {a.needed}</span>
+                <div key={a.code} className="relative rounded-lg overflow-hidden bg-gradient-card shadow-soft">
+                  {a.imageSmall ? (
+                    <img src={a.imageSmall} alt={a.name ?? a.code} loading="lazy" className="w-full card-aspect object-cover" />
+                  ) : (
+                    <div className="w-full card-aspect bg-muted flex items-center justify-center text-xs text-muted-foreground p-2 text-center">
+                      {a.code}<br/>(no image)
+                    </div>
+                  )}
+                  <div className="absolute top-1 right-1 flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-background/90 shadow">
+                    {ok ? <Check className="h-3 w-3 text-green-600" /> : <X className="h-3 w-3 text-destructive" />}
+                    {a.have}/{a.needed}
+                  </div>
+                  <div className="p-2">
+                    <p className="text-xs font-semibold truncate">{a.name ?? a.code}</p>
+                    <p className="text-[10px] text-muted-foreground font-mono">{a.code}</p>
+                  </div>
                 </div>
               );
             })}
-            {analysis.some(a => a.have > 0 && a.have < a.needed) && (
-              <p className="text-xs text-muted-foreground pt-2">
-                💡 You already own some copies — make sure you didn't forget them when building.
-              </p>
-            )}
           </div>
+          {analysis.some(a => a.have > 0 && a.have < a.needed) && (
+            <p className="text-xs text-muted-foreground pt-2">
+              💡 You already own some copies — make sure you didn't forget them when building.
+            </p>
+          )}
+          {analysis.some(a => !a.cardId) && (
+            <p className="text-xs text-muted-foreground">
+              ℹ️ Cards without images aren't in the cache yet — search for them once in Master Sets to fetch them.
+            </p>
+          )}
         </DialogContent>
       </Dialog>
     </div>
