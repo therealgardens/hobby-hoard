@@ -9,7 +9,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Loader2, Search } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ArrowLeft, Plus, Search, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { cardImage, proxiedImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
@@ -26,8 +27,11 @@ interface SetInfo {
 }
 
 const LANGS = ["EN", "JP", "IT", "FR", "DE", "ES", "PT"];
+const LANG_FLAG: Record<string, string> = {
+  EN: "🇬🇧", JP: "🇯🇵", IT: "🇮🇹", FR: "🇫🇷", DE: "🇩🇪", ES: "🇪🇸", PT: "🇵🇹",
+};
+const SETS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
-// Same id-extraction logic as the edge function, used to match local cards to sets.
 function extractSetId(s: string | null | undefined): string | null {
   if (!s) return null;
   const m = s.match(/\[([A-Z]{1,4}-?\d{1,3}[A-Z]?)\]/i);
@@ -39,7 +43,6 @@ function extractSetId(s: string | null | undefined): string | null {
 
 function setIdForCard(game: Game, c: { set_id: string | null; set_name: string | null; code: string | null }): string | null {
   if (game === "pokemon") return c.set_id ?? null;
-  // One Piece: derive from set_name or card code
   return extractSetId(c.set_name) ?? extractSetId(c.code ?? "");
 }
 
@@ -50,53 +53,81 @@ export default function MasterSets() {
   const [loadingSets, setLoadingSets] = useState(true);
   const [query, setQuery] = useState("");
   const [activeSet, setActiveSet] = useState<SetInfo | null>(null);
+  const [ownedCardIds, setOwnedCardIds] = useState<Set<string>>(new Set());
+  const [ownedLangByCard, setOwnedLangByCard] = useState<Map<string, string>>(new Map());
+  const [wantedCardIds, setWantedCardIds] = useState<Set<string>>(new Set());
 
-  // Add-to-collection dialog
   const [picked, setPicked] = useState<CardRow | null>(null);
+  const [pickedOwned, setPickedOwned] = useState(false);
   const [rarity, setRarity] = useState("");
   const [language, setLanguage] = useState("EN");
   const [quantity, setQuantity] = useState(1);
 
-  // Load sets + owned counts on mount / game change
   useEffect(() => {
     if (!game) return;
     setLoadingSets(true);
     setActiveSet(null);
     setQuery("");
     (async () => {
-      // Fetch sets via direct GET (edge function reads ?game=)
-      let setsList: SetInfo[] = [];
+      const cacheKey = `tcg.sets.${game}.v1`;
+      try {
+        const raw = localStorage.getItem(cacheKey);
+        if (raw) {
+          const parsed = JSON.parse(raw) as { ts: number; sets: SetInfo[] };
+          if (Date.now() - parsed.ts < SETS_CACHE_TTL_MS && Array.isArray(parsed.sets) && parsed.sets.length) {
+            setSets(parsed.sets);
+            setLoadingSets(false);
+          }
+        }
+      } catch (_) {}
+
       try {
         const res = await fetch(
           `https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/functions/v1/card-sets?game=${game}`,
           { headers: { apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY } },
         );
         const json = await res.json();
-        setsList = json.sets ?? [];
+        const fresh = (json.sets ?? []) as SetInfo[];
+        if (fresh.length) {
+          setSets(fresh);
+          try {
+            localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), sets: fresh }));
+          } catch (_) {}
+        }
       } catch (e) {
         console.error(e);
       }
-      setSets(setsList);
 
       const userRes = await supabase.auth.getUser();
-
       const uid = userRes.data.user?.id;
       if (uid) {
-        // Pull every owned card row for this game with its set info
         const { data: owned } = await supabase
           .from("collection_entries")
-          .select("quantity, cards!inner(set_id, set_name, code, game)")
+          .select("card_id, language, cards!inner(set_id, set_name, code, game)")
           .eq("user_id", uid)
           .eq("game", game);
         const counts = new Map<string, number>();
+        const langs = new Map<string, string>();
+        const ids = new Set<string>();
         for (const row of owned ?? []) {
-          // typing: cards relation
-          const c = (row as unknown as { cards: { set_id: string | null; set_name: string | null; code: string | null } }).cards;
-          const id = setIdForCard(game, c);
-          if (!id) continue;
-          counts.set(id, (counts.get(id) ?? 0) + 1); // count distinct owned entries; not summing quantity
+          const r = row as unknown as { card_id: string; language: string | null; cards: { set_id: string | null; set_name: string | null; code: string | null } };
+          if (!ids.has(r.card_id)) {
+            const id = setIdForCard(game, r.cards);
+            if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+            ids.add(r.card_id);
+          }
+          if (r.language && !langs.has(r.card_id)) langs.set(r.card_id, r.language);
         }
         setOwnedBySet(counts);
+        setOwnedCardIds(ids);
+        setOwnedLangByCard(langs);
+
+        const { data: wanted } = await supabase
+          .from("wanted_cards")
+          .select("card_id")
+          .eq("user_id", uid)
+          .eq("game", game);
+        setWantedCardIds(new Set((wanted ?? []).map((w) => w.card_id)));
       }
       setLoadingSets(false);
     })();
@@ -120,12 +151,38 @@ export default function MasterSets() {
 
   const openCard = (c: CardRow) => {
     setPicked(c);
+    setPickedOwned(ownedCardIds.has(c.id));
     setRarity(c.rarity ?? "");
-    setLanguage("EN");
+    setLanguage(ownedLangByCard.get(c.id) ?? "EN");
     setQuantity(1);
   };
 
-  const [ownedCardIds, setOwnedCardIds] = useState<Set<string>>(new Set());
+  const quickAdd = async (c: CardRow) => {
+    if (!game) return;
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData.user) return;
+    const { error } = await supabase.from("collection_entries").insert({
+      user_id: userData.user.id,
+      card_id: c.id,
+      game,
+      rarity: c.rarity ?? null,
+      language: "EN",
+      quantity: 1,
+    });
+    if (error) return toast.error(error.message);
+    toast.success(`Added ${c.name}`);
+    const wasOwned = ownedCardIds.has(c.id);
+    setOwnedCardIds((prev) => new Set(prev).add(c.id));
+    setOwnedLangByCard((prev) => {
+      const n = new Map(prev);
+      if (!n.has(c.id)) n.set(c.id, "EN");
+      return n;
+    });
+    if (!wasOwned) {
+      const sid = setIdForCard(game, c);
+      if (sid) setOwnedBySet((prev) => new Map(prev).set(sid, (prev.get(sid) ?? 0) + 1));
+    }
+  };
 
   const saveCard = async () => {
     if (!picked || !game) return;
@@ -143,14 +200,63 @@ export default function MasterSets() {
     toast.success(`Added ${picked.name} ×${quantity}`);
     const savedId = picked.id;
     const savedSetId = setIdForCard(game, picked);
+    const wasOwned = ownedCardIds.has(savedId);
     setPicked(null);
-    setOwnedCardIds((prev) => {
-      const next = new Set(prev);
-      next.add(savedId);
-      return next;
-    });
-    if (savedSetId) {
+    setOwnedCardIds((prev) => new Set(prev).add(savedId));
+    setOwnedLangByCard((prev) => new Map(prev).set(savedId, language));
+    if (!wasOwned && savedSetId) {
       setOwnedBySet((prev) => new Map(prev).set(savedSetId, (prev.get(savedSetId) ?? 0) + 1));
+    }
+  };
+
+  const removeOne = async () => {
+    if (!picked || !game) return;
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData.user) return;
+    const { data: rows } = await supabase
+      .from("collection_entries")
+      .select("id")
+      .eq("user_id", userData.user.id)
+      .eq("card_id", picked.id)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const target = rows?.[0]?.id;
+    if (!target) {
+      toast.info("No entry found to remove");
+      return;
+    }
+    const { error } = await supabase.from("collection_entries").delete().eq("id", target);
+    if (error) return toast.error(error.message);
+    toast.success(`Removed one ${picked.name}`);
+
+    const removedId = picked.id;
+    const removedSetId = setIdForCard(game, picked);
+    setPicked(null);
+
+    const { data: remain } = await supabase
+      .from("collection_entries")
+      .select("id")
+      .eq("user_id", userData.user.id)
+      .eq("card_id", removedId)
+      .limit(1);
+    if (!remain || remain.length === 0) {
+      setOwnedCardIds((prev) => {
+        const n = new Set(prev);
+        n.delete(removedId);
+        return n;
+      });
+      setOwnedLangByCard((prev) => {
+        const n = new Map(prev);
+        n.delete(removedId);
+        return n;
+      });
+      if (removedSetId) {
+        setOwnedBySet((prev) => {
+          const n = new Map(prev);
+          n.set(removedSetId, Math.max(0, (n.get(removedSetId) ?? 0) - 1));
+          return n;
+        });
+      }
     }
   };
 
@@ -169,8 +275,10 @@ export default function MasterSets() {
           set={activeSet}
           onBack={() => setActiveSet(null)}
           onPickCard={openCard}
+          onQuickAdd={quickAdd}
           ownedCardIds={ownedCardIds}
-          setOwnedCardIds={setOwnedCardIds}
+          ownedLangByCard={ownedLangByCard}
+          wantedCardIds={wantedCardIds}
         />
       ) : (
         <>
@@ -195,17 +303,17 @@ export default function MasterSets() {
             </TabsList>
 
             <TabsContent value="all" className="mt-6">
-              {loadingSets ? (
-                <div className="flex justify-center py-12">
-                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                </div>
+              {loadingSets && sets.length === 0 ? (
+                <SetGridSkeleton />
               ) : (
                 <SetGrid sets={visibleSets} ownedBySet={ownedBySet} onOpen={setActiveSet} />
               )}
             </TabsContent>
 
             <TabsContent value="mine" className="mt-6">
-              {ownedSets.length === 0 ? (
+              {loadingSets && sets.length === 0 ? (
+                <SetGridSkeleton />
+              ) : ownedSets.length === 0 ? (
                 <p className="text-muted-foreground text-center py-12">
                   You don't own any cards yet. Open an expansion and start building.
                 </p>
@@ -218,9 +326,16 @@ export default function MasterSets() {
       )}
 
       <Dialog open={!!picked} onOpenChange={(o) => !o && setPicked(null)}>
-        <DialogContent>
+        <DialogContent
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "TEXTAREA") {
+              e.preventDefault();
+              saveCard();
+            }
+          }}
+        >
           <DialogHeader>
-            <DialogTitle>Add to collection</DialogTitle>
+            <DialogTitle>{pickedOwned ? "Update collection" : "Add to collection"}</DialogTitle>
           </DialogHeader>
           {picked && (
             <div className="grid grid-cols-[120px_1fr] gap-4">
@@ -248,20 +363,68 @@ export default function MasterSets() {
                   <Label>Language</Label>
                   <Select value={language} onValueChange={setLanguage}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>{LANGS.map(l => <SelectItem key={l} value={l}>{l}</SelectItem>)}</SelectContent>
+                    <SelectContent>{LANGS.map(l => <SelectItem key={l} value={l}>{LANG_FLAG[l]} {l}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div>
                   <Label>Quantity</Label>
                   <Input type="number" min={1} value={quantity} onChange={(e) => setQuantity(parseInt(e.target.value) || 1)} />
                 </div>
-                <Button className="w-full" onClick={saveCard}>Add to collection</Button>
+                <Button className="w-full" onClick={saveCard}>
+                  {pickedOwned ? `Add ${quantity} more` : "Add to collection"}
+                </Button>
+                {pickedOwned && (
+                  <Button variant="outline" className="w-full" onClick={removeOne}>
+                    <Trash2 className="h-4 w-4 mr-1" /> Remove one
+                  </Button>
+                )}
               </div>
             </div>
           )}
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function SetGridSkeleton() {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      {Array.from({ length: 8 }).map((_, i) => (
+        <Card key={i} className="p-4 bg-gradient-card">
+          <div className="flex items-start gap-3">
+            <Skeleton className="h-14 w-14 rounded" />
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-4 w-3/4" />
+              <Skeleton className="h-3 w-1/2" />
+            </div>
+            <Skeleton className="h-5 w-10" />
+          </div>
+          <Skeleton className="mt-3 h-1.5 w-full" />
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+function SetThumb({ s }: { s: SetInfo }) {
+  const [failed, setFailed] = useState(false);
+  const src = proxiedImage(s.logo);
+  if (!src || failed) {
+    return (
+      <div className="h-14 w-14 rounded bg-muted flex items-center justify-center text-xs font-mono shrink-0">
+        {s.id}
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt=""
+      className="h-14 w-14 object-contain rounded bg-background/40 p-1 shrink-0"
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
   );
 }
 
@@ -290,26 +453,7 @@ function SetGrid({
             onClick={() => onOpen(s)}
           >
             <div className="flex items-start gap-3">
-              {s.logo ? (
-                <img
-                  src={proxiedImage(s.logo)}
-                  alt=""
-                  className="h-14 w-14 object-contain rounded bg-background/40 p-1"
-                  loading="lazy"
-                  onError={(e) => {
-                    const el = e.currentTarget as HTMLImageElement;
-                    el.style.display = "none";
-                    const fb = el.nextElementSibling as HTMLElement | null;
-                    if (fb) fb.style.display = "flex";
-                  }}
-                />
-              ) : null}
-              <div
-                className="h-14 w-14 rounded bg-muted items-center justify-center text-xs font-mono shrink-0"
-                style={{ display: s.logo ? "none" : "flex" }}
-              >
-                {s.id}
-              </div>
+              <SetThumb s={s} />
               <div className="flex-1 min-w-0">
                 <p className="font-semibold truncate">{s.name}</p>
                 <p className="text-xs text-muted-foreground truncate">
@@ -332,20 +476,40 @@ function SetGrid({
   );
 }
 
+function SetViewSkeleton() {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+      {Array.from({ length: 10 }).map((_, i) => (
+        <Card key={i} className="overflow-hidden bg-gradient-card">
+          <Skeleton className="w-full card-aspect" />
+          <div className="p-2 space-y-2">
+            <Skeleton className="h-4 w-3/4" />
+            <Skeleton className="h-3 w-1/2" />
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
 function SetView({
   game,
   set,
   onBack,
   onPickCard,
+  onQuickAdd,
   ownedCardIds,
-  setOwnedCardIds,
+  ownedLangByCard,
+  wantedCardIds,
 }: {
   game: Game;
   set: SetInfo;
   onBack: () => void;
   onPickCard: (c: CardRow) => void;
+  onQuickAdd: (c: CardRow) => void;
   ownedCardIds: Set<string>;
-  setOwnedCardIds: React.Dispatch<React.SetStateAction<Set<string>>>;
+  ownedLangByCard: Map<string, string>;
+  wantedCardIds: Set<string>;
 }) {
   const [cards, setCards] = useState<CardRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -353,15 +517,12 @@ function SetView({
   useEffect(() => {
     setLoading(true);
     (async () => {
-      // Live fetch the full set list (and cache in DB)
       const { data, error } = await supabase.functions.invoke("card-search", {
         body: { game, setId: set.id },
       });
       if (error) toast.error(error.message);
       const remote = ((data?.cards as CardRow[]) ?? []);
 
-      // Also pull whatever is already cached locally for this set, so we still
-      // show something if the live API returned nothing.
       const dashed = set.id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
       const { data: local } = await supabase
         .from("cards")
@@ -380,17 +541,6 @@ function SetView({
         (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true }),
       );
       setCards(merged);
-
-      // owned ids
-      const { data: userData } = await supabase.auth.getUser();
-      if (userData.user) {
-        const { data: owned } = await supabase
-          .from("collection_entries")
-          .select("card_id")
-          .eq("user_id", userData.user.id)
-          .eq("game", game);
-        setOwnedCardIds(new Set((owned ?? []).map((r) => r.card_id)));
-      }
       setLoading(false);
     })();
   }, [game, set.id]);
@@ -415,9 +565,7 @@ function SetView({
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
+        <SetViewSkeleton />
       ) : cards.length === 0 ? (
         <p className="text-muted-foreground text-center py-12">
           No cards available for this expansion yet.
@@ -427,18 +575,44 @@ function SetView({
           {cards.map((c) => {
             const img = cardImage(c.game, c.code, c.image_small);
             const owned = ownedCardIds.has(c.id);
+            const wanted = wantedCardIds.has(c.id);
+            const lang = ownedLangByCard.get(c.id);
             return (
               <Card
                 key={c.id}
-                className="overflow-hidden bg-gradient-card cursor-pointer hover:shadow-card transition-shadow"
+                className="overflow-hidden bg-gradient-card cursor-pointer hover:shadow-card transition-shadow group relative"
                 onClick={() => onPickCard(c)}
               >
+                {wanted && (
+                  <div className="absolute top-2 left-2 z-10 bg-background/90 rounded-full p-1 shadow">
+                    <Star className="h-3.5 w-3.5 fill-yellow-400 text-yellow-500" />
+                  </div>
+                )}
+                {owned && lang && (
+                  <div className="absolute top-2 right-2 z-10 bg-background/90 rounded px-1.5 py-0.5 text-xs shadow">
+                    {LANG_FLAG[lang] ?? lang}
+                  </div>
+                )}
+                {!owned && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="absolute bottom-12 right-2 z-10 h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onQuickAdd(c);
+                    }}
+                    title="Quick add (+1)"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                )}
                 {img ? (
                   <img
                     src={img}
                     alt={c.name}
                     loading="lazy"
-                    className={`w-full card-aspect object-cover ${owned ? "" : "opacity-40 grayscale"}`}
+                    className={`w-full card-aspect object-cover transition-all ${owned ? "" : "opacity-60 grayscale"}`}
                     onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
                   />
                 ) : (

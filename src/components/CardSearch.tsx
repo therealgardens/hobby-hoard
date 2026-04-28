@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,23 +20,24 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<CardRow[]>([]);
+  const reqIdRef = useRef(0);
 
-  const search = async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (!q.trim()) return;
+  const runSearch = async (term: string) => {
+    const id = ++reqIdRef.current;
     setLoading(true);
-    // 1) Local cache lookup first
     const { data: local } = await supabase
       .from("cards")
       .select("*")
       .eq("game", game)
-      .or(`name.ilike.%${q}%,code.ilike.%${q}%`)
+      .or(`name.ilike.%${term}%,code.ilike.%${term}%`)
       .limit(40);
+    if (id !== reqIdRef.current) return; // stale
     if (local && local.length) setResults(local);
-    // 2) Always also hit the live API to enrich cache
+
     const { data, error } = await supabase.functions.invoke("card-search", {
-      body: { game, query: q.trim() },
+      body: { game, query: term },
     });
+    if (id !== reqIdRef.current) return; // stale
     setLoading(false);
     if (error) {
       toast.error(error.message);
@@ -44,18 +45,40 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
     }
     const cards = (data?.cards as CardRow[]) ?? [];
     if (cards.length) setResults(cards);
-    else if (!local?.length) toast.info("No cards found");
+    else if (!local?.length) {
+      setResults([]);
+      toast.info("No cards found");
+    }
+  };
+
+  // Debounced auto-search
+  useEffect(() => {
+    const term = q.trim();
+    if (term.length < 2) {
+      setResults([]);
+      setLoading(false);
+      return;
+    }
+    const t = setTimeout(() => runSearch(term), 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, game]);
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const term = q.trim();
+    if (term.length >= 2) runSearch(term);
   };
 
   return (
     <div>
-      <form onSubmit={search} className="flex gap-2 mb-6">
+      <form onSubmit={onSubmit} className="flex gap-2 mb-6">
         <Input
           placeholder={`Search by name or code (e.g. ${game === "pokemon" ? "Pikachu or sv1-25" : "Luffy or OP01-001"})`}
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
-        <Button type="submit" disabled={loading}>
+        <Button type="submit" disabled={loading} variant="secondary">
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
         </Button>
       </form>
