@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Search, Plus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { cardImage, type Game } from "@/lib/game";
+import { cardImageCandidates, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 
 type CardRow = Tables<"cards">;
@@ -112,5 +112,29 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
         </div>
       )}
     </div>
+  );
+}
+
+function CardImg({ card }: { card: CardRow }) {
+  const candidates = cardImageCandidates(card.game, card.code, card.image_small ?? card.image_large);
+  const [idx, setIdx] = useState(0);
+  const src = candidates[idx];
+
+  if (!src) {
+    return (
+      <div className="w-full card-aspect bg-muted flex items-center justify-center text-muted-foreground text-xs">
+        No image
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={card.name}
+      loading="lazy"
+      className="w-full card-aspect object-cover"
+      onError={() => setIdx((i) => i + 1)}
+    />
   );
 }
