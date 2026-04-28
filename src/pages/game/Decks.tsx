@@ -167,22 +167,26 @@ export default function Decks() {
             {analysis.map(a => {
               const ok = a.have >= a.needed;
               const owned = a.have > 0;
-              // Fallback to the official One Piece card image when API didn't return one
-              const imgSrc = a.imageSmall ?? `https://en.onepiece-cardgame.com/images/cardlist/card/${a.code}.png`;
+              // Use proxy + fallback to the official One Piece card image
+              const rawSrc = a.imageSmall ?? `https://en.onepiece-cardgame.com/images/cardlist/card/${a.code}.png`;
+              const imgSrc = proxiedImage(rawSrc);
               return (
-                <div key={a.code} className="relative rounded-lg overflow-hidden bg-gradient-card shadow-soft">
+                <div key={a.code} className="relative rounded-lg overflow-hidden bg-muted shadow-soft">
                   <img
                     src={imgSrc}
                     alt={a.name ?? a.code}
                     loading="lazy"
-                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }}
-                    className={`w-full card-aspect object-cover transition-opacity ${owned ? "opacity-100" : "opacity-30 grayscale"}`}
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = "0"; }}
+                    className={`w-full card-aspect object-cover ${owned ? "" : "opacity-40 grayscale"}`}
                   />
+                  {!owned && (
+                    <div className="absolute inset-0 bg-background/40 pointer-events-none" />
+                  )}
                   <div className="absolute top-1 right-1 flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-background/90 shadow">
                     {ok ? <Check className="h-3 w-3 text-green-600" /> : <X className="h-3 w-3 text-destructive" />}
                     {a.have}/{a.needed}
                   </div>
-                  <div className="p-2">
+                  <div className="p-2 bg-card">
                     <p className="text-xs font-semibold truncate">{a.name ?? a.code}</p>
                     <p className="text-[10px] text-muted-foreground font-mono">{a.code}</p>
                   </div>
