@@ -19,3 +19,13 @@ export const GAME_LABEL: Record<Game, string> = {
   pokemon: "Pokémon",
   onepiece: "One Piece",
 };
+
+// Wraps an external image URL through our edge proxy so the browser can
+// load it (some CDNs send Cross-Origin-Resource-Policy: same-site).
+export function proxiedImage(url?: string | null): string | undefined {
+  if (!url) return undefined;
+  const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+  if (!projectId) return url;
+  return `https://${projectId}.supabase.co/functions/v1/image-proxy?url=${encodeURIComponent(url)}`;
+}
+
