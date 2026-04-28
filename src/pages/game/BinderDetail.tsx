@@ -123,11 +123,6 @@ export default function BinderDetail() {
           </ToggleGroup>
         </div>
       </div>
-        <ToggleGroup type="single" value={view} onValueChange={(v) => v && setView(v as any)}>
-          <ToggleGroupItem value="grid" aria-label="Grid view"><LayoutGrid className="h-4 w-4" /></ToggleGroupItem>
-          <ToggleGroupItem value="list" aria-label="List view"><List className="h-4 w-4" /></ToggleGroupItem>
-        </ToggleGroup>
-      </div>
 
       {view === "grid" ? (
         <Card className="p-4 bg-gradient-card shadow-card max-w-3xl mx-auto">
