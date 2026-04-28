@@ -25,7 +25,6 @@ async function searchPokemon(query: string, setId?: string) {
   if (setId) parts.push(`set.id:${setId}`);
   if (query) {
     const q = query.trim();
-    // If looks like code "set-num" or contains digit, search by number/id, else by name
     if (/^[a-z0-9]+-\d+/i.test(q)) {
       parts.push(`id:${q.toLowerCase()}`);
     } else if (/^\d+$/.test(q)) {
@@ -34,9 +33,10 @@ async function searchPokemon(query: string, setId?: string) {
       parts.push(`name:"${q}*"`);
     }
   }
+  const pageSize = setId ? 250 : 40;
   const url = `https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(
     parts.join(" "),
-  )}&pageSize=40&orderBy=number`;
+  )}&pageSize=${pageSize}&orderBy=number`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Pokemon API ${res.status}`);
   const json = await res.json();
@@ -59,22 +59,25 @@ async function searchPokemon(query: string, setId?: string) {
 }
 
 async function searchOnePiece(query: string, setId?: string) {
-  // Public One Piece TCG API: https://docs.apitcg.com/
   const params = new URLSearchParams();
   if (query) {
-    if (/^[a-z]{2}\d+-\d+/i.test(query.trim())) {
+    if (/^[a-z]{2,3}\d{2,3}-\d+/i.test(query.trim())) {
       params.set("code", query.trim().toUpperCase());
     } else {
       params.set("name", query.trim());
     }
   }
-  if (setId) params.set("set_id", setId);
-  const url = `https://apitcg.com/api/one-piece/cards?${params.toString()}`;
+  if (setId) {
+    // apitcg expects e.g. "OP14"
+    params.set("set_id", setId.toUpperCase());
+    params.set("limit", "250");
+  }
+  const url = `https://www.apitcg.com/api/one-piece/cards?${params.toString()}`;
   const res = await fetch(url, {
     headers: { "x-api-key": Deno.env.get("APITCG_API_KEY") ?? "" },
   });
   if (!res.ok) {
-    // Fallback: try unauthenticated open mirror
+    if (!query) return [];
     const fallback = await fetch(
       `https://optcgapi.com/api/Cards/${encodeURIComponent(
         query.trim().toUpperCase(),

@@ -17,6 +17,7 @@ import Wanted from "./pages/game/Wanted";
 import Duplicates from "./pages/game/Duplicates";
 import Pokedex from "./pages/game/Pokedex";
 import Decks from "./pages/game/Decks";
+import CardSearchPage from "./pages/game/CardSearchPage";
 
 const queryClient = new QueryClient();
 
@@ -33,6 +34,7 @@ const App = () => (
             <Route path="/:game" element={<ProtectedRoute><GameLayout /></ProtectedRoute>}>
               <Route index element={<GameHome />} />
               <Route path="master" element={<MasterSets />} />
+              <Route path="search" element={<CardSearchPage />} />
               <Route path="binders" element={<Binders />} />
               <Route path="binders/:binderId" element={<BinderDetail />} />
               <Route path="wanted" element={<Wanted />} />
