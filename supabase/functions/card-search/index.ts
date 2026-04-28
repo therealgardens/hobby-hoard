@@ -25,7 +25,6 @@ async function searchPokemon(query: string, setId?: string) {
   if (setId) parts.push(`set.id:${setId}`);
   if (query) {
     const q = query.trim();
-    // If looks like code "set-num" or contains digit, search by number/id, else by name
     if (/^[a-z0-9]+-\d+/i.test(q)) {
       parts.push(`id:${q.toLowerCase()}`);
     } else if (/^\d+$/.test(q)) {
@@ -34,9 +33,10 @@ async function searchPokemon(query: string, setId?: string) {
       parts.push(`name:"${q}*"`);
     }
   }
+  const pageSize = setId ? 250 : 40;
   const url = `https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(
     parts.join(" "),
-  )}&pageSize=40&orderBy=number`;
+  )}&pageSize=${pageSize}&orderBy=number`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Pokemon API ${res.status}`);
   const json = await res.json();
