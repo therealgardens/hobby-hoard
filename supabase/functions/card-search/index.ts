@@ -58,14 +58,96 @@ async function searchPokemon(query: string, setId?: string) {
   }));
 }
 
+// Map an optcgapi card row to our schema.
+function mapOptcgCard(c: any) {
+  const code = c.card_set_id ?? c.id ?? c.code;
+  return {
+    game: "onepiece" as const,
+    external_id: code,
+    code,
+    name: c.card_name ?? c.name,
+    set_id: c.set_id ?? null,
+    set_name: c.set_name ?? null,
+    number: null,
+    rarity: c.rarity ?? null,
+    image_small: c.card_image ?? null,
+    image_large: c.card_image ?? null,
+    pokedex_number: null,
+    data: c,
+  };
+}
+
+// Fetch a full set from optcgapi. Tries booster sets, then starter decks.
+async function fetchOptcgSet(setId: string): Promise<any[]> {
+  // Convert "OP14" -> "OP-14", keep "OP-14" as-is, "ST24" -> "ST-24" etc.
+  const dashed = setId.match(/^([A-Z]+)-?(\d+)$/i);
+  const candidates: string[] = [];
+  if (dashed) {
+    candidates.push(`${dashed[1].toUpperCase()}-${dashed[2]}`);
+    candidates.push(`${dashed[1].toUpperCase()}${dashed[2]}`);
+  } else {
+    candidates.push(setId.toUpperCase());
+  }
+  const isStarter = /^ST/i.test(setId);
+  const endpoints = isStarter
+    ? candidates.flatMap((c) => [
+        `https://optcgapi.com/api/decks/${c}/`,
+        `https://optcgapi.com/api/sets/${c}/`,
+      ])
+    : candidates.flatMap((c) => [
+        `https://optcgapi.com/api/sets/${c}/`,
+        `https://optcgapi.com/api/decks/${c}/`,
+      ]);
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const json = await res.json();
+      if (Array.isArray(json) && json.length > 0) return json;
+    } catch (_) {}
+  }
+  return [];
+}
+
 async function searchOnePiece(query: string, setId?: string) {
-  const params = new URLSearchParams();
+  // Set browse: try apitcg first (rich data + alternates), fall back to optcgapi
+  // (which covers newer/missing sets that apitcg doesn't have yet).
   if (setId) {
-    // apitcg has no set filter; use the `code` substring filter instead.
-    // Normalize "OP-01" -> "OP01" since codes look like "OP01-060".
-    params.set("code", setId.toUpperCase().replace(/-/g, ""));
-    params.set("limit", "250");
-  } else if (query) {
+    const code = setId.toUpperCase().replace(/-/g, "");
+    const url = `https://www.apitcg.com/api/one-piece/cards?code=${code}&limit=250`;
+    try {
+      const res = await fetch(url, {
+        headers: { "x-api-key": Deno.env.get("APITCG_API_KEY") ?? "" },
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const list = json.data || [];
+        if (list.length > 0) {
+          return list.map((c: any) => ({
+            game: "onepiece" as const,
+            external_id: c.id ?? c.code,
+            code: c.code ?? c.id,
+            name: c.name,
+            set_id: c.set?.id ?? c.set_id ?? null,
+            set_name: c.set?.name ?? null,
+            number: c.number ?? null,
+            rarity: c.rarity ?? null,
+            image_small: c.images?.small ?? c.image ?? null,
+            image_large: c.images?.large ?? c.image ?? null,
+            pokedex_number: null,
+            data: c,
+          }));
+        }
+      }
+    } catch (_) {}
+    // Fallback: optcgapi
+    const arr = await fetchOptcgSet(setId);
+    return arr.map(mapOptcgCard);
+  }
+
+  // Free-text search via apitcg
+  const params = new URLSearchParams();
+  if (query) {
     if (/^[a-z]{2,3}\d{2,3}-\d+/i.test(query.trim())) {
       params.set("code", query.trim().toUpperCase());
     } else {
@@ -76,32 +158,9 @@ async function searchOnePiece(query: string, setId?: string) {
   const res = await fetch(url, {
     headers: { "x-api-key": Deno.env.get("APITCG_API_KEY") ?? "" },
   });
-  if (!res.ok) {
-    if (!query) return [];
-    const fallback = await fetch(
-      `https://optcgapi.com/api/Cards/${encodeURIComponent(
-        query.trim().toUpperCase(),
-      )}/`,
-    );
-    if (!fallback.ok) return [];
-    const arr = await fallback.json();
-    return (Array.isArray(arr) ? arr : [arr]).map((c: any) => ({
-      game: "onepiece" as const,
-      external_id: c.id ?? c.card_set_id ?? c.code,
-      code: c.id ?? c.code,
-      name: c.name,
-      set_id: c.set_id ?? c.card_set ?? null,
-      set_name: c.set_name ?? null,
-      number: c.card_number ?? null,
-      rarity: c.rarity ?? null,
-      image_small: c.images_thumb ?? c.images_small ?? null,
-      image_large: c.images_large ?? c.image_url ?? null,
-      pokedex_number: null,
-      data: c,
-    }));
-  }
+  if (!res.ok) return [];
   const json = await res.json();
-  const list = json.data || json.cards || [];
+  const list = json.data || [];
   return list.map((c: any) => ({
     game: "onepiece" as const,
     external_id: c.id ?? c.code,
