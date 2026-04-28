@@ -337,14 +337,17 @@ function SetView({
   set,
   onBack,
   onPickCard,
+  ownedCardIds,
+  setOwnedCardIds,
 }: {
   game: Game;
   set: SetInfo;
   onBack: () => void;
   onPickCard: (c: CardRow) => void;
+  ownedCardIds: Set<string>;
+  setOwnedCardIds: React.Dispatch<React.SetStateAction<Set<string>>>;
 }) {
   const [cards, setCards] = useState<CardRow[]>([]);
-  const [ownedIds, setOwnedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
