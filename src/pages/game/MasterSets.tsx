@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
-import { cardImage, type Game } from "@/lib/game";
+import { cardImage, proxiedImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 
 type CardRow = Tables<"cards">;
@@ -280,12 +280,25 @@ function SetGrid({
           >
             <div className="flex items-start gap-3">
               {s.logo ? (
-                <img src={s.logo} alt="" className="h-12 w-12 object-contain" loading="lazy" />
-              ) : (
-                <div className="h-12 w-12 rounded bg-muted flex items-center justify-center text-xs font-mono">
-                  {s.id}
-                </div>
-              )}
+                <img
+                  src={proxiedImage(s.logo)}
+                  alt=""
+                  className="h-14 w-14 object-contain rounded bg-background/40 p-1"
+                  loading="lazy"
+                  onError={(e) => {
+                    const el = e.currentTarget as HTMLImageElement;
+                    el.style.display = "none";
+                    const fb = el.nextElementSibling as HTMLElement | null;
+                    if (fb) fb.style.display = "flex";
+                  }}
+                />
+              ) : null}
+              <div
+                className="h-14 w-14 rounded bg-muted items-center justify-center text-xs font-mono shrink-0"
+                style={{ display: s.logo ? "none" : "flex" }}
+              >
+                {s.id}
+              </div>
               <div className="flex-1 min-w-0">
                 <p className="font-semibold truncate">{s.name}</p>
                 <p className="text-xs text-muted-foreground truncate">
