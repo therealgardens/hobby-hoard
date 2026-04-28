@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Trash2 } from "lucide-react";
 import { CardSearch } from "@/components/CardSearch";
 import { toast } from "sonner";
-import type { Game } from "@/lib/game";
+import { cardImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 
 type Wanted = Tables<"wanted_cards"> & { card: Tables<"cards"> | null };
