@@ -29,3 +29,17 @@ export function proxiedImage(url?: string | null): string | undefined {
   return `https://${projectId}.supabase.co/functions/v1/image-proxy?url=${encodeURIComponent(url)}`;
 }
 
+// Resolve a card image URL. For One Piece cards, falls back to the official
+// CDN (via our proxy) when we don't have an image cached yet.
+export function cardImage(
+  game: Game | string | null | undefined,
+  code: string | null | undefined,
+  imageUrl?: string | null,
+): string | undefined {
+  if (imageUrl) return proxiedImage(imageUrl);
+  if (game === "onepiece" && code) {
+    return proxiedImage(`https://en.onepiece-cardgame.com/images/cardlist/card/${code}.png`);
+  }
+  return undefined;
+}
+
