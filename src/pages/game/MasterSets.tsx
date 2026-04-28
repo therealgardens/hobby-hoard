@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import type { Game } from "@/lib/game";
+import { cardImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 
 type CardRow = Tables<"cards">;
@@ -60,7 +60,7 @@ export default function MasterSets() {
           </DialogHeader>
           {picked && (
             <div className="grid grid-cols-[120px_1fr] gap-4">
-              {picked.image_small && <img src={picked.image_small} alt="" className="rounded-lg w-full" />}
+              {(() => { const img = cardImage(picked.game, picked.code, picked.image_small); return img && <img src={img} alt="" className="rounded-lg w-full" onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")} />; })()}
               <div className="space-y-3">
                 <div>
                   <p className="font-semibold">{picked.name}</p>

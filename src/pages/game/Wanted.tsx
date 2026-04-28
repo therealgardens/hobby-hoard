@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Trash2 } from "lucide-react";
 import { CardSearch } from "@/components/CardSearch";
 import { toast } from "sonner";
-import type { Game } from "@/lib/game";
+import { cardImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 
 type Wanted = Tables<"wanted_cards"> & { card: Tables<"cards"> | null };
@@ -55,9 +55,11 @@ export default function Wanted() {
         <div>
           <h3 className="font-display text-2xl mb-3">Your wishlist ({items.length})</h3>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-            {items.map(w => (
+            {items.map(w => {
+              const img = cardImage(w.card?.game, w.card?.code, w.card?.image_small);
+              return (
               <Card key={w.id} className="overflow-hidden bg-gradient-card relative group">
-                {w.card?.image_small && <img src={w.card.image_small} alt={w.card.name} className="w-full card-aspect object-cover opacity-70" />}
+                {img && <img src={img} alt={w.card?.name} className="w-full card-aspect object-cover opacity-70" onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")} />}
                 <div className="p-2">
                   <p className="text-xs font-semibold truncate">{w.card?.name}</p>
                   <p className="text-[10px] text-muted-foreground truncate">{w.card?.code}</p>
@@ -66,7 +68,8 @@ export default function Wanted() {
                   <Trash2 className="h-3 w-3" />
                 </button>
               </Card>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

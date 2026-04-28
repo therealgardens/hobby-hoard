@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { ArrowLeft, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import type { Game } from "@/lib/game";
+import { cardImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 
 type Binder = Tables<"binders">;
@@ -90,12 +90,13 @@ export default function BinderDetail() {
                   !slot && "cursor-pointer hover:border-primary hover:bg-muted",
                 )}
               >
-                {slot?.card?.image_small ? (
+                {(() => { const img = cardImage(slot?.card?.game, slot?.card?.code, slot?.card?.image_small); return img ? (
                   <>
                     <img
-                      src={slot.card.image_small}
-                      alt={slot.card.name}
-                      className={cn("w-full h-full object-cover", slot.is_wanted && "opacity-40")}
+                      src={img}
+                      alt={slot?.card?.name}
+                      onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+                      className={cn("w-full h-full object-cover", slot?.is_wanted && "opacity-40")}
                     />
                     {slot.is_wanted && (
                       <span className="absolute top-1 left-1 text-[10px] bg-accent text-accent-foreground px-1.5 py-0.5 rounded-full">
@@ -111,7 +112,7 @@ export default function BinderDetail() {
                   </>
                 ) : (
                   <span>+ {i + 1}</span>
-                )}
+                ); })()}
               </div>
             );
           })}
