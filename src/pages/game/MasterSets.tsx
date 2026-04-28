@@ -125,6 +125,8 @@ export default function MasterSets() {
     setQuantity(1);
   };
 
+  const [ownedCardIds, setOwnedCardIds] = useState<Set<string>>(new Set());
+
   const saveCard = async () => {
     if (!picked || !game) return;
     const { data: userData } = await supabase.auth.getUser();
@@ -139,13 +141,16 @@ export default function MasterSets() {
     });
     if (error) return toast.error(error.message);
     toast.success(`Added ${picked.name} ×${quantity}`);
+    const savedId = picked.id;
+    const savedSetId = setIdForCard(game, picked);
     setPicked(null);
-    // refresh owned counts for the active set
-    if (activeSet) {
-      const id = setIdForCard(game, picked);
-      if (id) {
-        setOwnedBySet((prev) => new Map(prev).set(id, (prev.get(id) ?? 0) + 1));
-      }
+    setOwnedCardIds((prev) => {
+      const next = new Set(prev);
+      next.add(savedId);
+      return next;
+    });
+    if (savedSetId) {
+      setOwnedBySet((prev) => new Map(prev).set(savedSetId, (prev.get(savedSetId) ?? 0) + 1));
     }
   };
 
