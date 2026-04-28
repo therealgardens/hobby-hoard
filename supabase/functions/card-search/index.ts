@@ -221,15 +221,33 @@ Deno.serve(async (req) => {
       if (error) console.error("upsert error", error);
     }
 
-    // Return rows from cache (with proper UUIDs)
-    const ids = results.map((r) => r.external_id);
-    const { data: cached } = await admin
-      .from("cards")
-      .select("*")
-      .eq("game", body.game)
-      .in("external_id", ids);
+    // Return rows from cache (with proper UUIDs). Guard against empty `ids`,
+    // which would otherwise cause `.in()` to behave unexpectedly.
+    const ids = results.map((r) => r.external_id).filter(Boolean);
+    let cached: any[] = [];
+    if (ids.length > 0) {
+      const { data } = await admin
+        .from("cards")
+        .select("*")
+        .eq("game", body.game)
+        .in("external_id", ids);
+      cached = data ?? [];
+    } else if (body.setId && body.game === "onepiece") {
+      // No fresh results — fall back to anything we already have cached for this set.
+      const id = body.setId.toUpperCase().replace(/-/g, "");
+      const dashed = id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
+      const { data } = await admin
+        .from("cards")
+        .select("*")
+        .eq("game", body.game)
+        .or(
+          `set_name.ilike.%[${id}]%,set_name.ilike.%[${dashed}]%,code.ilike.${id}-%`,
+        )
+        .limit(500);
+      cached = data ?? [];
+    }
 
-    return new Response(JSON.stringify({ cards: cached ?? [] }), {
+    return new Response(JSON.stringify({ cards: cached }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
