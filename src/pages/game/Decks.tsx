@@ -115,34 +115,49 @@ export default function Decks() {
     }));
   };
 
+  const ensureCardId = async (code: string): Promise<string | null> => {
+    const { data: existing } = await supabase
+      .from("cards").select("id").eq("game", "onepiece").eq("code", code).maybeSingle();
+    if (existing?.id) return existing.id;
+    // Trigger sync via edge function, then re-query
+    await supabase.functions.invoke("card-search", { body: { game: "onepiece", query: code } });
+    const { data: refreshed } = await supabase
+      .from("cards").select("id").eq("game", "onepiece").eq("code", code).maybeSingle();
+    return refreshed?.id ?? null;
+  };
+
   const addOne = async (a: typeof analysis[number]) => {
-    if (!a.cardId) return toast.error("Card not synced yet");
     const { data: u } = await supabase.auth.getUser();
     if (!u.user) return;
+    const cardId = a.cardId ?? await ensureCardId(a.code);
+    if (!cardId) return toast.error(`Card ${a.code} not found in catalog`);
     const { error } = await supabase.from("collection_entries").insert({
-      user_id: u.user.id, card_id: a.cardId, game: "onepiece",
+      user_id: u.user.id, card_id: cardId, game: "onepiece",
       rarity: null, language: "EN", quantity: 1,
     });
     if (error) return toast.error(error.message);
-    setAnalysis(prev => prev.map(p => p.code === a.code ? { ...p, have: p.have + 1 } : p));
+    setAnalysis(prev => prev.map(p => p.code === a.code ? { ...p, have: p.have + 1, cardId } : p));
+    toast.success(`Added ${a.name ?? a.code}`);
   };
 
   const removeOne = async (a: typeof analysis[number]) => {
-    if (!a.cardId || a.have <= 0) return;
+    if (a.have <= 0) return;
     const { data: u } = await supabase.auth.getUser();
     if (!u.user) return;
+    const cardId = a.cardId ?? await ensureCardId(a.code);
+    if (!cardId) return;
     const { data: rows } = await supabase
       .from("collection_entries")
       .select("id")
       .eq("user_id", u.user.id)
-      .eq("card_id", a.cardId)
+      .eq("card_id", cardId)
       .order("created_at", { ascending: false })
       .limit(1);
     const target = rows?.[0]?.id;
     if (!target) return;
     const { error } = await supabase.from("collection_entries").delete().eq("id", target);
     if (error) return toast.error(error.message);
-    setAnalysis(prev => prev.map(p => p.code === a.code ? { ...p, have: Math.max(0, p.have - 1) } : p));
+    setAnalysis(prev => prev.map(p => p.code === a.code ? { ...p, have: Math.max(0, p.have - 1), cardId } : p));
   };
 
   return (
@@ -224,7 +239,7 @@ export default function Decks() {
                         size="icon"
                         variant="outline"
                         className="h-6 w-6"
-                        disabled={!a.cardId || a.have <= 0}
+                        disabled={a.have <= 0}
                         onClick={() => removeOne(a)}
                       >
                         <Minus className="h-3 w-3" />
@@ -234,7 +249,7 @@ export default function Decks() {
                         size="icon"
                         variant="outline"
                         className="h-6 w-6"
-                        disabled={!a.cardId}
+                        disabled={false}
                         onClick={() => addOne(a)}
                       >
                         <Plus className="h-3 w-3" />
