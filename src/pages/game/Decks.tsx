@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Swords, Check, X } from "lucide-react";
+import { Plus, Swords, Check, X, Minus } from "lucide-react";
 import { toast } from "sonner";
 import type { Tables } from "@/integrations/supabase/types";
 import { proxiedImage } from "@/lib/game";
@@ -115,6 +115,36 @@ export default function Decks() {
     }));
   };
 
+  const addOne = async (a: typeof analysis[number]) => {
+    if (!a.cardId) return toast.error("Card not synced yet");
+    const { data: u } = await supabase.auth.getUser();
+    if (!u.user) return;
+    const { error } = await supabase.from("collection_entries").insert({
+      user_id: u.user.id, card_id: a.cardId, game: "onepiece",
+      rarity: null, language: "EN", quantity: 1,
+    });
+    if (error) return toast.error(error.message);
+    setAnalysis(prev => prev.map(p => p.code === a.code ? { ...p, have: p.have + 1 } : p));
+  };
+
+  const removeOne = async (a: typeof analysis[number]) => {
+    if (!a.cardId || a.have <= 0) return;
+    const { data: u } = await supabase.auth.getUser();
+    if (!u.user) return;
+    const { data: rows } = await supabase
+      .from("collection_entries")
+      .select("id")
+      .eq("user_id", u.user.id)
+      .eq("card_id", a.cardId)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const target = rows?.[0]?.id;
+    if (!target) return;
+    const { error } = await supabase.from("collection_entries").delete().eq("id", target);
+    if (error) return toast.error(error.message);
+    setAnalysis(prev => prev.map(p => p.code === a.code ? { ...p, have: Math.max(0, p.have - 1) } : p));
+  };
+
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
@@ -186,9 +216,30 @@ export default function Decks() {
                     {ok ? <Check className="h-3 w-3 text-green-600" /> : <X className="h-3 w-3 text-destructive" />}
                     {a.have}/{a.needed}
                   </div>
-                  <div className="p-2 bg-card">
+                  <div className="p-2 bg-card space-y-1">
                     <p className="text-xs font-semibold truncate">{a.name ?? a.code}</p>
                     <p className="text-[10px] text-muted-foreground font-mono">{a.code}</p>
+                    <div className="flex items-center justify-between gap-1 pt-1">
+                      <Button
+                        size="icon"
+                        variant="outline"
+                        className="h-6 w-6"
+                        disabled={!a.cardId || a.have <= 0}
+                        onClick={() => removeOne(a)}
+                      >
+                        <Minus className="h-3 w-3" />
+                      </Button>
+                      <span className="text-xs font-semibold tabular-nums">{a.have}</span>
+                      <Button
+                        size="icon"
+                        variant="outline"
+                        className="h-6 w-6"
+                        disabled={!a.cardId}
+                        onClick={() => addOne(a)}
+                      >
+                        <Plus className="h-3 w-3" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
               );
