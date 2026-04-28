@@ -64,32 +64,21 @@ export default function MasterSets() {
     setActiveSet(null);
     setQuery("");
     (async () => {
-      const [{ data: setsData, error: setsErr }, userRes] = await Promise.all([
-        supabase.functions.invoke("card-sets", {
-          method: "GET" as never,
-          // edge function reads game from query string
-          body: undefined as never,
-          // @ts-expect-error - functions.invoke supports headers but not querystring directly; we use fetch fallback
-        }),
-        supabase.auth.getUser(),
-      ]);
-      // Fallback: call via fetch to pass query string
+      // Fetch sets via direct GET (edge function reads ?game=)
       let setsList: SetInfo[] = [];
-      if (setsErr || !setsData) {
-        try {
-          const res = await fetch(
-            `https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/functions/v1/card-sets?game=${game}`,
-            { headers: { apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY } },
-          );
-          const json = await res.json();
-          setsList = json.sets ?? [];
-        } catch (e) {
-          console.error(e);
-        }
-      } else {
-        setsList = (setsData as { sets: SetInfo[] }).sets ?? [];
+      try {
+        const res = await fetch(
+          `https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/functions/v1/card-sets?game=${game}`,
+          { headers: { apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY } },
+        );
+        const json = await res.json();
+        setsList = json.sets ?? [];
+      } catch (e) {
+        console.error(e);
       }
       setSets(setsList);
+
+      const userRes = await supabase.auth.getUser();
 
       const uid = userRes.data.user?.id;
       if (uid) {
