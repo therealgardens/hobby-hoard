@@ -43,3 +43,17 @@ export function cardImage(
   return undefined;
 }
 
+export function cardImageCandidates(
+  game: Game | string | null | undefined,
+  code: string | null | undefined,
+  imageUrl?: string | null,
+): string[] {
+  const urls: string[] = [];
+  if (imageUrl) urls.push(imageUrl);
+  if (game === "onepiece" && code) {
+    urls.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${code}.png`);
+    urls.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${code.replace(/_p\d+$/i, "")}.png`);
+  }
+  return Array.from(new Set(urls)).map((url) => proxiedImage(url)).filter(Boolean) as string[];
+}
+

@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Search, Plus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { cardImage, type Game } from "@/lib/game";
+import { cardImageCandidates, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 
 type CardRow = Tables<"cards">;
@@ -85,16 +85,9 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
       {results.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           {results.map((c) => {
-            const img = cardImage(c.game, c.code, c.image_small);
             return (
             <Card key={c.id} className="overflow-hidden bg-gradient-card shadow-soft hover:shadow-card transition-shadow">
-              {img ? (
-                <img src={img} alt={c.name} loading="lazy" className="w-full card-aspect object-cover" onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")} />
-              ) : (
-                <div className="w-full card-aspect bg-muted flex items-center justify-center text-muted-foreground text-xs">
-                  No image
-                </div>
-              )}
+              <CardImg card={c} />
               <div className="p-2">
                 <p className="text-sm font-semibold truncate">{c.name}</p>
                 <p className="text-xs text-muted-foreground truncate">
@@ -112,5 +105,29 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
         </div>
       )}
     </div>
+  );
+}
+
+function CardImg({ card }: { card: CardRow }) {
+  const candidates = cardImageCandidates(card.game, card.code, card.image_small ?? card.image_large);
+  const [idx, setIdx] = useState(0);
+  const src = candidates[idx];
+
+  if (!src) {
+    return (
+      <div className="w-full card-aspect bg-muted flex items-center justify-center text-muted-foreground text-xs">
+        No image
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={card.name}
+      loading="lazy"
+      className="w-full card-aspect object-cover"
+      onError={() => setIdx((i) => i + 1)}
+    />
   );
 }
