@@ -59,22 +59,25 @@ async function searchPokemon(query: string, setId?: string) {
 }
 
 async function searchOnePiece(query: string, setId?: string) {
-  // Public One Piece TCG API: https://docs.apitcg.com/
   const params = new URLSearchParams();
   if (query) {
-    if (/^[a-z]{2}\d+-\d+/i.test(query.trim())) {
+    if (/^[a-z]{2,3}\d{2,3}-\d+/i.test(query.trim())) {
       params.set("code", query.trim().toUpperCase());
     } else {
       params.set("name", query.trim());
     }
   }
-  if (setId) params.set("set_id", setId);
-  const url = `https://apitcg.com/api/one-piece/cards?${params.toString()}`;
+  if (setId) {
+    // apitcg expects e.g. "OP14"
+    params.set("set_id", setId.toUpperCase());
+    params.set("limit", "250");
+  }
+  const url = `https://www.apitcg.com/api/one-piece/cards?${params.toString()}`;
   const res = await fetch(url, {
     headers: { "x-api-key": Deno.env.get("APITCG_API_KEY") ?? "" },
   });
   if (!res.ok) {
-    // Fallback: try unauthenticated open mirror
+    if (!query) return [];
     const fallback = await fetch(
       `https://optcgapi.com/api/Cards/${encodeURIComponent(
         query.trim().toUpperCase(),
