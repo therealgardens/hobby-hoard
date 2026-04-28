@@ -57,7 +57,31 @@ function cleanName(setName: string): string {
 
 async function onePieceSets(): Promise<SetOut[]> {
   const map = new Map<string, SetOut>();
-  // Try API
+
+  // Primary: optcgapi has the full set list
+  try {
+    const res = await fetch("https://optcgapi.com/api/allSets/");
+    if (res.ok) {
+      const arr = await res.json();
+      for (const s of arr || []) {
+        const raw = String(s.set_id || "").toUpperCase();
+        if (!raw) continue;
+        // Some entries are dual ids like "OP14-EB04" — keep the first canonical one
+        const primary = raw.split("-EB")[0].split("-OP")[0];
+        const id = primary.replace(/-/g, "");
+        map.set(id, {
+          id,
+          name: s.set_name,
+          series: null,
+          releaseDate: null,
+          total: null,
+          logo: null,
+        });
+      }
+    }
+  } catch (_) {}
+
+  // Augment with apitcg metadata (release date, totals, logo) when available
   try {
     const res = await fetch("https://www.apitcg.com/api/one-piece/sets", {
       headers: { "x-api-key": Deno.env.get("APITCG_API_KEY") ?? "" },
@@ -65,16 +89,18 @@ async function onePieceSets(): Promise<SetOut[]> {
     if (res.ok) {
       const json = await res.json();
       for (const s of json.data || []) {
-        const id = String(s.id || "").toUpperCase();
+        const id = String(s.id || "").toUpperCase().replace(/-/g, "");
         if (!id) continue;
-        map.set(id, {
+        const existing = map.get(id);
+        const enriched: SetOut = {
           id,
-          name: s.name,
+          name: existing?.name ?? s.name,
           series: s.series ?? null,
           releaseDate: s.release_date ?? null,
           total: s.total_cards ?? s.printed_total ?? null,
           logo: s.logo_url ? `https://www.apitcg.com${s.logo_url}` : null,
-        });
+        };
+        map.set(id, enriched);
       }
     }
   } catch (_) {}

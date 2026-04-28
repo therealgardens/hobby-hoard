@@ -60,17 +60,17 @@ async function searchPokemon(query: string, setId?: string) {
 
 async function searchOnePiece(query: string, setId?: string) {
   const params = new URLSearchParams();
-  if (query) {
+  if (setId) {
+    // apitcg has no set filter; use the `code` substring filter instead.
+    // Normalize "OP-01" -> "OP01" since codes look like "OP01-060".
+    params.set("code", setId.toUpperCase().replace(/-/g, ""));
+    params.set("limit", "250");
+  } else if (query) {
     if (/^[a-z]{2,3}\d{2,3}-\d+/i.test(query.trim())) {
       params.set("code", query.trim().toUpperCase());
     } else {
       params.set("name", query.trim());
     }
-  }
-  if (setId) {
-    // apitcg expects e.g. "OP14"
-    params.set("set_id", setId.toUpperCase());
-    params.set("limit", "250");
   }
   const url = `https://www.apitcg.com/api/one-piece/cards?${params.toString()}`;
   const res = await fetch(url, {
