@@ -165,15 +165,18 @@ export default function Decks() {
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
             {analysis.map(a => {
               const ok = a.have >= a.needed;
+              const owned = a.have > 0;
+              // Fallback to the official One Piece card image when API didn't return one
+              const imgSrc = a.imageSmall ?? `https://en.onepiece-cardgame.com/images/cardlist/card/${a.code}.png`;
               return (
                 <div key={a.code} className="relative rounded-lg overflow-hidden bg-gradient-card shadow-soft">
-                  {a.imageSmall ? (
-                    <img src={a.imageSmall} alt={a.name ?? a.code} loading="lazy" className="w-full card-aspect object-cover" />
-                  ) : (
-                    <div className="w-full card-aspect bg-muted flex items-center justify-center text-xs text-muted-foreground p-2 text-center">
-                      {a.code}<br/>(no image)
-                    </div>
-                  )}
+                  <img
+                    src={imgSrc}
+                    alt={a.name ?? a.code}
+                    loading="lazy"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = "hidden"; }}
+                    className={`w-full card-aspect object-cover transition-opacity ${owned ? "opacity-100" : "opacity-30 grayscale"}`}
+                  />
                   <div className="absolute top-1 right-1 flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-background/90 shadow">
                     {ok ? <Check className="h-3 w-3 text-green-600" /> : <X className="h-3 w-3 text-destructive" />}
                     {a.have}/{a.needed}
@@ -188,12 +191,7 @@ export default function Decks() {
           </div>
           {analysis.some(a => a.have > 0 && a.have < a.needed) && (
             <p className="text-xs text-muted-foreground pt-2">
-              💡 You already own some copies — make sure you didn't forget them when building.
-            </p>
-          )}
-          {analysis.some(a => !a.cardId) && (
-            <p className="text-xs text-muted-foreground">
-              ℹ️ Cards without images aren't in the cache yet — search for them once in Master Sets to fetch them.
+              💡 Faded cards are ones you don't own yet.
             </p>
           )}
         </DialogContent>
