@@ -10,6 +10,7 @@ import { CardSearch } from "@/components/CardSearch";
 import { toast } from "sonner";
 import { cardImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
+import { withDbRetry } from "@/lib/supabaseRetry";
 import {
   Dialog,
   DialogContent,
@@ -33,29 +34,42 @@ export default function Wanted() {
       setItems([]);
       return;
     }
-    const { data } = await supabase
-      .from("wanted_cards")
-      .select("*, card:cards(*)")
-      .eq("game", game)
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
-    setItems((data as any) ?? []);
+    const { data: wantedRows, error } = await withDbRetry(() =>
+      supabase
+        .from("wanted_cards")
+        .select("*")
+        .eq("game", game)
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false }),
+    );
+    if (error) return toast.error(error.message);
+    const rows = (wantedRows ?? []) as Tables<"wanted_cards">[];
+    const cardIds = [...new Set(rows.map((row) => row.card_id))];
+    const { data: cards, error: cardsError } = cardIds.length
+      ? await withDbRetry(() => supabase.from("cards").select("*").in("id", cardIds))
+      : { data: [], error: null };
+    if (cardsError) return toast.error(cardsError.message);
+    const cardsById = new Map(((cards ?? []) as Tables<"cards">[]).map((card) => [card.id, card]));
+    setItems(rows.map((row) => ({ ...row, card: cardsById.get(row.card_id) ?? null })));
   };
   useEffect(() => { load(); }, [game, user?.id, loading]);
 
   const add = async (card: Tables<"cards">) => {
     if (!user) return toast.error("Not signed in");
     if (!game) return;
-    const { error } = await supabase.from("wanted_cards").insert({
-      user_id: user.id, card_id: card.id, game,
-    });
+    const { error } = await withDbRetry(() =>
+      supabase.from("wanted_cards").insert({
+        user_id: user.id, card_id: card.id, game,
+      }),
+    );
     if (error) return toast.error(error.message);
     toast.success("Added to wishlist");
     load();
   };
 
   const remove = async (id: string) => {
-    await supabase.from("wanted_cards").delete().eq("id", id);
+    const { error } = await withDbRetry(() => supabase.from("wanted_cards").delete().eq("id", id));
+    if (error) return toast.error(error.message);
     setEditing(null);
     load();
   };
@@ -68,10 +82,12 @@ export default function Wanted() {
   const saveQty = async () => {
     if (!editing) return;
     const q = Math.max(1, editQty);
-    const { error } = await supabase
-      .from("wanted_cards")
-      .update({ quantity: q })
-      .eq("id", editing.id);
+    const { error } = await withDbRetry(() =>
+      supabase
+        .from("wanted_cards")
+        .update({ quantity: q })
+        .eq("id", editing.id),
+    );
     if (error) return toast.error(error.message);
     toast.success("Updated");
     setEditing(null);
