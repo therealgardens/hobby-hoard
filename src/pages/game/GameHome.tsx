@@ -103,7 +103,6 @@ export default function GameHome() {
           decks: String((decksRes as any).count ?? 0),
           pokedex: String((pokedexRes as any).count ?? 0),
         };
-        console.log("[GameHome] counts loaded", next);
         setCounts(next);
       } catch (e) {
         console.error("[GameHome] failed to load counts", e);
