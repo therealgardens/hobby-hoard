@@ -11,7 +11,7 @@ export default function GameLayout() {
   const nav = useNavigate();
   const { signOut } = useAuth();
   const { t } = useTranslation();
-  if (!game || (game !== "pokemon" && game !== "onepiece")) {
+  if (!game || (game !== "pokemon" && game !== "onepiece" && game !== "yugioh")) {
     nav("/");
     return null;
   }
@@ -25,10 +25,13 @@ export default function GameLayout() {
     { to: `wanted`, label: "Wanted", icon: Heart },
     { to: `duplicates`, label: "Duplicates", icon: Copy },
     ...(game === "pokemon" ? [{ to: `pokedex`, label: "Pokédex", icon: ListChecks }] : []),
-    ...(game === "onepiece" ? [{ to: `decks`, label: "Decks", icon: Swords }] : []),
+    ...(game === "onepiece" || game === "yugioh" ? [{ to: `decks`, label: "Decks", icon: Swords }] : []),
   ];
 
-  const accent = game === "pokemon" ? "bg-gradient-pokemon" : "bg-gradient-onepiece";
+  const accent =
+    game === "pokemon" ? "bg-gradient-pokemon"
+    : game === "onepiece" ? "bg-gradient-onepiece"
+    : "bg-gradient-yugioh";
 
   return (
     <div className="min-h-screen flex flex-col bg-background">

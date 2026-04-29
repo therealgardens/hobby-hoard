@@ -74,7 +74,7 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
     <div>
       <form onSubmit={onSubmit} className="flex gap-2 mb-6">
         <Input
-          placeholder={`Search by name or code (e.g. ${game === "pokemon" ? "Pikachu or sv1-25" : "Luffy or OP01-001"})`}
+          placeholder={`Search by name or code (e.g. ${game === "pokemon" ? "Pikachu or sv1-25" : game === "yugioh" ? "Dark Magician or LOB-005" : "Luffy or OP01-001"})`}
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />

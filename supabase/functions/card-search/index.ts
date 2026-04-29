@@ -9,7 +9,7 @@ const corsHeaders = {
 };
 
 interface SearchBody {
-  game: "pokemon" | "onepiece";
+  game: "pokemon" | "onepiece" | "yugioh";
   query?: string;
   setId?: string;
 }
@@ -233,11 +233,106 @@ async function searchOnePiece(query: string, setId?: string) {
   return merged;
 }
 
+// --- Yu-Gi-Oh! (YGOPRODeck, free public API) -----------------------------
+// Each YGO card has multiple printings ("card_sets"). We explode each printing
+// into its own row with the printing code as `code`/`external_id` so master
+// sets and binders behave like the other games.
+function explodeYugiohCard(c: any): any[] {
+  const printings = Array.isArray(c.card_sets) ? c.card_sets : [];
+  const baseImage = c.card_images?.[0]?.image_url ?? null;
+  const baseImageSmall = c.card_images?.[0]?.image_url_small ?? null;
+  if (printings.length === 0) {
+    const code = `YGO-${c.id}`;
+    return [{
+      game: "yugioh" as const,
+      external_id: code,
+      code,
+      name: c.name,
+      set_id: null,
+      set_name: null,
+      number: null,
+      rarity: null,
+      image_small: baseImageSmall,
+      image_large: baseImage,
+      pokedex_number: null,
+      data: c,
+    }];
+  }
+  return printings.map((p: any) => ({
+    game: "yugioh" as const,
+    external_id: p.set_code,
+    code: p.set_code,
+    name: c.name,
+    set_id: (p.set_code ?? "").split("-")[0] || null,
+    set_name: p.set_name ?? null,
+    number: (p.set_code ?? "").split("-")[1] ?? null,
+    rarity: p.set_rarity ?? null,
+    image_small: baseImageSmall,
+    image_large: baseImage,
+    pokedex_number: null,
+    data: { ...c, _printing: p },
+  }));
+}
+
+async function searchYugioh(query: string, setId?: string) {
+  const params = new URLSearchParams();
+  if (setId) {
+    // Look up the set name for this code, then query by it.
+    try {
+      const setRes = await fetch("https://db.ygoprodeck.com/api/v7/cardsets.php");
+      if (setRes.ok) {
+        const arr = await setRes.json();
+        const match = (arr || []).find(
+          (s: any) =>
+            String(s.set_code || "").toUpperCase() === setId.toUpperCase() ||
+            String(s.set_name || "").toUpperCase() === setId.toUpperCase(),
+        );
+        if (match?.set_name) params.set("cardset", match.set_name);
+      }
+    } catch (_) {}
+    if (!params.has("cardset")) params.set("cardset", setId);
+  } else {
+    const q = query.trim();
+    // YGO printing codes look like "LOB-001", "MRD-EN001"
+    if (/^[A-Z]{2,4}-(?:[A-Z]{2})?\d{1,4}/i.test(q)) {
+      // No code search endpoint; fall back to fname which scans names.
+      params.set("fname", q);
+    } else {
+      params.set("fname", q);
+    }
+  }
+  const url = `https://db.ygoprodeck.com/api/v7/cardinfo.php?${params.toString()}`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const json = await res.json();
+    const cards = json?.data ?? [];
+    const out: any[] = [];
+    for (const c of cards) {
+      // When searching a set, only keep printings from that set.
+      const exploded = explodeYugiohCard(c);
+      if (setId) {
+        const wantSet = setId.toUpperCase();
+        out.push(...exploded.filter((p) =>
+          (p.set_id ?? "").toUpperCase() === wantSet ||
+          (p.code ?? "").toUpperCase().startsWith(wantSet + "-"),
+        ));
+      } else {
+        out.push(...exploded);
+      }
+    }
+    return out;
+  } catch (e) {
+    console.error("ygoprodeck error", e);
+    return [];
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
     const body = (await req.json()) as SearchBody;
-    if (!body?.game || !["pokemon", "onepiece"].includes(body.game)) {
+    if (!body?.game || !["pokemon", "onepiece", "yugioh"].includes(body.game)) {
       return new Response(JSON.stringify({ error: "invalid game" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -253,7 +348,9 @@ Deno.serve(async (req) => {
     const results =
       body.game === "pokemon"
         ? await searchPokemon(query, body.setId)
-        : await searchOnePiece(query, body.setId);
+        : body.game === "onepiece"
+        ? await searchOnePiece(query, body.setId)
+        : await searchYugioh(query, body.setId);
 
     // Dedupe by external_id to avoid "ON CONFLICT cannot affect row a second time".
     const seen = new Set<string>();
@@ -288,7 +385,7 @@ Deno.serve(async (req) => {
           created_at: new Date().toISOString(),
         }));
       }
-    } else if (body.setId && body.game === "onepiece") {
+    } else if (body.setId && (body.game === "onepiece" || body.game === "yugioh")) {
       const id = body.setId.toUpperCase().replace(/-/g, "");
       const { data } = await admin
         .from("cards")

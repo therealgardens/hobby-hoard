@@ -1,10 +1,10 @@
-export type Game = "pokemon" | "onepiece";
+export type Game = "pokemon" | "onepiece" | "yugioh";
 
 const KEY = "tcg.activeGame";
 
 export function getActiveGame(): Game | null {
   const v = localStorage.getItem(KEY);
-  return v === "pokemon" || v === "onepiece" ? v : null;
+  return v === "pokemon" || v === "onepiece" || v === "yugioh" ? v : null;
 }
 
 export function setActiveGame(g: Game) {
@@ -18,6 +18,7 @@ export function clearActiveGame() {
 export const GAME_LABEL: Record<Game, string> = {
   pokemon: "Pokémon",
   onepiece: "One Piece",
+  yugioh: "Yu-Gi-Oh!",
 };
 
 // Wraps an external image URL through our edge proxy so the browser can
@@ -40,6 +41,9 @@ export function cardImage(
   if (game === "onepiece" && code) {
     return proxiedImage(`https://en.onepiece-cardgame.com/images/cardlist/card/${code}.png`);
   }
+  if (game === "yugioh" && code) {
+    return proxiedImage(`https://images.ygoprodeck.com/images/cards/${code}.jpg`);
+  }
   return undefined;
 }
 
@@ -54,6 +58,9 @@ export function cardImageCandidates(
     urls.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${code}.png`);
     urls.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${code.replace(/_p\d+$/i, "")}.png`);
   }
+  if (game === "yugioh" && code) {
+    urls.push(`https://images.ygoprodeck.com/images/cards/${code}.jpg`);
+    urls.push(`https://images.ygoprodeck.com/images/cards_small/${code}.jpg`);
+  }
   return Array.from(new Set(urls)).map((url) => proxiedImage(url)).filter(Boolean) as string[];
 }
-
