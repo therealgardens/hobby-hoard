@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Search } from "lucide-react";
+import { Search, Loader2 } from "lucide-react";
 import { cardImageCandidates, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
+import { withDbRetry } from "@/lib/supabaseRetry";
 import { toast } from "sonner";
 
 type CardRow = Tables<"cards">;
@@ -22,13 +24,52 @@ type Entry = {
   card: CardRow | null;
 };
 
+const PAGE_SIZE = 48;
+
 export default function Collection() {
   const { game } = useParams<{ game: Game }>();
   const { user, loading: authLoading } = useAuth();
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [done, setDone] = useState(false);
   const [q, setQ] = useState("");
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
+  const fetchPage = useCallback(
+    async (from: number) => {
+      if (!user || !game) return { rows: [] as Entry[], end: true };
+      const { data: rows, error } = await withDbRetry(() =>
+        supabase
+          .from("collection_entries")
+          .select("id, card_id, language, quantity, rarity, created_at")
+          .eq("user_id", user.id)
+          .eq("game", game)
+          .order("created_at", { ascending: true })
+          .range(from, from + PAGE_SIZE - 1),
+      );
+      if (error) {
+        toast.error(error.message);
+        return { rows: [], end: true };
+      }
+      const ids = Array.from(new Set((rows ?? []).map((r) => r.card_id)));
+      let byId = new Map<string, CardRow>();
+      if (ids.length) {
+        const { data: cards } = await withDbRetry(() =>
+          supabase
+            .from("cards")
+            .select("id, game, code, name, rarity, set_name, image_small, image_large")
+            .in("id", ids),
+        );
+        byId = new Map((cards ?? []).map((c: any) => [c.id, c as CardRow]));
+      }
+      const mapped = (rows ?? []).map((r) => ({ ...r, card: byId.get(r.card_id) ?? null }));
+      return { rows: mapped, end: (rows?.length ?? 0) < PAGE_SIZE };
+    },
+    [user, game],
+  );
+
+  // Initial load
   useEffect(() => {
     if (!game || authLoading) return;
     if (!user) {
@@ -36,31 +77,43 @@ export default function Collection() {
       setLoading(false);
       return;
     }
+    let cancelled = false;
     setLoading(true);
-    (async () => {
-      const { data: rows, error } = await supabase
-        .from("collection_entries")
-        .select("id, card_id, language, quantity, rarity, created_at")
-        .eq("user_id", user.id)
-        .eq("game", game)
-        .order("created_at", { ascending: true });
-      if (error) {
-        toast.error(error.message);
-        setLoading(false);
-        return;
-      }
-      const ids = Array.from(new Set((rows ?? []).map((r) => r.card_id)));
-      let byId = new Map<string, CardRow>();
-      if (ids.length) {
-        const { data: cards } = await supabase.from("cards").select("*").in("id", ids);
-        byId = new Map((cards ?? []).map((c) => [c.id, c as CardRow]));
-      }
-      setEntries(
-        (rows ?? []).map((r) => ({ ...r, card: byId.get(r.card_id) ?? null })),
-      );
+    setDone(false);
+    setEntries([]);
+    fetchPage(0).then(({ rows, end }) => {
+      if (cancelled) return;
+      setEntries(rows);
+      setDone(end);
       setLoading(false);
-    })();
-  }, [game, user?.id, authLoading]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [game, user?.id, authLoading, fetchPage]);
+
+  const loadMore = useCallback(async () => {
+    if (loading || loadingMore || done) return;
+    setLoadingMore(true);
+    const { rows, end } = await fetchPage(entries.length);
+    setEntries((prev) => [...prev, ...rows]);
+    setDone(end);
+    setLoadingMore(false);
+  }, [entries.length, loading, loadingMore, done, fetchPage]);
+
+  // Infinite-scroll sentinel
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || done) return;
+    const io = new IntersectionObserver(
+      (es) => {
+        if (es[0]?.isIntersecting) loadMore();
+      },
+      { rootMargin: "400px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [loadMore, done]);
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -114,31 +167,45 @@ export default function Collection() {
             : "No cards match your search."}
         </p>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          {filtered.map((e) => (
-            <Card key={e.id} className="overflow-hidden bg-gradient-card relative">
-              {e.card ? (
-                <CardImg card={e.card} />
-              ) : (
-                <div className="w-full card-aspect bg-muted flex items-center justify-center text-muted-foreground text-xs">
-                  Unknown card
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+            {filtered.map((e) => (
+              <Card key={e.id} className="overflow-hidden bg-gradient-card relative">
+                {e.card ? (
+                  <CardImg card={e.card} />
+                ) : (
+                  <div className="w-full card-aspect bg-muted flex items-center justify-center text-muted-foreground text-xs">
+                    Unknown card
+                  </div>
+                )}
+                {e.quantity > 1 && (
+                  <Badge className="absolute top-2 right-2">×{e.quantity}</Badge>
+                )}
+                <div className="p-2">
+                  <p className="text-sm font-semibold truncate">
+                    {e.card?.name ?? "Unknown"}
+                  </p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {e.card?.code ?? "—"}
+                    {e.rarity ? ` · ${e.rarity}` : ""}
+                  </p>
                 </div>
+              </Card>
+            ))}
+          </div>
+
+          {!done && (
+            <div ref={sentinelRef} className="flex justify-center py-6">
+              {loadingMore ? (
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              ) : (
+                <Button variant="ghost" size="sm" onClick={loadMore}>
+                  Load more
+                </Button>
               )}
-              {e.quantity > 1 && (
-                <Badge className="absolute top-2 right-2">×{e.quantity}</Badge>
-              )}
-              <div className="p-2">
-                <p className="text-sm font-semibold truncate">
-                  {e.card?.name ?? "Unknown"}
-                </p>
-                <p className="text-xs text-muted-foreground truncate">
-                  {e.card?.code ?? "—"}
-                  {e.rarity ? ` · ${e.rarity}` : ""}
-                </p>
-              </div>
-            </Card>
-          ))}
-        </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
