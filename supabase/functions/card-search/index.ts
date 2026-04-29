@@ -57,12 +57,42 @@ async function withDbRetry<T extends { error: any }>(
   return last as T;
 }
 
+// Split a free-text query like "yamato eb04" into a name part and an optional
+// set hint. A token is treated as a set hint when it looks like a TCG set code
+// (2–4 letters optionally followed by 1–3 digits, e.g. "eb04", "op14", "st28",
+// "sv1", "lob", "me1"). Pure printing codes like "op01-001" are left in the
+// name part so the caller's existing code-detection still triggers.
+function splitQuery(query: string): { name: string; setHint: string | null } {
+  const tokens = query.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length <= 1) return { name: query.trim(), setHint: null };
+  let setHint: string | null = null;
+  const nameTokens: string[] = [];
+  for (const t of tokens) {
+    const isPrintingCode = /-/.test(t); // e.g. op01-001, lob-en001
+    const looksLikeSet = !isPrintingCode && /^[a-z]{2,4}\d{0,3}$/i.test(t) && /[a-z]/i.test(t);
+    if (looksLikeSet && !setHint) {
+      setHint = t;
+    } else {
+      nameTokens.push(t);
+    }
+  }
+  return { name: nameTokens.join(" ").trim(), setHint };
+}
+
 async function searchPokemon(query: string, setId?: string) {
   // https://docs.pokemontcg.io/
   const parts: string[] = [];
-  if (setId) parts.push(`set.id:${setId}`);
-  if (query) {
-    const q = query.trim();
+  let effectiveSetId = setId;
+  let q = query.trim();
+  if (!setId && q) {
+    const split = splitQuery(q);
+    if (split.setHint) {
+      effectiveSetId = split.setHint.toLowerCase();
+      q = split.name;
+    }
+  }
+  if (effectiveSetId) parts.push(`set.id:${effectiveSetId}`);
+  if (q) {
     if (/^[a-z0-9]+-\d+/i.test(q)) {
       parts.push(`id:${q.toLowerCase()}`);
     } else if (/^\d+$/.test(q)) {
@@ -238,14 +268,19 @@ async function searchOnePiece(query: string, setId?: string) {
 
   // Free-text search: hit both APIs and merge.
   const merged: any[] = [];
-  const q = query.trim();
-  const isCode = /^[a-z]{2,4}\d{2,3}-\d+/i.test(q);
+  const rawQ = query.trim();
+  const isCode = /^[a-z]{2,4}\d{2,3}-\d+/i.test(rawQ);
+  // Allow "<name> <setHint>" e.g. "yamato eb04" — split into a name + set filter.
+  const split = isCode ? { name: rawQ, setHint: null as string | null } : splitQuery(rawQ);
+  const q = split.name || rawQ;
+  const setFilter = split.setHint ? split.setHint.toUpperCase().replace(/-/g, "") : null;
 
   // apitcg
   try {
     const params = new URLSearchParams();
     if (isCode) params.set("code", q.toUpperCase());
     else params.set("name", q);
+    if (setFilter) params.set("code", setFilter);
     const url = `https://www.apitcg.com/api/one-piece/cards?${params.toString()}&limit=100`;
     const res = await fetch(url, {
       headers: { "x-api-key": Deno.env.get("APITCG_API_KEY") ?? "" },
@@ -259,7 +294,7 @@ async function searchOnePiece(query: string, setId?: string) {
   // optcgapi — by code (returns all variants) or by name scan
   try {
     if (isCode) {
-      const base = q.toUpperCase().replace(/_.*$/, "");
+      const base = rawQ.toUpperCase().replace(/_.*$/, "");
       const arr = await fetchOptcgCardVariants(base);
       for (const c of arr) merged.push(mapOptcgCard(c));
     } else {
@@ -268,7 +303,16 @@ async function searchOnePiece(query: string, setId?: string) {
     }
   } catch (e) { console.error("optcgapi search error", e); }
 
-  return merged;
+  // If a set hint was provided, filter merged results to that set.
+  const filtered = setFilter
+    ? merged.filter((c) => {
+        const code = String(c.code ?? "").toUpperCase().replace(/-/g, "");
+        const setId = String(c.set_id ?? "").toUpperCase().replace(/-/g, "");
+        return code.startsWith(setFilter) || setId === setFilter;
+      })
+    : merged;
+
+  return filtered;
 }
 
 // --- Yu-Gi-Oh! (YGOPRODeck, free public API) -----------------------------
@@ -314,7 +358,19 @@ function explodeYugiohCard(c: any): any[] {
 
 async function searchYugioh(query: string, setId?: string) {
   const params = new URLSearchParams();
-  if (setId) {
+  let effectiveSetId = setId;
+  let q = query.trim();
+
+  // Allow "<name> <setHint>" e.g. "dark magician lob"
+  if (!effectiveSetId && q && !/^[A-Z]{2,4}-(?:[A-Z]{2})?\d{1,4}/i.test(q)) {
+    const split = splitQuery(q);
+    if (split.setHint) {
+      effectiveSetId = split.setHint.toUpperCase();
+      q = split.name;
+    }
+  }
+
+  if (effectiveSetId) {
     // Look up the set name for this code, then query by it.
     try {
       const setRes = await fetch("https://db.ygoprodeck.com/api/v7/cardsets.php");
@@ -322,22 +378,16 @@ async function searchYugioh(query: string, setId?: string) {
         const arr = await setRes.json();
         const match = (arr || []).find(
           (s: any) =>
-            String(s.set_code || "").toUpperCase() === setId.toUpperCase() ||
-            String(s.set_name || "").toUpperCase() === setId.toUpperCase(),
+            String(s.set_code || "").toUpperCase() === effectiveSetId!.toUpperCase() ||
+            String(s.set_name || "").toUpperCase() === effectiveSetId!.toUpperCase(),
         );
         if (match?.set_name) params.set("cardset", match.set_name);
       }
     } catch (_) {}
-    if (!params.has("cardset")) params.set("cardset", setId);
+    if (!params.has("cardset")) params.set("cardset", effectiveSetId);
+    if (q) params.set("fname", q);
   } else {
-    const q = query.trim();
-    // YGO printing codes look like "LOB-001", "MRD-EN001"
-    if (/^[A-Z]{2,4}-(?:[A-Z]{2})?\d{1,4}/i.test(q)) {
-      // No code search endpoint; fall back to fname which scans names.
-      params.set("fname", q);
-    } else {
-      params.set("fname", q);
-    }
+    params.set("fname", q);
   }
   const url = `https://db.ygoprodeck.com/api/v7/cardinfo.php?${params.toString()}`;
   try {
@@ -348,9 +398,9 @@ async function searchYugioh(query: string, setId?: string) {
     const out: any[] = [];
     for (const c of cards) {
       const exploded = explodeYugiohCard(c);
-      if (setId) {
-        // When browsing a set, keep all printings of that set.
-        const wantSet = setId.toUpperCase();
+      if (effectiveSetId) {
+        // When browsing/filtering by a set, keep all printings of that set.
+        const wantSet = effectiveSetId.toUpperCase();
         out.push(...exploded.filter((p) =>
           (p.set_id ?? "").toUpperCase() === wantSet ||
           (p.code ?? "").toUpperCase().startsWith(wantSet + "-"),
