@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, Plus, Search, Star, Trash2 } from "lucide-react";
+import { ArrowLeft, Plus, Search, Star, Trash2, Heart } from "lucide-react";
 import { toast } from "sonner";
 import { cardImageCandidates, proxiedImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
@@ -184,6 +184,35 @@ export default function MasterSets() {
     }
   };
 
+  const toggleWanted = async (c: CardRow) => {
+    if (!game) return;
+    const { data: u } = await supabase.auth.getUser();
+    if (!u.user) return;
+    if (wantedCardIds.has(c.id)) {
+      const { error } = await supabase
+        .from("wanted_cards")
+        .delete()
+        .eq("user_id", u.user.id)
+        .eq("card_id", c.id);
+      if (error) return toast.error(error.message);
+      setWantedCardIds((prev) => {
+        const n = new Set(prev);
+        n.delete(c.id);
+        return n;
+      });
+      toast.success("Removed from wishlist");
+    } else {
+      const { error } = await supabase.from("wanted_cards").insert({
+        user_id: u.user.id,
+        card_id: c.id,
+        game,
+      });
+      if (error) return toast.error(error.message);
+      setWantedCardIds((prev) => new Set(prev).add(c.id));
+      toast.success("Added to wishlist");
+    }
+  };
+
   const saveCard = async () => {
     if (!picked || !game) return;
     const { data: userData } = await supabase.auth.getUser();
@@ -279,6 +308,7 @@ export default function MasterSets() {
           ownedCardIds={ownedCardIds}
           ownedLangByCard={ownedLangByCard}
           wantedCardIds={wantedCardIds}
+          onToggleWanted={toggleWanted}
         />
       ) : (
         <>
@@ -539,6 +569,7 @@ function SetView({
   ownedCardIds,
   ownedLangByCard,
   wantedCardIds,
+  onToggleWanted,
 }: {
   game: Game;
   set: SetInfo;
@@ -548,6 +579,7 @@ function SetView({
   ownedCardIds: Set<string>;
   ownedLangByCard: Map<string, string>;
   wantedCardIds: Set<string>;
+  onToggleWanted: (c: CardRow) => void;
 }) {
   const [cards, setCards] = useState<CardRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -620,11 +652,17 @@ function SetView({
                 className="overflow-hidden bg-gradient-card cursor-pointer hover:shadow-card transition-shadow group relative"
                 onClick={() => onPickCard(c)}
               >
-                {wanted && (
-                  <div className="absolute top-2 left-2 z-10 bg-background/90 rounded-full p-1 shadow">
-                    <Star className="h-3.5 w-3.5 fill-yellow-400 text-yellow-500" />
-                  </div>
-                )}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleWanted(c);
+                  }}
+                  className="absolute top-2 left-2 z-10 p-1.5 rounded-full bg-background/90 shadow hover:bg-background transition-colors"
+                  title={wanted ? "Remove from wishlist" : "Add to wishlist"}
+                >
+                  <Heart className={`h-4 w-4 ${wanted ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
+                </button>
                 {owned && lang && (
                   <div className="absolute top-2 right-2 z-10 bg-background/90 rounded px-1.5 py-0.5 text-xs shadow">
                     {LANG_FLAG[lang] ?? lang}
