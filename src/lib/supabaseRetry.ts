@@ -14,13 +14,15 @@ function isRetriableDbError(error: any) {
   );
 }
 
-export async function withDbRetry<T extends SupabaseResult>(operation: () => PromiseLike<T>, attempts = 4) {
+export async function withDbRetry<T extends SupabaseResult>(operation: () => PromiseLike<T>, attempts = 6) {
   let last: T | null = null;
 
   for (let i = 0; i < attempts; i += 1) {
     last = await operation();
     if (!last.error || !isRetriableDbError(last.error) || i === attempts - 1) return last;
-    await wait(700 * 2 ** i);
+    // Backoff: 400, 800, 1600, 3200, 5000, 5000 ms
+    const delay = Math.min(400 * 2 ** i, 5000);
+    await wait(delay);
   }
 
   return last as T;
