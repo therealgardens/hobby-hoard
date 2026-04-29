@@ -34,16 +34,23 @@ export default function Wanted() {
       setItems([]);
       return;
     }
-    const { data, error } = await withDbRetry(() =>
+    const { data: wantedRows, error } = await withDbRetry(() =>
       supabase
         .from("wanted_cards")
-        .select("*, card:cards(*)")
+        .select("*")
         .eq("game", game)
         .eq("user_id", user.id)
         .order("created_at", { ascending: false }),
     );
     if (error) return toast.error(error.message);
-    setItems((data as any) ?? []);
+    const rows = (wantedRows ?? []) as Tables<"wanted_cards">[];
+    const cardIds = [...new Set(rows.map((row) => row.card_id))];
+    const { data: cards, error: cardsError } = cardIds.length
+      ? await withDbRetry(() => supabase.from("cards").select("*").in("id", cardIds))
+      : { data: [], error: null };
+    if (cardsError) return toast.error(cardsError.message);
+    const cardsById = new Map(((cards ?? []) as Tables<"cards">[]).map((card) => [card.id, card]));
+    setItems(rows.map((row) => ({ ...row, card: cardsById.get(row.card_id) ?? null })));
   };
   useEffect(() => { load(); }, [game, user?.id, loading]);
 
