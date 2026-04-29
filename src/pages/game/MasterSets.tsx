@@ -532,9 +532,6 @@ function SetGrid({
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
       {sets.map((s) => {
-        const owned = ownedBySet.get(s.id) ?? 0;
-        const total = s.total ?? 0;
-        const pct = total > 0 ? Math.min(100, Math.round((owned / total) * 100)) : 0;
         return (
           <Card
             key={s.id}
@@ -549,15 +546,7 @@ function SetGrid({
                   {s.id}{s.releaseDate ? ` · ${s.releaseDate}` : ""}
                 </p>
               </div>
-              <Badge variant={owned > 0 ? "default" : "secondary"}>
-                {owned}{total ? `/${total}` : ""}
-              </Badge>
             </div>
-            {total > 0 && (
-              <div className="mt-3 h-1.5 bg-muted rounded-full overflow-hidden">
-                <div className="h-full bg-primary transition-all" style={{ width: `${pct}%` }} />
-              </div>
-            )}
           </Card>
         );
       })}

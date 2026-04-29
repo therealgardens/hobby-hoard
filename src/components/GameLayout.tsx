@@ -2,7 +2,7 @@ import { NavLink, Outlet, useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { GAME_LABEL, type Game, setActiveGame } from "@/lib/game";
-import { ArrowLeft, BookOpen, Library, Heart, Layers, Copy, Swords, ListChecks, Search, Settings } from "lucide-react";
+import { ArrowLeft, BookOpen, Library, Heart, Layers, Copy, Swords, ListChecks, Search, Settings, FolderHeart } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 
@@ -21,6 +21,7 @@ export default function GameLayout() {
     { to: ``, label: "Home", icon: Library, end: true },
     { to: `search`, label: "Search", icon: Search },
     { to: `master`, label: "Master Sets", icon: Layers },
+    { to: `collection`, label: "My Collection", icon: FolderHeart },
     { to: `binders`, label: "Binders", icon: BookOpen },
     { to: `wanted`, label: "Wanted", icon: Heart },
     { to: `duplicates`, label: "Duplicates", icon: Copy },
