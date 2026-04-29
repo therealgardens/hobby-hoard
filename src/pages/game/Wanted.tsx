@@ -22,6 +22,8 @@ type Wanted = Tables<"wanted_cards"> & { card: Tables<"cards"> | null };
 export default function Wanted() {
   const { game } = useParams<{ game: Game }>();
   const [items, setItems] = useState<Wanted[]>([]);
+  const [editing, setEditing] = useState<Wanted | null>(null);
+  const [editQty, setEditQty] = useState(1);
 
   const load = async () => {
     if (!game) return;
@@ -44,6 +46,25 @@ export default function Wanted() {
 
   const remove = async (id: string) => {
     await supabase.from("wanted_cards").delete().eq("id", id);
+    setEditing(null);
+    load();
+  };
+
+  const openEdit = (w: Wanted) => {
+    setEditing(w);
+    setEditQty(w.quantity ?? 1);
+  };
+
+  const saveQty = async () => {
+    if (!editing) return;
+    const q = Math.max(1, editQty);
+    const { error } = await supabase
+      .from("wanted_cards")
+      .update({ quantity: q })
+      .eq("id", editing.id);
+    if (error) return toast.error(error.message);
+    toast.success("Updated");
+    setEditing(null);
     load();
   };
 
