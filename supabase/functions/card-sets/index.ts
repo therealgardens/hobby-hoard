@@ -231,10 +231,17 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    const cached = _setsCache[game];
+    if (cached && Date.now() - cached.at < SETS_TTL_MS) {
+      return new Response(JSON.stringify({ sets: cached.data }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     const sets =
       game === "pokemon" ? await pokemonSets()
       : game === "onepiece" ? await onePieceSets()
       : await yugiohSets();
+    if (sets.length > 0) _setsCache[game] = { at: Date.now(), data: sets };
     return new Response(JSON.stringify({ sets }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
