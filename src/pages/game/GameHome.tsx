@@ -165,7 +165,7 @@ export default function GameHome() {
         </p>
         <div className="flex flex-wrap gap-2">
           <Button onClick={exportGame} disabled={busy}>
-            <Download className="h-4 w-4 mr-2" /> Export {game}
+            <Upload className="h-4 w-4 mr-2" /> Export {game}
           </Button>
           <input
             ref={fileRef}
