@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { setActiveGame } from "@/lib/game";
 import { useAuth } from "@/hooks/useAuth";
 import heroImg from "@/assets/hero-binder.jpg";
-import { LogOut, Settings as SettingsIcon } from "lucide-react";
+import { LogOut, Settings as SettingsIcon, Users } from "lucide-react";
 
 export default function Index() {
   const nav = useNavigate();
@@ -21,6 +21,9 @@ export default function Index() {
         <h2 className="text-3xl text-primary font-display">CardKeeper</h2>
         {user && (
           <div className="flex gap-2">
+            <Button variant="ghost" size="sm" onClick={() => nav("/friends")}>
+              <Users className="h-4 w-4 mr-2" /> Friends
+            </Button>
             <Button variant="ghost" size="sm" onClick={() => nav("/settings")}>
               <SettingsIcon className="h-4 w-4 mr-2" /> Settings
             </Button>
