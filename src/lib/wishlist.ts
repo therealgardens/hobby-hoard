@@ -4,13 +4,31 @@ import type { Game } from "@/lib/game";
 
 export type WishlistItem = Tables<"wanted_cards"> & { card: Tables<"cards"> | null };
 
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function isRetryableWishlistError(error: unknown) {
+  const message = String((error as Error)?.message ?? error).toLowerCase();
+  return (
+    message.includes("database is reconnecting") ||
+    message.includes("unexpected eof") ||
+    message.includes("tls close_notify") ||
+    message.includes("peer closed connection") ||
+    message.includes("terminating connection")
+  );
+}
+
 async function invokeWishlist<T>(action: string, payload: Record<string, unknown> = {}) {
-  const { data, error } = await supabase.functions.invoke("wishlist", {
-    body: { action, ...payload },
-  });
-  if (error) throw error;
-  if (data?.error) throw new Error(data.error);
-  return data as T;
+  let lastError: unknown;
+  for (let i = 0; i < 4; i += 1) {
+    const { data, error } = await supabase.functions.invoke("wishlist", {
+      body: { action, ...payload },
+    });
+    lastError = error ?? (data?.error ? new Error(data.error) : null);
+    if (!lastError) return data as T;
+    if (!isRetryableWishlistError(lastError) || i === 3) break;
+    await wait(500 * 2 ** i);
+  }
+  throw lastError;
 }
 
 export async function listWishlist(game: Game) {
