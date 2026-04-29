@@ -358,7 +358,19 @@ function explodeYugiohCard(c: any): any[] {
 
 async function searchYugioh(query: string, setId?: string) {
   const params = new URLSearchParams();
-  if (setId) {
+  let effectiveSetId = setId;
+  let q = query.trim();
+
+  // Allow "<name> <setHint>" e.g. "dark magician lob"
+  if (!effectiveSetId && q && !/^[A-Z]{2,4}-(?:[A-Z]{2})?\d{1,4}/i.test(q)) {
+    const split = splitQuery(q);
+    if (split.setHint) {
+      effectiveSetId = split.setHint.toUpperCase();
+      q = split.name;
+    }
+  }
+
+  if (effectiveSetId) {
     // Look up the set name for this code, then query by it.
     try {
       const setRes = await fetch("https://db.ygoprodeck.com/api/v7/cardsets.php");
@@ -366,22 +378,16 @@ async function searchYugioh(query: string, setId?: string) {
         const arr = await setRes.json();
         const match = (arr || []).find(
           (s: any) =>
-            String(s.set_code || "").toUpperCase() === setId.toUpperCase() ||
-            String(s.set_name || "").toUpperCase() === setId.toUpperCase(),
+            String(s.set_code || "").toUpperCase() === effectiveSetId!.toUpperCase() ||
+            String(s.set_name || "").toUpperCase() === effectiveSetId!.toUpperCase(),
         );
         if (match?.set_name) params.set("cardset", match.set_name);
       }
     } catch (_) {}
-    if (!params.has("cardset")) params.set("cardset", setId);
+    if (!params.has("cardset")) params.set("cardset", effectiveSetId);
+    if (q) params.set("fname", q);
   } else {
-    const q = query.trim();
-    // YGO printing codes look like "LOB-001", "MRD-EN001"
-    if (/^[A-Z]{2,4}-(?:[A-Z]{2})?\d{1,4}/i.test(q)) {
-      // No code search endpoint; fall back to fname which scans names.
-      params.set("fname", q);
-    } else {
-      params.set("fname", q);
-    }
+    params.set("fname", q);
   }
   const url = `https://db.ygoprodeck.com/api/v7/cardinfo.php?${params.toString()}`;
   try {
@@ -392,9 +398,9 @@ async function searchYugioh(query: string, setId?: string) {
     const out: any[] = [];
     for (const c of cards) {
       const exploded = explodeYugiohCard(c);
-      if (setId) {
-        // When browsing a set, keep all printings of that set.
-        const wantSet = setId.toUpperCase();
+      if (effectiveSetId) {
+        // When browsing/filtering by a set, keep all printings of that set.
+        const wantSet = effectiveSetId.toUpperCase();
         out.push(...exploded.filter((p) =>
           (p.set_id ?? "").toUpperCase() === wantSet ||
           (p.code ?? "").toUpperCase().startsWith(wantSet + "-"),
