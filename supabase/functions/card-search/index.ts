@@ -490,7 +490,7 @@ Deno.serve(async (req) => {
 
     // Dedupe by external_id to avoid "ON CONFLICT cannot affect row a second time".
     const seen = new Set<string>();
-    const deduped = results.filter((r) => {
+    const deduped = results.filter((r: any) => {
       if (!r.external_id || seen.has(r.external_id)) return false;
       seen.add(r.external_id);
       return true;
@@ -503,7 +503,7 @@ Deno.serve(async (req) => {
       if (error) console.error("upsert error", error);
     }
 
-    const ids = deduped.map((r) => r.external_id);
+    const ids = deduped.map((r: any) => r.external_id);
     let cached: any[] = [];
     if (ids.length > 0) {
       // Batch the IN() lookup — PostgREST URLs cap out around ~2KB and large
