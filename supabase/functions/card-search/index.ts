@@ -309,16 +309,18 @@ async function searchYugioh(query: string, setId?: string) {
     const cards = json?.data ?? [];
     const out: any[] = [];
     for (const c of cards) {
-      // When searching a set, only keep printings from that set.
       const exploded = explodeYugiohCard(c);
       if (setId) {
+        // When browsing a set, keep all printings of that set.
         const wantSet = setId.toUpperCase();
         out.push(...exploded.filter((p) =>
           (p.set_id ?? "").toUpperCase() === wantSet ||
           (p.code ?? "").toUpperCase().startsWith(wantSet + "-"),
         ));
       } else {
-        out.push(...exploded);
+        // Free-text search: only show one row per unique card (first printing)
+        // to avoid flooding results with every reprint of the same card.
+        if (exploded.length > 0) out.push(exploded[0]);
       }
     }
     return out;
