@@ -17,16 +17,17 @@ export default function GameHome() {
 
   const load = async () => {
     if (!game) return;
-    const { data: entries } = await supabase
-      .from("collection_entries")
-      .select("card_id, quantity")
-      .eq("game", game);
+    const { data: entries } = await withDbRetry(() =>
+      supabase.from("collection_entries").select("card_id, quantity").eq("game", game),
+    );
     const unique = new Set((entries ?? []).map((e: any) => e.card_id)).size;
     const total = entries?.reduce((s, e) => s + (e.quantity ?? 0), 0) ?? 0;
-    const { count: binders } = await supabase
-      .from("binders").select("*", { count: "exact", head: true }).eq("game", game);
-    const { count: wanted } = await supabase
-      .from("wanted_cards").select("*", { count: "exact", head: true }).eq("game", game);
+    const { count: binders } = await withDbRetry(() =>
+      supabase.from("binders").select("*", { count: "exact", head: true }).eq("game", game),
+    );
+    const { count: wanted } = await withDbRetry(() =>
+      supabase.from("wanted_cards").select("*", { count: "exact", head: true }).eq("game", game),
+    );
     setStats({ unique, total, binders: binders ?? 0, wanted: wanted ?? 0 });
   };
 
