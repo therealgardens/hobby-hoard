@@ -10,7 +10,7 @@ export default function Index() {
   const nav = useNavigate();
   const { user, signOut } = useAuth();
 
-  const pick = (g: "pokemon" | "onepiece") => {
+  const pick = (g: "pokemon" | "onepiece" | "yugioh") => {
     setActiveGame(g);
     nav(`/${g}`);
   };

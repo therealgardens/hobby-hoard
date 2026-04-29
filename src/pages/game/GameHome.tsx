@@ -33,7 +33,7 @@ export default function GameHome() {
     { to: "wanted", icon: Heart, label: "Wanted", desc: "Wishlist & set fillers" },
     { to: "duplicates", icon: Copy, label: "Duplicates", desc: "See your extras" },
     ...(game === "pokemon" ? [{ to: "pokedex", icon: ListChecks, label: "Pokédex", desc: "Track all species" }] : []),
-    ...(game === "onepiece" ? [{ to: "decks", icon: Swords, label: "Decks", desc: "Import & track deck lists" }] : []),
+    ...(game === "onepiece" || game === "yugioh" ? [{ to: "decks", icon: Swords, label: "Decks", desc: "Import & track deck lists" }] : []),
   ];
 
   return (
