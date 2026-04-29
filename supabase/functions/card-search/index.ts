@@ -1,6 +1,6 @@
 // Card search proxy: searches Pokémon TCG API and One Piece TCG API,
 // caches results into public.cards, and returns the cached rows.
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.95.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,6 +16,7 @@ interface SearchBody {
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
 const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
@@ -333,6 +334,27 @@ async function searchYugioh(query: string, setId?: string) {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
+    // Require an authenticated caller — this proxy uses a private API key
+    // and writes to public.cards via the service role.
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: authHeader } },
+    });
+    const token = authHeader.replace("Bearer ", "");
+    const { data: claims, error: authError } = await userClient.auth.getClaims(token);
+    if (authError || !claims?.claims?.sub) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const body = (await req.json()) as SearchBody;
     if (!body?.game || !["pokemon", "onepiece", "yugioh"].includes(body.game)) {
       return new Response(JSON.stringify({ error: "invalid game" }), {
@@ -372,21 +394,26 @@ Deno.serve(async (req) => {
     const ids = deduped.map((r) => r.external_id);
     let cached: any[] = [];
     if (ids.length > 0) {
-      const { data } = await admin
-        .from("cards")
-        .select("*")
-        .eq("game", body.game)
-        .in("external_id", ids);
-      cached = data ?? [];
-      // If DB lookup returned nothing (e.g. upsert failed), return the
-      // fetched results directly with synthesized ids so the UI still works.
-      if (cached.length === 0) {
-        cached = deduped.map((r) => ({
-          ...r,
-          id: r.external_id,
-          created_at: new Date().toISOString(),
-        }));
+      // Batch the IN() lookup — PostgREST URLs cap out around ~2KB and large
+      // sets (e.g. browsing a 250-card set) can exceed that, returning 0 rows.
+      const BATCH = 60;
+      for (let i = 0; i < ids.length; i += BATCH) {
+        const slice = ids.slice(i, i + BATCH);
+        const { data, error } = await admin
+          .from("cards")
+          .select("*")
+          .eq("game", body.game)
+          .in("external_id", slice);
+        if (error) {
+          console.error("cards lookup error", error);
+          continue;
+        }
+        if (data?.length) cached.push(...data);
       }
+      // NOTE: we deliberately do NOT synthesize fake UUIDs when the DB lookup
+      // misses — the client uses `card.id` as a real UUID for inserts into
+      // collection_entries / wanted_cards / chat_messages, so a fake id breaks
+      // every subsequent write with a 22P02 error.
     } else if (body.setId && (body.game === "onepiece" || body.game === "yugioh")) {
       const id = body.setId.toUpperCase().replace(/-/g, "");
       const { data } = await admin

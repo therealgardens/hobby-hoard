@@ -148,9 +148,11 @@ export type Database = {
           game: string | null
           id: string
           kind: string
+          offer_card_id: string | null
           read_at: string | null
           recipient_id: string
           sender_id: string
+          trade_status: string | null
         }
         Insert: {
           body?: string | null
@@ -159,9 +161,11 @@ export type Database = {
           game?: string | null
           id?: string
           kind?: string
+          offer_card_id?: string | null
           read_at?: string | null
           recipient_id: string
           sender_id: string
+          trade_status?: string | null
         }
         Update: {
           body?: string | null
@@ -170,11 +174,28 @@ export type Database = {
           game?: string | null
           id?: string
           kind?: string
+          offer_card_id?: string | null
           read_at?: string | null
           recipient_id?: string
           sender_id?: string
+          trade_status?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "chat_card_fk"
+            columns: ["card_id"]
+            isOneToOne: false
+            referencedRelation: "cards"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_offer_card_fk"
+            columns: ["offer_card_id"]
+            isOneToOne: false
+            referencedRelation: "cards"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       collection_entries: {
         Row: {
@@ -321,6 +342,7 @@ export type Database = {
       friendships: {
         Row: {
           addressee_id: string
+          blocked_by: string | null
           created_at: string
           id: string
           requester_id: string
@@ -329,6 +351,7 @@ export type Database = {
         }
         Insert: {
           addressee_id: string
+          blocked_by?: string | null
           created_at?: string
           id?: string
           requester_id: string
@@ -337,6 +360,7 @@ export type Database = {
         }
         Update: {
           addressee_id?: string
+          blocked_by?: string | null
           created_at?: string
           id?: string
           requester_id?: string
@@ -374,18 +398,24 @@ export type Database = {
       }
       profiles: {
         Row: {
+          avatar_url: string | null
+          bio: string | null
           created_at: string
           display_name: string | null
           id: string
           username: string | null
         }
         Insert: {
+          avatar_url?: string | null
+          bio?: string | null
           created_at?: string
           display_name?: string | null
           id: string
           username?: string | null
         }
         Update: {
+          avatar_url?: string | null
+          bio?: string | null
           created_at?: string
           display_name?: string | null
           id?: string
@@ -450,6 +480,14 @@ export type Database = {
     }
     Functions: {
       are_friends: { Args: { _a: string; _b: string }; Returns: boolean }
+      cancel_trade: { Args: { _message_id: string }; Returns: undefined }
+      is_blocked: { Args: { _a: string; _b: string }; Returns: boolean }
+      mark_message_read: { Args: { _message_id: string }; Returns: undefined }
+      mark_thread_read: { Args: { _friend_id: string }; Returns: undefined }
+      respond_to_trade: {
+        Args: { _message_id: string; _status: string }
+        Returns: undefined
+      }
       shares_with: {
         Args: {
           _friend: string
