@@ -36,12 +36,12 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
     const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const ids = cards.map((c) => c.id).filter((id) => uuidRe.test(id));
     if (ids.length === 0) return;
-    const [{ data: owned }, { data: wanted }] = await Promise.all([
+    const [{ data: owned, error: ownedError }, { data: wanted, error: wantedError }] = await Promise.all([
       withDbRetry(() => supabase.from("collection_entries").select("card_id").eq("user_id", user.id).in("card_id", ids)),
       withDbRetry(() => supabase.from("wanted_cards").select("card_id").eq("user_id", user.id).in("card_id", ids)),
     ]);
-    setOwnedIds(new Set((owned ?? []).map((r: any) => r.card_id)));
-    setWantedIds(new Set((wanted ?? []).map((r: any) => r.card_id)));
+    if (!ownedError) setOwnedIds(new Set((owned ?? []).map((r: any) => r.card_id)));
+    if (!wantedError) setWantedIds(new Set((wanted ?? []).map((r: any) => r.card_id)));
   };
 
   const runSearch = async (term: string) => {
