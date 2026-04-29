@@ -10,6 +10,7 @@ import { CardSearch } from "@/components/CardSearch";
 import { toast } from "sonner";
 import { cardImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
+import { withDbRetry } from "@/lib/supabaseRetry";
 import {
   Dialog,
   DialogContent,
@@ -33,12 +34,15 @@ export default function Wanted() {
       setItems([]);
       return;
     }
-    const { data } = await supabase
-      .from("wanted_cards")
-      .select("*, card:cards(*)")
-      .eq("game", game)
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
+    const { data, error } = await withDbRetry(() =>
+      supabase
+        .from("wanted_cards")
+        .select("*, card:cards(*)")
+        .eq("game", game)
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false }),
+    );
+    if (error) return toast.error(error.message);
     setItems((data as any) ?? []);
   };
   useEffect(() => { load(); }, [game, user?.id, loading]);
@@ -46,9 +50,11 @@ export default function Wanted() {
   const add = async (card: Tables<"cards">) => {
     if (!user) return toast.error("Not signed in");
     if (!game) return;
-    const { error } = await supabase.from("wanted_cards").insert({
-      user_id: user.id, card_id: card.id, game,
-    });
+    const { error } = await withDbRetry(() =>
+      supabase.from("wanted_cards").insert({
+        user_id: user.id, card_id: card.id, game,
+      }),
+    );
     if (error) return toast.error(error.message);
     toast.success("Added to wishlist");
     load();
