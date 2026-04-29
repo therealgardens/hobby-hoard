@@ -222,18 +222,26 @@ async function fetchOptcgCardVariants(baseCode: string): Promise<any[]> {
   }
 }
 
-// Free-text search on optcgapi by name (scans allCards endpoint).
-async function searchOptcgByName(query: string): Promise<any[]> {
+// optcgapi has no name-search endpoint; free-text One Piece search relies on
+// apitcg only (this function is kept as a no-op stub for compatibility).
+async function searchOptcgByName(_query: string): Promise<any[]> {
+  return [];
+}
+
+// Cache for ygoprodeck cardsets (used to translate set codes -> set names).
+// In-memory cache lives for the lifetime of the edge function instance.
+let _ygoSetsCache: { at: number; data: any[] } | null = null;
+async function getYugiohSetsCached(): Promise<any[]> {
+  const now = Date.now();
+  if (_ygoSetsCache && now - _ygoSetsCache.at < 10 * 60 * 1000) return _ygoSetsCache.data;
   try {
-    const res = await fetch(`https://optcgapi.com/api/allCards/`);
-    if (!res.ok) return [];
-    const json = await res.json();
-    const q = query.toLowerCase();
-    return (json || []).filter((c: any) =>
-      String(c.card_name ?? c.name ?? "").toLowerCase().includes(q),
-    );
+    const res = await fetch("https://db.ygoprodeck.com/api/v7/cardsets.php");
+    if (!res.ok) return _ygoSetsCache?.data ?? [];
+    const arr = await res.json();
+    _ygoSetsCache = { at: now, data: arr };
+    return arr;
   } catch {
-    return [];
+    return _ygoSetsCache?.data ?? [];
   }
 }
 
