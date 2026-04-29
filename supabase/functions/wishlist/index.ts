@@ -3,14 +3,15 @@ import postgres from "https://deno.land/x/postgresjs@v3.4.5/mod.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const DB_URL = Deno.env.get("SUPABASE_DB_URL")!;
 
-const sql = postgres(DB_URL, { max: 3, prepare: false, ssl: "require" });
+const createSql = () => postgres(DB_URL, { max: 1, prepare: false, ssl: "require" });
+let sql: any = createSql();
 
 const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const games = new Set(["pokemon", "onepiece", "yugioh"]);
@@ -25,18 +26,53 @@ function requireUuid(value: unknown, name: string) {
   return value;
 }
 
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function isRetryableDbError(error: unknown) {
+  const message = String((error as Error)?.message ?? error).toLowerCase();
+  const code = String((error as { code?: string })?.code ?? "");
+  return (
+    code === "57P02" ||
+    message.includes("unexpectedeof") ||
+    message.includes("unexpected eof") ||
+    message.includes("tls close_notify") ||
+    message.includes("peer closed connection") ||
+    message.includes("terminating connection") ||
+    message.includes("connection")
+  );
+}
+
+async function withDb<T>(operation: (db: typeof sql) => Promise<T>, attempts = 4) {
+  let lastError: unknown;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      return await operation(sql);
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableDbError(error) || i === attempts - 1) throw error;
+      const old = sql;
+      sql = createSql();
+      try {
+        await old.end({ timeout: 0 });
+      } catch (_) {}
+      await wait(350 * 2 ** i);
+    }
+  }
+  throw lastError;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) throw new Error("Not signed in");
+    const authHeader = req.headers.get("Authorization") ?? "";
+    if (!authHeader.startsWith("Bearer ")) return json({ error: "Not signed in" }, 401);
+    const token = authHeader.replace("Bearer ", "").trim();
 
-    const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-      global: { headers: { Authorization: authHeader } },
-    });
-    const { data: { user }, error: userError } = await userClient.auth.getUser();
-    if (userError || !user) throw new Error("Not signed in");
+    const userClient = createClient(SUPABASE_URL, ANON_KEY);
+    const { data: claimsData, error: claimsError } = await userClient.auth.getClaims(token);
+    const userId = claimsData?.claims?.sub;
+    if (claimsError || !userId || !uuidRe.test(userId)) return json({ error: "Not signed in" }, 401);
 
     const body = await req.json().catch(() => ({}));
     const action = String(body.action ?? "list");
