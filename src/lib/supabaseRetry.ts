@@ -1,6 +1,6 @@
 const RETRIABLE_CODES = new Set(["PGRST001", "PGRST002"]);
 
-type SupabaseResult<T> = { data: T | null; error: any };
+type SupabaseResult = { error: any };
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -14,8 +14,8 @@ function isRetriableDbError(error: any) {
   );
 }
 
-export async function withDbRetry<T>(operation: () => PromiseLike<SupabaseResult<T>>, attempts = 4) {
-  let last: SupabaseResult<T> | null = null;
+export async function withDbRetry<T extends SupabaseResult>(operation: () => PromiseLike<T>, attempts = 4) {
+  let last: T | null = null;
 
   for (let i = 0; i < attempts; i += 1) {
     last = await operation();
@@ -23,5 +23,5 @@ export async function withDbRetry<T>(operation: () => PromiseLike<SupabaseResult
     await wait(700 * 2 ** i);
   }
 
-  return last as SupabaseResult<T>;
+  return last as T;
 }
