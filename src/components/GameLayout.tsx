@@ -2,7 +2,7 @@ import { NavLink, Outlet, useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { GAME_LABEL, type Game, setActiveGame } from "@/lib/game";
-import { ArrowLeft, BookOpen, Library, Heart, Layers, Copy, Swords, ListChecks, Search, Settings } from "lucide-react";
+import { ArrowLeft, BookOpen, Library, Heart, Layers, Copy, Swords, ListChecks, Search, Settings, FolderHeart } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 
