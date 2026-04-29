@@ -33,19 +33,22 @@ export function CardPicker({ game, selectedId, onSelect }: Props) {
     if (!user) return;
     setLoading(true);
     (async () => {
-      const { data } = await supabase
+      const { data: entries } = await supabase
         .from("collection_entries")
-        .select("card:cards(id, name, code, image_small, game)")
+        .select("card_id")
         .eq("user_id", user.id)
         .eq("game", game)
         .limit(500);
-      const list = (data ?? [])
-        .map((r: any) => r.card as PickerCard)
-        .filter(Boolean);
-      // de-dupe by card id
-      const seen = new Set<string>();
-      const unique = list.filter((c) => (seen.has(c.id) ? false : (seen.add(c.id), true)));
-      setCards(unique);
+      const ids = Array.from(new Set((entries ?? []).map((r: any) => r.card_id).filter(Boolean))) as string[];
+      let list: PickerCard[] = [];
+      if (ids.length) {
+        const { data: cards } = await supabase
+          .from("cards")
+          .select("id, name, code, image_small, game")
+          .in("id", ids);
+        list = (cards ?? []) as PickerCard[];
+      }
+      setCards(list);
       setLoading(false);
     })();
   }, [user, game]);
