@@ -1,0 +1,220 @@
+import { useState, useRef } from "react";
+import { useTranslation } from "react-i18next";
+import { useTheme } from "next-themes";
+import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
+import { LANGUAGES } from "@/lib/i18n";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { ArrowLeft, Download, Upload, Trash2, Sun, Moon, Monitor } from "lucide-react";
+
+export default function Settings() {
+  const { t, i18n } = useTranslation();
+  const { theme, setTheme } = useTheme();
+  const { user, signOut } = useAuth();
+  const nav = useNavigate();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+
+  const exportData = async () => {
+    if (!user) return;
+    setBusy(true);
+    try {
+      const [collection, binders, slots, wanted, decks, deckCards, pokedex] = await Promise.all([
+        supabase.from("collection_entries").select("*").eq("user_id", user.id),
+        supabase.from("binders").select("*").eq("user_id", user.id),
+        supabase.from("binder_slots").select("*").eq("user_id", user.id),
+        supabase.from("wanted_cards").select("*").eq("user_id", user.id),
+        supabase.from("decks").select("*").eq("user_id", user.id),
+        supabase.from("deck_cards").select("*").eq("user_id", user.id),
+        supabase.from("pokedex_entries").select("*").eq("user_id", user.id),
+      ]);
+      const payload = {
+        version: 1,
+        exported_at: new Date().toISOString(),
+        collection_entries: collection.data ?? [],
+        binders: binders.data ?? [],
+        binder_slots: slots.data ?? [],
+        wanted_cards: wanted.data ?? [],
+        decks: decks.data ?? [],
+        deck_cards: deckCards.data ?? [],
+        pokedex_entries: pokedex.data ?? [],
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `cardkeeper-export-${new Date().toISOString().split("T")[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(t("settings.exported"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const importData = async (file: File) => {
+    if (!user) return;
+    setBusy(true);
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      const tables: Array<[string, any[]]> = [
+        ["collection_entries", data.collection_entries ?? []],
+        ["binders", data.binders ?? []],
+        ["binder_slots", data.binder_slots ?? []],
+        ["wanted_cards", data.wanted_cards ?? []],
+        ["decks", data.decks ?? []],
+        ["deck_cards", data.deck_cards ?? []],
+        ["pokedex_entries", data.pokedex_entries ?? []],
+      ];
+      for (const [table, rows] of tables) {
+        if (!rows.length) continue;
+        const cleaned = rows.map((r: any) => ({ ...r, user_id: user.id }));
+        await (supabase.from(table as any) as any).upsert(cleaned, { onConflict: "id" });
+      }
+      toast.success(t("settings.imported"));
+    } catch (e: any) {
+      toast.error(t("settings.importError") + ": " + e.message);
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const deleteAccount = async () => {
+    setBusy(true);
+    try {
+      const { error } = await supabase.functions.invoke("delete-account");
+      if (error) throw error;
+      toast.success(t("settings.deleted"));
+      await signOut();
+      nav("/auth");
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-background">
+      <header className="bg-gradient-hero text-primary-foreground">
+        <div className="container mx-auto flex items-center gap-3 py-4 px-4">
+          <Button variant="ghost" size="sm" onClick={() => nav(-1)} className="text-primary-foreground hover:bg-white/10">
+            <ArrowLeft className="h-4 w-4 mr-1" /> Back
+          </Button>
+          <h1 className="text-3xl font-display">{t("settings.title")}</h1>
+        </div>
+      </header>
+
+      <main className="container mx-auto px-4 py-8 max-w-3xl space-y-6">
+        {/* Appearance */}
+        <Card className="p-6">
+          <h2 className="text-2xl font-display mb-4">{t("settings.appearance")}</h2>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">{t("settings.theme")}</p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant={theme === "light" ? "default" : "outline"} size="sm" onClick={() => setTheme("light")}>
+                <Sun className="h-4 w-4 mr-1" /> {t("settings.light")}
+              </Button>
+              <Button variant={theme === "dark" ? "default" : "outline"} size="sm" onClick={() => setTheme("dark")}>
+                <Moon className="h-4 w-4 mr-1" /> {t("settings.dark")}
+              </Button>
+              <Button variant={theme === "system" ? "default" : "outline"} size="sm" onClick={() => setTheme("system")}>
+                <Monitor className="h-4 w-4 mr-1" /> {t("settings.system")}
+              </Button>
+            </div>
+          </div>
+        </Card>
+
+        {/* Language */}
+        <Card className="p-6">
+          <h2 className="text-2xl font-display mb-2">{t("settings.language")}</h2>
+          <p className="text-muted-foreground text-sm mb-4">{t("settings.languageDesc")}</p>
+          <Select value={i18n.language.split("-")[0]} onValueChange={(v) => i18n.changeLanguage(v)}>
+            <SelectTrigger className="w-full md:w-72"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {LANGUAGES.map((l) => (
+                <SelectItem key={l.code} value={l.code}>{l.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Card>
+
+        {/* Data */}
+        <Card className="p-6">
+          <h2 className="text-2xl font-display mb-4">{t("settings.data")}</h2>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="font-medium">{t("settings.export")}</p>
+                <p className="text-sm text-muted-foreground">{t("settings.exportDesc")}</p>
+              </div>
+              <Button onClick={exportData} disabled={busy}>
+                <Download className="h-4 w-4 mr-2" /> {t("settings.export")}
+              </Button>
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="font-medium">{t("settings.import")}</p>
+                <p className="text-sm text-muted-foreground">{t("settings.importDesc")}</p>
+              </div>
+              <div>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="application/json"
+                  className="hidden"
+                  onChange={(e) => e.target.files?.[0] && importData(e.target.files[0])}
+                />
+                <Button variant="outline" onClick={() => fileRef.current?.click()} disabled={busy}>
+                  <Upload className="h-4 w-4 mr-2" /> {t("settings.import")}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </Card>
+
+        {/* Danger zone */}
+        <Card className="p-6 border-destructive/30">
+          <h2 className="text-2xl font-display mb-4 text-destructive">{t("settings.danger")}</h2>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="font-medium">{t("settings.deleteAccount")}</p>
+              <p className="text-sm text-muted-foreground">{t("settings.deleteDesc")}</p>
+            </div>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="destructive" disabled={busy}>
+                  <Trash2 className="h-4 w-4 mr-2" /> {t("settings.deleteAccount")}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{t("settings.confirmDelete")}</AlertDialogTitle>
+                  <AlertDialogDescription>{t("settings.confirmDeleteDesc")}</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{t("settings.cancel")}</AlertDialogCancel>
+                  <AlertDialogAction onClick={deleteAccount} className="bg-destructive hover:bg-destructive/90">
+                    {t("settings.confirm")}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
+        </Card>
+      </main>
+    </div>
+  );
+}
