@@ -48,24 +48,35 @@ export default function Pokedex() {
       withDbRetry(() =>
         supabase
           .from("collection_entries")
-          .select("card_id, cards(pokedex_number)")
+          .select("card_id")
           .eq("game", "pokemon")
           .eq("user_id", u.user!.id),
       ),
       withDbRetry(() =>
         supabase
           .from("binder_slots")
-          .select("card_id, cards(pokedex_number, game)")
+          .select("card_id")
           .eq("user_id", u.user!.id),
       ),
     ]);
+    const cardIds = Array.from(
+      new Set([
+        ...((ents ?? []).map((e: any) => e.card_id).filter(Boolean) as string[]),
+        ...((bslots ?? []).map((s: any) => s.card_id).filter(Boolean) as string[]),
+      ]),
+    );
     const nums = new Set<number>();
-    (ents ?? []).forEach((e: any) => {
-      if (e.card?.pokedex_number) nums.add(e.card.pokedex_number);
-    });
-    (bslots ?? []).forEach((s: any) => {
-      if (s.card?.game === "pokemon" && s.card?.pokedex_number) nums.add(s.card.pokedex_number);
-    });
+    if (cardIds.length) {
+      const { data: cardsData } = await withDbRetry(() =>
+        supabase
+          .from("cards")
+          .select("id, game, pokedex_number")
+          .in("id", cardIds),
+      );
+      for (const c of (cardsData ?? []) as any[]) {
+        if (c.game === "pokemon" && c.pokedex_number) nums.add(c.pokedex_number);
+      }
+    }
     setAuto(nums);
   };
 
