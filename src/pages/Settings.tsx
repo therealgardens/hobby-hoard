@@ -151,39 +151,7 @@ export default function Settings() {
           </Select>
         </Card>
 
-        {/* Data */}
-        <Card className="p-6">
-          <h2 className="text-2xl font-display mb-4">{t("settings.data")}</h2>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="font-medium">{t("settings.export")}</p>
-                <p className="text-sm text-muted-foreground">{t("settings.exportDesc")}</p>
-              </div>
-              <Button onClick={exportData} disabled={busy}>
-                <Download className="h-4 w-4 mr-2" /> {t("settings.export")}
-              </Button>
-            </div>
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="font-medium">{t("settings.import")}</p>
-                <p className="text-sm text-muted-foreground">{t("settings.importDesc")}</p>
-              </div>
-              <div>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept="application/json"
-                  className="hidden"
-                  onChange={(e) => e.target.files?.[0] && importData(e.target.files[0])}
-                />
-                <Button variant="outline" onClick={() => fileRef.current?.click()} disabled={busy}>
-                  <Upload className="h-4 w-4 mr-2" /> {t("settings.import")}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </Card>
+        {/* Data import/export is now per-game on each game's home page. */}
 
         {/* Danger zone */}
         <Card className="p-6 border-destructive/30">
