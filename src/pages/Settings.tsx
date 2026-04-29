@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useTheme } from "@/components/ThemeProvider";
 import { useNavigate } from "react-router-dom";
@@ -13,81 +13,14 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Download, Upload, Trash2, Sun, Moon, Monitor } from "lucide-react";
+import { ArrowLeft, Trash2, Sun, Moon, Monitor } from "lucide-react";
 
 export default function Settings() {
   const { t, i18n } = useTranslation();
   const { theme, setTheme } = useTheme();
-  const { user, signOut } = useAuth();
+  const { signOut } = useAuth();
   const nav = useNavigate();
-  const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
-
-  const exportData = async () => {
-    if (!user) return;
-    setBusy(true);
-    try {
-      const [collection, binders, slots, wanted, decks, deckCards, pokedex] = await Promise.all([
-        supabase.from("collection_entries").select("*").eq("user_id", user.id),
-        supabase.from("binders").select("*").eq("user_id", user.id),
-        supabase.from("binder_slots").select("*").eq("user_id", user.id),
-        supabase.from("wanted_cards").select("*").eq("user_id", user.id),
-        supabase.from("decks").select("*").eq("user_id", user.id),
-        supabase.from("deck_cards").select("*").eq("user_id", user.id),
-        supabase.from("pokedex_entries").select("*").eq("user_id", user.id),
-      ]);
-      const payload = {
-        version: 1,
-        exported_at: new Date().toISOString(),
-        collection_entries: collection.data ?? [],
-        binders: binders.data ?? [],
-        binder_slots: slots.data ?? [],
-        wanted_cards: wanted.data ?? [],
-        decks: decks.data ?? [],
-        deck_cards: deckCards.data ?? [],
-        pokedex_entries: pokedex.data ?? [],
-      };
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `cardkeeper-export-${new Date().toISOString().split("T")[0]}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      toast.success(t("settings.exported"));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const importData = async (file: File) => {
-    if (!user) return;
-    setBusy(true);
-    try {
-      const text = await file.text();
-      const data = JSON.parse(text);
-      const tables: Array<[string, any[]]> = [
-        ["collection_entries", data.collection_entries ?? []],
-        ["binders", data.binders ?? []],
-        ["binder_slots", data.binder_slots ?? []],
-        ["wanted_cards", data.wanted_cards ?? []],
-        ["decks", data.decks ?? []],
-        ["deck_cards", data.deck_cards ?? []],
-        ["pokedex_entries", data.pokedex_entries ?? []],
-      ];
-      for (const [table, rows] of tables) {
-        if (!rows.length) continue;
-        const cleaned = rows.map((r: any) => ({ ...r, user_id: user.id }));
-        await (supabase.from(table as any) as any).upsert(cleaned, { onConflict: "id" });
-      }
-      toast.success(t("settings.imported"));
-    } catch (e: any) {
-      toast.error(t("settings.importError") + ": " + e.message);
-    } finally {
-      setBusy(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  };
 
   const deleteAccount = async () => {
     setBusy(true);
