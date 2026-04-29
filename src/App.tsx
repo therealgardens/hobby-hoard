@@ -16,6 +16,7 @@ import Binders from "./pages/game/Binders";
 import BinderDetail from "./pages/game/BinderDetail";
 import Wanted from "./pages/game/Wanted";
 import Duplicates from "./pages/game/Duplicates";
+import Collection from "./pages/game/Collection";
 import Pokedex from "./pages/game/Pokedex";
 import Decks from "./pages/game/Decks";
 import CardSearchPage from "./pages/game/CardSearchPage";
