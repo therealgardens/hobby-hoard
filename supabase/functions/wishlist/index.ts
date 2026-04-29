@@ -122,26 +122,42 @@ Deno.serve(async (req) => {
       const rarity = typeof body.rarity === "string" && body.rarity ? body.rarity : null;
       const language = typeof body.language === "string" && body.language ? body.language : "EN";
 
-      const rows = await withDb<DbRow[]>((db) => db`
-        insert into public.wanted_cards (user_id, card_id, game, rarity, language, quantity, binder_id)
-        select ${userId}::uuid, ${cardId}::uuid, ${game}, ${rarity}, ${language}, ${quantity}, ${binderId}::uuid
-        where not exists (
-          select 1 from public.wanted_cards
-          where user_id = ${userId}::uuid and card_id = ${cardId}::uuid and game = ${game}
-        )
-        returning *
-      `);
-      return json({ item: rows[0] ?? null });
+      const item = await withRetry(async () => {
+        const { data: existing, error: existingError } = await dbClient
+          .from("wanted_cards")
+          .select("*")
+          .eq("user_id", userId)
+          .eq("card_id", cardId)
+          .eq("game", game)
+          .maybeSingle();
+        if (existingError) throw existingError;
+        if (existing) return existing;
+
+        const { data, error } = await dbClient
+          .from("wanted_cards")
+          .insert({ user_id: userId, card_id: cardId, game, rarity, language, quantity, binder_id: binderId })
+          .select("*")
+          .single();
+        if (error) throw error;
+        return data;
+      });
+      return json({ item });
     }
 
     if (action === "remove") {
       if (body.id) {
         const id = requireUuid(body.id, "wishlist id");
-        await withDb((db) => db`delete from public.wanted_cards where id = ${id}::uuid and user_id = ${userId}::uuid`);
+        await withRetry(async () => {
+          const { error } = await dbClient.from("wanted_cards").delete().eq("id", id).eq("user_id", userId);
+          if (error) throw error;
+        });
       } else {
         const game = requireGame(body.game);
         const cardId = requireUuid(body.cardId, "card id");
-        await withDb((db) => db`delete from public.wanted_cards where user_id = ${userId}::uuid and card_id = ${cardId}::uuid and game = ${game}`);
+        await withRetry(async () => {
+          const { error } = await dbClient.from("wanted_cards").delete().eq("user_id", userId).eq("card_id", cardId).eq("game", game);
+          if (error) throw error;
+        });
       }
       return json({ ok: true });
     }
@@ -149,11 +165,10 @@ Deno.serve(async (req) => {
     if (action === "update") {
       const id = requireUuid(body.id, "wishlist id");
       const quantity = Math.max(1, Number.parseInt(String(body.quantity ?? 1), 10) || 1);
-      await withDb((db) => db`
-        update public.wanted_cards
-        set quantity = ${quantity}
-        where id = ${id}::uuid and user_id = ${userId}::uuid
-      `);
+      await withRetry(async () => {
+        const { error } = await dbClient.from("wanted_cards").update({ quantity }).eq("id", id).eq("user_id", userId);
+        if (error) throw error;
+      });
       return json({ ok: true });
     }
 
@@ -161,7 +176,7 @@ Deno.serve(async (req) => {
   } catch (e) {
     console.error("wishlist error", e);
     const message = e instanceof Error ? e.message : "Wishlist failed";
-    return json({ error: isRetryableDbError(e) ? "Database is reconnecting. Please try again." : message }, 400);
+    return json({ error: isRetryableBackendError(e) ? "Database is reconnecting. Please try again." : message }, 400);
   }
 });
 
