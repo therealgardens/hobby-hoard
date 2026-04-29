@@ -146,6 +146,15 @@ export default function Auth() {
           <TabsContent value="signup">
             <form onSubmit={handleSignUp} className="space-y-4 mt-4">
               <div>
+                <Label>Username</Label>
+                <Input
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="3–20 letters, numbers or _"
+                  required
+                />
+              </div>
+              <div>
                 <Label>Email</Label>
                 <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
               </div>
