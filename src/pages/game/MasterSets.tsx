@@ -110,7 +110,7 @@ export default function MasterSets() {
       const uid = userRes.data.user?.id;
       if (uid) {
         // Warm from sessionStorage so re-entering the page is instant.
-        const ownedCacheKey = `tcg.owned.${game}.${uid}.v2`;
+        const ownedCacheKey = `tcg.owned.${game}.${uid}.v3`;
         try {
           const raw = sessionStorage.getItem(ownedCacheKey);
           if (raw) {
