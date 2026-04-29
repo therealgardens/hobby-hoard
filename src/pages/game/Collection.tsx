@@ -190,7 +190,16 @@ export default function Collection() {
         />
       </div>
 
-      {loading ? (
+      {error && entries.length === 0 ? (
+        <div className="text-center py-12 space-y-4">
+          <p className="text-muted-foreground">
+            Couldn't load your collection. The database is warming up.
+          </p>
+          <Button onClick={() => loadInitial()} variant="outline">
+            Retry
+          </Button>
+        </div>
+      ) : loading ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           {Array.from({ length: 10 }).map((_, i) => (
             <Card key={i} className="overflow-hidden bg-gradient-card">
