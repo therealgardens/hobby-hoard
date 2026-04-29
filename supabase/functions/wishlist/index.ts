@@ -34,8 +34,14 @@ function isRetryableBackendError(error: unknown) {
     code === "08006" ||
     code === "08001" ||
     code === "08000" ||
+    code === "PGRST001" ||
+    code === "PGRST002" ||
     message.includes("recovery mode") ||
     message.includes("starting up") ||
+    message.includes("schema cache") ||
+    message.includes("database client error") ||
+    message.includes("no connection to the server") ||
+    message.includes("retrying") ||
     message.includes("unexpectedeof") ||
     message.includes("unexpected eof") ||
     message.includes("unexpected end of file") ||
@@ -175,8 +181,9 @@ Deno.serve(async (req) => {
     throw new Error("Invalid wishlist action");
   } catch (e) {
     console.error("wishlist error", e);
-    const message = e instanceof Error ? e.message : "Wishlist failed";
-    return json({ error: isRetryableBackendError(e) ? "Database is reconnecting. Please try again." : message }, 400);
+    const retryable = isRetryableBackendError(e);
+    const message = e instanceof Error ? e.message : (e as { message?: string })?.message ?? "Wishlist failed";
+    return json({ error: retryable ? "Database is reconnecting. Please try again." : message }, retryable ? 503 : 400);
   }
 });
 
