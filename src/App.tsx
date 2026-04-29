@@ -20,7 +20,10 @@ import Pokedex from "./pages/game/Pokedex";
 import Decks from "./pages/game/Decks";
 import CardSearchPage from "./pages/game/CardSearchPage";
 import Settings from "./pages/Settings";
+import Friends from "./pages/Friends";
+import FriendProfile from "./pages/FriendProfile";
 import { ThemeProvider } from "./components/ThemeProvider";
+import { UsernameGate } from "./components/UsernameGate";
 
 const queryClient = new QueryClient();
 
@@ -32,11 +35,14 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
+          <UsernameGate>
           <Routes>
             <Route path="/auth" element={<Auth />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+            <Route path="/friends" element={<ProtectedRoute><Friends /></ProtectedRoute>} />
+            <Route path="/friend/:friendId" element={<ProtectedRoute><FriendProfile /></ProtectedRoute>} />
             <Route path="/:game" element={<ProtectedRoute><GameLayout /></ProtectedRoute>}>
               <Route index element={<GameHome />} />
               <Route path="master" element={<MasterSets />} />
@@ -50,6 +56,7 @@ const App = () => (
             </Route>
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </UsernameGate>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>
