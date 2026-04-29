@@ -140,13 +140,23 @@ export default function Wanted() {
             {items.map(w => {
               const img = cardImage(w.card?.game, w.card?.code, w.card?.image_small);
               return (
-              <Card key={w.id} className="overflow-hidden bg-gradient-card relative group">
+              <Card
+                key={w.id}
+                className="overflow-hidden bg-gradient-card relative group cursor-pointer hover:shadow-card transition-shadow"
+                onClick={() => openEdit(w)}
+              >
                 {img && <img src={img} alt={w.card?.name} className="w-full card-aspect object-cover opacity-70" onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")} />}
+                <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded-md bg-background/90 text-[11px] font-bold shadow">
+                  ×{w.quantity ?? 1}
+                </div>
                 <div className="p-2">
                   <p className="text-xs font-semibold truncate">{w.card?.name}</p>
                   <p className="text-[10px] text-muted-foreground truncate">{w.card?.code}</p>
                 </div>
-                <button onClick={() => remove(w.id)} className="absolute top-1 right-1 p-1 rounded-full bg-background/80 opacity-0 group-hover:opacity-100">
+                <button
+                  onClick={(e) => { e.stopPropagation(); remove(w.id); }}
+                  className="absolute top-1 right-1 p-1 rounded-full bg-background/80 opacity-0 group-hover:opacity-100"
+                >
                   <Trash2 className="h-3 w-3" />
                 </button>
               </Card>
@@ -155,6 +165,31 @@ export default function Wanted() {
           </div>
         </div>
       )}
+
+      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="truncate">{editing?.card?.name ?? "Card"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">{editing?.card?.code}</p>
+            <label className="text-sm font-medium block">Quantity wanted</label>
+            <Input
+              type="number"
+              min={1}
+              value={editQty}
+              onChange={(e) => setEditQty(Math.max(1, parseInt(e.target.value) || 1))}
+              autoFocus
+            />
+          </div>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button variant="destructive" onClick={() => editing && remove(editing.id)}>
+              <Trash2 className="h-4 w-4 mr-2" /> Remove
+            </Button>
+            <Button onClick={saveQty}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
