@@ -33,6 +33,14 @@ function isRetryableDbError(error: unknown) {
   const code = String((error as { code?: string })?.code ?? "");
   return (
     code === "57P02" ||
+    code === "57P03" || // cannot_connect_now / recovery mode
+    code === "57P01" || // admin_shutdown
+    code === "53300" || // too_many_connections
+    code === "08006" || // connection_failure
+    code === "08001" || // sqlclient_unable_to_establish_sqlconnection
+    code === "08000" ||
+    message.includes("recovery mode") ||
+    message.includes("starting up") ||
     message.includes("unexpectedeof") ||
     message.includes("unexpected eof") ||
     message.includes("tls close_notify") ||
@@ -42,7 +50,7 @@ function isRetryableDbError(error: unknown) {
   );
 }
 
-async function withDb<T>(operation: (db: typeof sql) => Promise<T>, attempts = 4) {
+async function withDb<T>(operation: (db: typeof sql) => Promise<T>, attempts = 6) {
   let lastError: unknown;
   for (let i = 0; i < attempts; i += 1) {
     try {
