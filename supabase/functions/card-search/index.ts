@@ -268,14 +268,19 @@ async function searchOnePiece(query: string, setId?: string) {
 
   // Free-text search: hit both APIs and merge.
   const merged: any[] = [];
-  const q = query.trim();
-  const isCode = /^[a-z]{2,4}\d{2,3}-\d+/i.test(q);
+  const rawQ = query.trim();
+  const isCode = /^[a-z]{2,4}\d{2,3}-\d+/i.test(rawQ);
+  // Allow "<name> <setHint>" e.g. "yamato eb04" — split into a name + set filter.
+  const split = isCode ? { name: rawQ, setHint: null as string | null } : splitQuery(rawQ);
+  const q = split.name || rawQ;
+  const setFilter = split.setHint ? split.setHint.toUpperCase().replace(/-/g, "") : null;
 
   // apitcg
   try {
     const params = new URLSearchParams();
     if (isCode) params.set("code", q.toUpperCase());
     else params.set("name", q);
+    if (setFilter) params.set("code", setFilter);
     const url = `https://www.apitcg.com/api/one-piece/cards?${params.toString()}&limit=100`;
     const res = await fetch(url, {
       headers: { "x-api-key": Deno.env.get("APITCG_API_KEY") ?? "" },
@@ -289,7 +294,7 @@ async function searchOnePiece(query: string, setId?: string) {
   // optcgapi — by code (returns all variants) or by name scan
   try {
     if (isCode) {
-      const base = q.toUpperCase().replace(/_.*$/, "");
+      const base = rawQ.toUpperCase().replace(/_.*$/, "");
       const arr = await fetchOptcgCardVariants(base);
       for (const c of arr) merged.push(mapOptcgCard(c));
     } else {
@@ -298,7 +303,16 @@ async function searchOnePiece(query: string, setId?: string) {
     }
   } catch (e) { console.error("optcgapi search error", e); }
 
-  return merged;
+  // If a set hint was provided, filter merged results to that set.
+  const filtered = setFilter
+    ? merged.filter((c) => {
+        const code = String(c.code ?? "").toUpperCase().replace(/-/g, "");
+        const setId = String(c.set_id ?? "").toUpperCase().replace(/-/g, "");
+        return code.startsWith(setFilter) || setId === setFilter;
+      })
+    : merged;
+
+  return filtered;
 }
 
 // --- Yu-Gi-Oh! (YGOPRODeck, free public API) -----------------------------
