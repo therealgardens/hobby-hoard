@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +22,7 @@ type Wanted = Tables<"wanted_cards"> & { card: Tables<"cards"> | null };
 
 export default function Wanted() {
   const { game } = useParams<{ game: Game }>();
+  const { user } = useAuth();
   const [items, setItems] = useState<Wanted[]>([]);
   const [editing, setEditing] = useState<Wanted | null>(null);
   const [editQty, setEditQty] = useState(1);
@@ -34,10 +36,10 @@ export default function Wanted() {
   useEffect(() => { load(); }, [game]);
 
   const add = async (card: Tables<"cards">) => {
-    const { data: u } = await supabase.auth.getUser();
-    if (!u.user || !game) return;
+    if (!user) return toast.error("Not signed in");
+    if (!game) return;
     const { error } = await supabase.from("wanted_cards").insert({
-      user_id: u.user.id, card_id: card.id, game,
+      user_id: user.id, card_id: card.id, game,
     });
     if (error) return toast.error(error.message);
     toast.success("Added to wishlist");
