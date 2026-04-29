@@ -47,6 +47,7 @@ const App = () => (
             <Route path="/:game" element={<ProtectedRoute><GameLayout /></ProtectedRoute>}>
               <Route index element={<GameHome />} />
               <Route path="master" element={<MasterSets />} />
+              <Route path="collection" element={<Collection />} />
               <Route path="search" element={<CardSearchPage />} />
               <Route path="binders" element={<Binders />} />
               <Route path="binders/:binderId" element={<BinderDetail />} />
