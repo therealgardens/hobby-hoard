@@ -392,17 +392,22 @@ async function searchYugioh(query: string, setId?: string) {
   }
 
   if (effectiveSetId) {
-    // Look up the set name for this code, then query by it.
+    // Look up the set name for this code, then query by it. Prefer the
+    // canonical "(series)" entry when one exists (Yu-Gi-Oh splits some
+    // promotional codes like "LART" across many sub-sets that share the
+    // same set_code).
     try {
-      const setRes = await fetch("https://db.ygoprodeck.com/api/v7/cardsets.php");
-      if (setRes.ok) {
-        const arr = await setRes.json();
-        const match = (arr || []).find(
-          (s: any) =>
-            String(s.set_code || "").toUpperCase() === effectiveSetId!.toUpperCase() ||
-            String(s.set_name || "").toUpperCase() === effectiveSetId!.toUpperCase(),
-        );
-        if (match?.set_name) params.set("cardset", match.set_name);
+      const arr = await getYugiohSetsCached();
+      const want = effectiveSetId!.toUpperCase();
+      const matches = (arr || []).filter(
+        (s: any) =>
+          String(s.set_code || "").toUpperCase() === want ||
+          String(s.set_name || "").toUpperCase() === want,
+      );
+      const preferred =
+        matches.find((s: any) => /\(series\)/i.test(String(s.set_name || ""))) ??
+        matches.sort((a: any, b: any) => (b.num_of_cards ?? 0) - (a.num_of_cards ?? 0))[0];
+      if (preferred?.set_name) params.set("cardset", preferred.set_name);
       }
     } catch (_) {}
     if (!params.has("cardset")) params.set("cardset", effectiveSetId);
