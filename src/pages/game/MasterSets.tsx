@@ -57,6 +57,7 @@ export default function MasterSets() {
   const [ownedCardIds, setOwnedCardIds] = useState<Set<string>>(new Set());
   const [ownedLangByCard, setOwnedLangByCard] = useState<Map<string, string>>(new Map());
   const [wantedCardIds, setWantedCardIds] = useState<Set<string>>(new Set());
+  const [wishlistBusy, setWishlistBusy] = useState<Set<string>>(new Set());
 
   const [picked, setPicked] = useState<CardRow | null>(null);
   const [pickedOwned, setPickedOwned] = useState(false);
