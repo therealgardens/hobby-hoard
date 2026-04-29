@@ -100,14 +100,16 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
   const addToCollection = async (c: CardRow) => {
     if (!user) return toast.error("Not signed in");
     const quantity = Math.max(1, qty[c.id] ?? 1);
-    const { error } = await supabase.from("collection_entries").insert({
-      user_id: user.id,
-      card_id: c.id,
-      game,
-      rarity: c.rarity ?? null,
-      language: "EN",
-      quantity,
-    });
+    const { error } = await withDbRetry(() =>
+      supabase.from("collection_entries").insert({
+        user_id: user.id,
+        card_id: c.id,
+        game,
+        rarity: c.rarity ?? null,
+        language: "EN",
+        quantity,
+      })
+    );
     if (error) return toast.error(error.message);
     toast.success(`Added ${c.name} ×${quantity}`);
     setOwnedIds((prev) => new Set(prev).add(c.id));
