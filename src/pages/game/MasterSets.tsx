@@ -569,6 +569,7 @@ function SetView({
   ownedCardIds,
   ownedLangByCard,
   wantedCardIds,
+  onToggleWanted,
 }: {
   game: Game;
   set: SetInfo;
@@ -578,6 +579,7 @@ function SetView({
   ownedCardIds: Set<string>;
   ownedLangByCard: Map<string, string>;
   wantedCardIds: Set<string>;
+  onToggleWanted: (c: CardRow) => void;
 }) {
   const [cards, setCards] = useState<CardRow[]>([]);
   const [loading, setLoading] = useState(true);
