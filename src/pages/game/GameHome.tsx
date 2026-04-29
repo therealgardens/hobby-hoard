@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Layers, BookOpen, Heart, Copy, Swords, ListChecks, Upload, Download } from "lucide-react";
+import { Layers, BookOpen, Heart, Copy, Swords, ListChecks, Upload, Download, Library } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import type { Game } from "@/lib/game";
