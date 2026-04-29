@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { withDbRetry } from "@/lib/supabaseRetry";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Layers, BookOpen, Heart, Copy, Swords, ListChecks, Upload, Download } from "lucide-react";
