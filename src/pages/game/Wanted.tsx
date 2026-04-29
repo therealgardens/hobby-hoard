@@ -3,17 +3,27 @@ import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Trash2, Download, Copy } from "lucide-react";
 import { CardSearch } from "@/components/CardSearch";
 import { toast } from "sonner";
 import { cardImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 
 type Wanted = Tables<"wanted_cards"> & { card: Tables<"cards"> | null };
 
 export default function Wanted() {
   const { game } = useParams<{ game: Game }>();
   const [items, setItems] = useState<Wanted[]>([]);
+  const [editing, setEditing] = useState<Wanted | null>(null);
+  const [editQty, setEditQty] = useState(1);
 
   const load = async () => {
     if (!game) return;
@@ -36,6 +46,25 @@ export default function Wanted() {
 
   const remove = async (id: string) => {
     await supabase.from("wanted_cards").delete().eq("id", id);
+    setEditing(null);
+    load();
+  };
+
+  const openEdit = (w: Wanted) => {
+    setEditing(w);
+    setEditQty(w.quantity ?? 1);
+  };
+
+  const saveQty = async () => {
+    if (!editing) return;
+    const q = Math.max(1, editQty);
+    const { error } = await supabase
+      .from("wanted_cards")
+      .update({ quantity: q })
+      .eq("id", editing.id);
+    if (error) return toast.error(error.message);
+    toast.success("Updated");
+    setEditing(null);
     load();
   };
 
@@ -111,13 +140,23 @@ export default function Wanted() {
             {items.map(w => {
               const img = cardImage(w.card?.game, w.card?.code, w.card?.image_small);
               return (
-              <Card key={w.id} className="overflow-hidden bg-gradient-card relative group">
+              <Card
+                key={w.id}
+                className="overflow-hidden bg-gradient-card relative group cursor-pointer hover:shadow-card transition-shadow"
+                onClick={() => openEdit(w)}
+              >
                 {img && <img src={img} alt={w.card?.name} className="w-full card-aspect object-cover opacity-70" onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")} />}
+                <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded-md bg-background/90 text-[11px] font-bold shadow">
+                  ×{w.quantity ?? 1}
+                </div>
                 <div className="p-2">
                   <p className="text-xs font-semibold truncate">{w.card?.name}</p>
                   <p className="text-[10px] text-muted-foreground truncate">{w.card?.code}</p>
                 </div>
-                <button onClick={() => remove(w.id)} className="absolute top-1 right-1 p-1 rounded-full bg-background/80 opacity-0 group-hover:opacity-100">
+                <button
+                  onClick={(e) => { e.stopPropagation(); remove(w.id); }}
+                  className="absolute top-1 right-1 p-1 rounded-full bg-background/80 opacity-0 group-hover:opacity-100"
+                >
                   <Trash2 className="h-3 w-3" />
                 </button>
               </Card>
@@ -126,6 +165,31 @@ export default function Wanted() {
           </div>
         </div>
       )}
+
+      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="truncate">{editing?.card?.name ?? "Card"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">{editing?.card?.code}</p>
+            <label className="text-sm font-medium block">Quantity wanted</label>
+            <Input
+              type="number"
+              min={1}
+              value={editQty}
+              onChange={(e) => setEditQty(Math.max(1, parseInt(e.target.value) || 1))}
+              autoFocus
+            />
+          </div>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button variant="destructive" onClick={() => editing && remove(editing.id)}>
+              <Trash2 className="h-4 w-4 mr-2" /> Remove
+            </Button>
+            <Button onClick={saveQty}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
