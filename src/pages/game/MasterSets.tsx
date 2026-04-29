@@ -45,7 +45,10 @@ function extractSetId(s: string | null | undefined): string | null {
 
 function setIdForCard(game: Game, c: { set_id: string | null; set_name: string | null; code: string | null }): string | null {
   if (game === "pokemon" || game === "yugioh") return c.set_id ?? null;
-  return extractSetId(c.set_name) ?? extractSetId(c.code ?? "");
+  // For One Piece, the printing code (e.g. "EB01-057") is the authoritative
+  // set identifier. Bracketed set_name tags like "[OP-11]" can refer to a
+  // *referenced* set rather than the actual printing, so prefer the code.
+  return extractSetId(c.code ?? "") ?? extractSetId(c.set_name);
 }
 
 export default function MasterSets() {
