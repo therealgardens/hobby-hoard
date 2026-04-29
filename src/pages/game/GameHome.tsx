@@ -7,9 +7,11 @@ import { Layers, BookOpen, Heart, Copy, Swords, ListChecks, Upload, Download } f
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import type { Game } from "@/lib/game";
+import { useAuth } from "@/hooks/useAuth";
 
 export default function GameHome() {
   const { game } = useParams<{ game: Game }>();
+  const { user } = useAuth();
   const [stats, setStats] = useState({ unique: 0, total: 0, binders: 0, wanted: 0 });
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
