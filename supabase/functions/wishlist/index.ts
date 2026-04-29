@@ -165,7 +165,8 @@ Deno.serve(async (req) => {
     throw new Error("Invalid wishlist action");
   } catch (e) {
     console.error("wishlist error", e);
-    return json({ error: e instanceof Error ? e.message : "Wishlist failed" }, 400);
+    const message = e instanceof Error ? e.message : "Wishlist failed";
+    return json({ error: isRetryableDbError(e) ? "Database is reconnecting. Please try again." : message }, 400);
   }
 });
 
