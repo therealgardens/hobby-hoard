@@ -9,7 +9,8 @@ import { toast } from "sonner";
 import { cardImageCandidates, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 import { withDbRetry } from "@/lib/supabaseRetry";
-import { addWishlist, removeWishlistByCard, wishlistStatus } from "@/lib/wishlist";
+import { wishlistStatus } from "@/lib/wishlist";
+import { addOwnedCard, addWantedCard, removeWantedCard } from "@/lib/collection";
 
 type CardRow = Tables<"cards">;
 
@@ -100,17 +101,11 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
   const addToCollection = async (c: CardRow) => {
     if (!user) return toast.error("Not signed in");
     const quantity = Math.max(1, qty[c.id] ?? 1);
-    const { error } = await withDbRetry(() =>
-      supabase.from("collection_entries").insert({
-        user_id: user.id,
-        card_id: c.id,
-        game,
-        rarity: c.rarity ?? null,
-        language: "EN",
-        quantity,
-      })
-    );
-    if (error) return toast.error(error.message);
+    try {
+      await addOwnedCard(c, game, { quantity });
+    } catch (error) {
+      return toast.error(error instanceof Error ? error.message : "Could not add card");
+    }
     toast.success(`Added ${c.name} ×${quantity}`);
     setOwnedIds((prev) => new Set(prev).add(c.id));
   };
@@ -118,27 +113,20 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
   const toggleWanted = async (c: CardRow) => {
     if (authLoading) return toast.info("Signing you in…");
     if (!user) return toast.error("Not signed in");
-    if (wantedIds.has(c.id)) {
-      try {
-        await removeWishlistByCard(c.id, game);
-      } catch (error) {
-        return toast.error(error instanceof Error ? error.message : "Could not remove from wishlist");
-      }
-      setWantedIds((prev) => {
-        const n = new Set(prev);
-        n.delete(c.id);
-        return n;
-      });
-      toast.success("Removed from wishlist");
-    } else {
-      try {
-        await addWishlist(c, game);
-      } catch (error) {
-        return toast.error(error instanceof Error ? error.message : "Could not add to wishlist");
-      }
-      setWantedIds((prev) => new Set(prev).add(c.id));
-      toast.success("Added to wishlist");
+    const wasWanted = wantedIds.has(c.id);
+    try {
+      if (wasWanted) await removeWantedCard(c, game);
+      else await addWantedCard(c, game);
+    } catch (error) {
+      return toast.error(error instanceof Error ? error.message : "Wishlist action failed");
     }
+    setWantedIds((prev) => {
+      const n = new Set(prev);
+      if (wasWanted) n.delete(c.id);
+      else n.add(c.id);
+      return n;
+    });
+    toast.success(wasWanted ? "Removed from wishlist" : "Added to wishlist");
   };
 
   return (
