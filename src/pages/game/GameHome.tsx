@@ -18,9 +18,9 @@ export default function GameHome() {
     if (!game) return;
     const { data: entries } = await supabase
       .from("collection_entries")
-      .select("quantity")
+      .select("card_id, quantity")
       .eq("game", game);
-    const unique = entries?.length ?? 0;
+    const unique = new Set((entries ?? []).map((e: any) => e.card_id)).size;
     const total = entries?.reduce((s, e) => s + (e.quantity ?? 0), 0) ?? 0;
     const { count: binders } = await supabase
       .from("binders").select("*", { count: "exact", head: true }).eq("game", game);
