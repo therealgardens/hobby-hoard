@@ -152,6 +152,11 @@ export default function GameLayout() {
             >
               <l.icon className="h-4 w-4" />
               {l.label}
+              {l.to && counts[l.to as keyof NavCounts] !== undefined && (
+                <span className="ml-1 inline-flex min-w-6 h-6 items-center justify-center rounded-full bg-primary text-primary-foreground px-1.5 text-[11px] font-bold leading-none">
+                  {counts[l.to as keyof NavCounts]}
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>
