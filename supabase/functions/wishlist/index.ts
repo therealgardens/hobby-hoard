@@ -79,7 +79,7 @@ Deno.serve(async (req) => {
 
     if (action === "list") {
       const game = requireGame(body.game);
-      const rows = await sql`
+      const rows = await withDb((db) => db`
         select
           w.id, w.user_id, w.card_id, w.game, w.rarity, w.language, w.quantity, w.binder_id, w.created_at,
           case when c.id is null then null else jsonb_build_object(
@@ -100,9 +100,9 @@ Deno.serve(async (req) => {
           ) end as card
         from public.wanted_cards w
         left join public.cards c on c.id = w.card_id
-        where w.user_id = ${user.id}::uuid and w.game = ${game}
+        where w.user_id = ${userId}::uuid and w.game = ${game}
         order by w.created_at desc
-      `;
+      `);
       return json({ items: rows });
     }
 
@@ -111,11 +111,11 @@ Deno.serve(async (req) => {
         ? body.cardIds.filter((id: unknown) => typeof id === "string" && uuidRe.test(id))
         : [];
       if (!cardIds.length) return json({ cardIds: [] });
-      const rows = await sql`
+      const rows = await withDb((db) => db`
         select distinct card_id
         from public.wanted_cards
-        where user_id = ${user.id}::uuid and card_id in ${sql(cardIds)}
-      `;
+        where user_id = ${userId}::uuid and card_id in ${db(cardIds)}
+      `);
       return json({ cardIds: rows.map((row) => row.card_id) });
     }
 
@@ -127,26 +127,26 @@ Deno.serve(async (req) => {
       const rarity = typeof body.rarity === "string" && body.rarity ? body.rarity : null;
       const language = typeof body.language === "string" && body.language ? body.language : "EN";
 
-      const rows = await sql`
+      const rows = await withDb((db) => db`
         insert into public.wanted_cards (user_id, card_id, game, rarity, language, quantity, binder_id)
-        select ${user.id}::uuid, ${cardId}::uuid, ${game}, ${rarity}, ${language}, ${quantity}, ${binderId}::uuid
+        select ${userId}::uuid, ${cardId}::uuid, ${game}, ${rarity}, ${language}, ${quantity}, ${binderId}::uuid
         where not exists (
           select 1 from public.wanted_cards
-          where user_id = ${user.id}::uuid and card_id = ${cardId}::uuid and game = ${game}
+          where user_id = ${userId}::uuid and card_id = ${cardId}::uuid and game = ${game}
         )
         returning *
-      `;
+      `);
       return json({ item: rows[0] ?? null });
     }
 
     if (action === "remove") {
       if (body.id) {
         const id = requireUuid(body.id, "wishlist id");
-        await sql`delete from public.wanted_cards where id = ${id}::uuid and user_id = ${user.id}::uuid`;
+        await withDb((db) => db`delete from public.wanted_cards where id = ${id}::uuid and user_id = ${userId}::uuid`);
       } else {
         const game = requireGame(body.game);
         const cardId = requireUuid(body.cardId, "card id");
-        await sql`delete from public.wanted_cards where user_id = ${user.id}::uuid and card_id = ${cardId}::uuid and game = ${game}`;
+        await withDb((db) => db`delete from public.wanted_cards where user_id = ${userId}::uuid and card_id = ${cardId}::uuid and game = ${game}`);
       }
       return json({ ok: true });
     }
@@ -154,11 +154,11 @@ Deno.serve(async (req) => {
     if (action === "update") {
       const id = requireUuid(body.id, "wishlist id");
       const quantity = Math.max(1, Number.parseInt(String(body.quantity ?? 1), 10) || 1);
-      await sql`
+      await withDb((db) => db`
         update public.wanted_cards
         set quantity = ${quantity}
-        where id = ${id}::uuid and user_id = ${user.id}::uuid
-      `;
+        where id = ${id}::uuid and user_id = ${userId}::uuid
+      `);
       return json({ ok: true });
     }
 
