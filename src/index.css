@@ -113,6 +113,7 @@
   .bg-gradient-hero { background: var(--gradient-hero); }
   .bg-gradient-pokemon { background: var(--gradient-pokemon); }
   .bg-gradient-onepiece { background: var(--gradient-onepiece); }
+  .bg-gradient-yugioh { background: var(--gradient-yugioh); }
   .bg-gradient-card { background: var(--gradient-card); }
   .shadow-soft { box-shadow: var(--shadow-soft); }
   .shadow-pop { box-shadow: var(--shadow-pop); }
