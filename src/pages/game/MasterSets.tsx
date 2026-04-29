@@ -14,7 +14,8 @@ import { ArrowLeft, Plus, Search, Trash2, Heart, LayoutGrid, List, Minus } from 
 import { toast } from "sonner";
 import { cardImageCandidates, proxiedImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
-import { addWishlist, listWishlist, removeWishlistByCard } from "@/lib/wishlist";
+import { listWishlist } from "@/lib/wishlist";
+import { addOwnedCard, addWantedCard, removeOneOwned, removeWantedCard } from "@/lib/collection";
 import { withDbRetry } from "@/lib/supabaseRetry";
 
 type CardRow = Tables<"cards">;
@@ -202,17 +203,11 @@ export default function MasterSets() {
 
   const quickAdd = async (c: CardRow) => {
     if (!game) return;
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
-    const { error } = await supabase.from("collection_entries").insert({
-      user_id: userData.user.id,
-      card_id: c.id,
-      game,
-      rarity: c.rarity ?? null,
-      language: "EN",
-      quantity: 1,
-    });
-    if (error) return toast.error(error.message);
+    try {
+      await addOwnedCard(c, game);
+    } catch (error) {
+      return toast.error(error instanceof Error ? error.message : "Could not add card");
+    }
     toast.success(`Added ${c.name}`);
     const wasOwned = ownedCardIds.has(c.id);
     setOwnedCardIds((prev) => new Set(prev).add(c.id));
@@ -230,11 +225,8 @@ export default function MasterSets() {
   const toggleWanted = async (c: CardRow) => {
     if (!game) return;
     if (wishlistBusy.has(c.id)) return;
-    const { data: u } = await supabase.auth.getUser();
-    if (!u.user) return;
     setWishlistBusy((prev) => new Set(prev).add(c.id));
     const wasWanted = wantedCardIds.has(c.id);
-    // Optimistic update
     setWantedCardIds((prev) => {
       const n = new Set(prev);
       if (wasWanted) n.delete(c.id);
@@ -243,14 +235,13 @@ export default function MasterSets() {
     });
     try {
       if (wasWanted) {
-        await removeWishlistByCard(c.id, game);
+        await removeWantedCard(c, game);
         toast.success("Removed from wishlist");
       } else {
-        await addWishlist(c, game);
+        await addWantedCard(c, game);
         toast.success("Added to wishlist");
       }
     } catch (error) {
-      // Rollback
       setWantedCardIds((prev) => {
         const n = new Set(prev);
         if (wasWanted) n.add(c.id);
@@ -269,17 +260,11 @@ export default function MasterSets() {
 
   const saveCard = async () => {
     if (!picked || !game) return;
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
-    const { error } = await supabase.from("collection_entries").insert({
-      user_id: userData.user.id,
-      card_id: picked.id,
-      game,
-      rarity: rarity || null,
-      language,
-      quantity,
-    });
-    if (error) return toast.error(error.message);
+    try {
+      await addOwnedCard(picked, game, { rarity: rarity || null, language, quantity });
+    } catch (error) {
+      return toast.error(error instanceof Error ? error.message : "Could not add card");
+    }
     toast.success(`Added ${picked.name} ×${quantity}`);
     const savedId = picked.id;
     const savedSetId = setIdForCard(game, picked);
@@ -294,28 +279,24 @@ export default function MasterSets() {
 
   const removeOne = async () => {
     if (!picked || !game) return;
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
-    const { data: rows } = await supabase
-      .from("collection_entries")
-      .select("id")
-      .eq("user_id", userData.user.id)
-      .eq("card_id", picked.id)
-      .order("created_at", { ascending: false })
-      .limit(1);
-    const target = rows?.[0]?.id;
-    if (!target) {
+    let removed = false;
+    try {
+      removed = await removeOneOwned(picked, game);
+    } catch (error) {
+      return toast.error(error instanceof Error ? error.message : "Could not remove card");
+    }
+    if (!removed) {
       toast.info("No entry found to remove");
       return;
     }
-    const { error } = await supabase.from("collection_entries").delete().eq("id", target);
-    if (error) return toast.error(error.message);
     toast.success(`Removed one ${picked.name}`);
 
     const removedId = picked.id;
     const removedSetId = setIdForCard(game, picked);
     setPicked(null);
 
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData.user) return;
     const { data: remain } = await supabase
       .from("collection_entries")
       .select("id")
