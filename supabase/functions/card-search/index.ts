@@ -57,6 +57,28 @@ async function withDbRetry<T extends { error: any }>(
   return last as T;
 }
 
+// Split a free-text query like "yamato eb04" into a name part and an optional
+// set hint. A token is treated as a set hint when it looks like a TCG set code
+// (2–4 letters optionally followed by 1–3 digits, e.g. "eb04", "op14", "st28",
+// "sv1", "lob", "me1"). Pure printing codes like "op01-001" are left in the
+// name part so the caller's existing code-detection still triggers.
+function splitQuery(query: string): { name: string; setHint: string | null } {
+  const tokens = query.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length <= 1) return { name: query.trim(), setHint: null };
+  let setHint: string | null = null;
+  const nameTokens: string[] = [];
+  for (const t of tokens) {
+    const isPrintingCode = /-/.test(t); // e.g. op01-001, lob-en001
+    const looksLikeSet = !isPrintingCode && /^[a-z]{2,4}\d{0,3}$/i.test(t) && /[a-z]/i.test(t);
+    if (looksLikeSet && !setHint) {
+      setHint = t;
+    } else {
+      nameTokens.push(t);
+    }
+  }
+  return { name: nameTokens.join(" ").trim(), setHint };
+}
+
 async function searchPokemon(query: string, setId?: string) {
   // https://docs.pokemontcg.io/
   const parts: string[] = [];
