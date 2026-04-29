@@ -9,15 +9,21 @@ const BAD_WORDS = [
 
 export const USERNAME_RE = /^[a-zA-Z0-9_]{3,20}$/;
 
-export function validateUsername(raw: string): { ok: true; value: string } | { ok: false; error: string } {
+export interface UsernameResult {
+  ok: boolean;
+  value: string;
+  error: string;
+}
+
+export function validateUsername(raw: string): UsernameResult {
   const value = (raw ?? "").trim();
-  if (!value) return { ok: false, error: "Username is required." };
+  if (!value) return { ok: false, value: "", error: "Username is required." };
   if (!USERNAME_RE.test(value)) {
-    return { ok: false, error: "Use 3–20 characters: letters, numbers, underscore." };
+    return { ok: false, value, error: "Use 3–20 characters: letters, numbers, underscore." };
   }
   const lower = value.toLowerCase();
   if (BAD_WORDS.some((w) => lower.includes(w))) {
-    return { ok: false, error: "Please choose a different username." };
+    return { ok: false, value, error: "Please choose a different username." };
   }
-  return { ok: true, value };
+  return { ok: true, value, error: "" };
 }
