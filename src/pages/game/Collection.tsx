@@ -24,7 +24,8 @@ type Entry = {
   card: CardRow | null;
 };
 
-const PAGE_SIZE = 48;
+const PAGE_SIZE = 36;
+const cacheKey = (game: string, uid: string) => `tcg.collection.${game}.${uid}.v1`;
 
 export default function Collection() {
   const { game } = useParams<{ game: Game }>();
@@ -33,12 +34,13 @@ export default function Collection() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [done, setDone] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   const fetchPage = useCallback(
     async (from: number) => {
-      if (!user || !game) return { rows: [] as Entry[], end: true };
+      if (!user || !game) return { rows: [] as Entry[], end: true, error: null as string | null };
       const { data: rows, error } = await withDbRetry(() =>
         supabase
           .from("collection_entries")
@@ -49,27 +51,54 @@ export default function Collection() {
           .range(from, from + PAGE_SIZE - 1),
       );
       if (error) {
-        toast.error(error.message);
-        return { rows: [], end: true };
+        return { rows: [], end: true, error: error.message };
       }
       const ids = Array.from(new Set((rows ?? []).map((r) => r.card_id)));
       let byId = new Map<string, CardRow>();
       if (ids.length) {
-        const { data: cards } = await withDbRetry(() =>
+        const { data: cards, error: cErr } = await withDbRetry(() =>
           supabase
             .from("cards")
             .select("id, game, code, name, rarity, set_name, image_small, image_large")
             .in("id", ids),
         );
+        if (cErr) {
+          return { rows: [], end: true, error: cErr.message };
+        }
         byId = new Map((cards ?? []).map((c: any) => [c.id, c as CardRow]));
       }
       const mapped = (rows ?? []).map((r) => ({ ...r, card: byId.get(r.card_id) ?? null }));
-      return { rows: mapped, end: (rows?.length ?? 0) < PAGE_SIZE };
+      return { rows: mapped, end: (rows?.length ?? 0) < PAGE_SIZE, error: null };
     },
     [user, game],
   );
 
-  // Initial load
+  const loadInitial = useCallback(() => {
+    if (!game || !user) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setDone(false);
+    fetchPage(0).then(({ rows, end, error: err }) => {
+      if (cancelled) return;
+      if (err) {
+        setError(err);
+        setLoading(false);
+        return;
+      }
+      setEntries(rows);
+      setDone(end);
+      setLoading(false);
+      try {
+        sessionStorage.setItem(cacheKey(game, user.id), JSON.stringify({ rows, end, t: Date.now() }));
+      } catch {}
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [game, user, fetchPage]);
+
+  // Initial load — hydrate from cache instantly, then refresh in background
   useEffect(() => {
     if (!game || authLoading) return;
     if (!user) {
@@ -77,29 +106,42 @@ export default function Collection() {
       setLoading(false);
       return;
     }
-    let cancelled = false;
-    setLoading(true);
-    setDone(false);
-    setEntries([]);
-    fetchPage(0).then(({ rows, end }) => {
-      if (cancelled) return;
-      setEntries(rows);
-      setDone(end);
-      setLoading(false);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [game, user?.id, authLoading, fetchPage]);
+    // Hydrate cache for instant paint
+    try {
+      const raw = sessionStorage.getItem(cacheKey(game, user.id));
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.rows) {
+          setEntries(parsed.rows);
+          setDone(!!parsed.end);
+          setLoading(false);
+        }
+      }
+    } catch {}
+    return loadInitial();
+  }, [game, user?.id, authLoading, loadInitial]);
 
   const loadMore = useCallback(async () => {
-    if (loading || loadingMore || done) return;
+    if (loading || loadingMore || done || error) return;
     setLoadingMore(true);
-    const { rows, end } = await fetchPage(entries.length);
-    setEntries((prev) => [...prev, ...rows]);
+    const { rows, end, error: err } = await fetchPage(entries.length);
+    if (err) {
+      toast.error(err);
+      setLoadingMore(false);
+      return;
+    }
+    setEntries((prev) => {
+      const next = [...prev, ...rows];
+      if (game && user) {
+        try {
+          sessionStorage.setItem(cacheKey(game, user.id), JSON.stringify({ rows: next, end, t: Date.now() }));
+        } catch {}
+      }
+      return next;
+    });
     setDone(end);
     setLoadingMore(false);
-  }, [entries.length, loading, loadingMore, done, fetchPage]);
+  }, [entries.length, loading, loadingMore, done, error, fetchPage, game, user]);
 
   // Infinite-scroll sentinel
   useEffect(() => {
@@ -148,7 +190,16 @@ export default function Collection() {
         />
       </div>
 
-      {loading ? (
+      {error && entries.length === 0 ? (
+        <div className="text-center py-12 space-y-4">
+          <p className="text-muted-foreground">
+            Couldn't load your collection. The database is warming up.
+          </p>
+          <Button onClick={() => loadInitial()} variant="outline">
+            Retry
+          </Button>
+        </div>
+      ) : loading ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           {Array.from({ length: 10 }).map((_, i) => (
             <Card key={i} className="overflow-hidden bg-gradient-card">
