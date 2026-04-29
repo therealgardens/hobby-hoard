@@ -29,7 +29,11 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
   const refreshStatus = async (cards: CardRow[]) => {
     const { data: u } = await supabase.auth.getUser();
     if (!u.user || cards.length === 0) return;
-    const ids = cards.map((c) => c.id);
+    // Guard against non-UUID ids (e.g. if an upstream proxy ever returns
+    // synthesized cards) — Postgres rejects the whole IN() with 22P02 otherwise.
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const ids = cards.map((c) => c.id).filter((id) => uuidRe.test(id));
+    if (ids.length === 0) return;
     const [{ data: owned }, { data: wanted }] = await Promise.all([
       supabase.from("collection_entries").select("card_id").eq("user_id", u.user.id).in("card_id", ids),
       supabase.from("wanted_cards").select("card_id").eq("user_id", u.user.id).in("card_id", ids),
