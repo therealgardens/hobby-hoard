@@ -145,6 +145,24 @@ function mapOptcgCard(c: any) {
   };
 }
 
+// Cache for optcgapi /allSets/ — used to resolve dual ids like OP14 -> OP14-EB04.
+let _optcgAllSetsCache: { at: number; data: any[] } | null = null;
+async function getOptcgAllSetsCached(): Promise<any[]> {
+  const now = Date.now();
+  if (_optcgAllSetsCache && now - _optcgAllSetsCache.at < 10 * 60 * 1000) {
+    return _optcgAllSetsCache.data;
+  }
+  try {
+    const res = await fetch("https://optcgapi.com/api/allSets/");
+    if (!res.ok) return _optcgAllSetsCache?.data ?? [];
+    const arr = await res.json();
+    _optcgAllSetsCache = { at: now, data: arr };
+    return arr;
+  } catch {
+    return _optcgAllSetsCache?.data ?? [];
+  }
+}
+
 // Fetch a full set from optcgapi. Tries booster sets, then starter decks,
 // and also resolves dual-ids like "OP14" -> "OP14-EB04" via /api/allSets/.
 async function fetchOptcgSet(setId: string): Promise<any[]> {
@@ -158,20 +176,15 @@ async function fetchOptcgSet(setId: string): Promise<any[]> {
     candidates.push(upper);
   }
 
-  // Look up dual ids (e.g. "OP14-EB04") from /api/allSets/
-  try {
-    const res = await fetch("https://optcgapi.com/api/allSets/");
-    if (res.ok) {
-      const arr = await res.json();
-      const norm = upper.replace(/-/g, "");
-      for (const s of arr || []) {
-        const raw = String(s.set_id || "").toUpperCase();
-        if (!raw) continue;
-        const head = raw.split("-EB")[0].split("-OP")[0].replace(/-/g, "");
-        if (head === norm && !candidates.includes(raw)) candidates.push(raw);
-      }
-    }
-  } catch (_) {}
+  // Look up dual ids (e.g. "OP14-EB04") from the cached /allSets/ list
+  const arr = await getOptcgAllSetsCached();
+  const norm = upper.replace(/-/g, "");
+  for (const s of arr || []) {
+    const raw = String(s.set_id || "").toUpperCase();
+    if (!raw) continue;
+    const head = raw.split("-EB")[0].split("-OP")[0].replace(/-/g, "");
+    if (head === norm && !candidates.includes(raw)) candidates.push(raw);
+  }
 
   const isStarter = /^ST/i.test(setId);
   const tryEndpoints = (c: string) =>
