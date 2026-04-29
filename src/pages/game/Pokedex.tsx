@@ -6,6 +6,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { withDbRetry } from "@/lib/supabaseRetry";
 
 const TOTAL = 1025;
 
@@ -34,23 +35,29 @@ export default function Pokedex() {
   const load = async () => {
     const { data: u } = await supabase.auth.getUser();
     if (!u.user) return;
-    const { data } = await supabase
-      .from("pokedex_entries")
-      .select("pokedex_number")
-      .eq("user_id", u.user.id)
-      .eq("registered", true);
+    const { data } = await withDbRetry(() =>
+      supabase
+        .from("pokedex_entries")
+        .select("pokedex_number")
+        .eq("user_id", u.user!.id)
+        .eq("registered", true),
+    );
     setRegistered(new Set((data ?? []).map((d) => d.pokedex_number)));
 
     const [{ data: ents }, { data: bslots }] = await Promise.all([
-      supabase
-        .from("collection_entries")
-        .select("card:cards(pokedex_number)")
-        .eq("game", "pokemon")
-        .eq("user_id", u.user.id),
-      supabase
-        .from("binder_slots")
-        .select("card:cards(pokedex_number, game)")
-        .eq("user_id", u.user.id),
+      withDbRetry(() =>
+        supabase
+          .from("collection_entries")
+          .select("card_id, cards(pokedex_number)")
+          .eq("game", "pokemon")
+          .eq("user_id", u.user!.id),
+      ),
+      withDbRetry(() =>
+        supabase
+          .from("binder_slots")
+          .select("card_id, cards(pokedex_number, game)")
+          .eq("user_id", u.user!.id),
+      ),
     ]);
     const nums = new Set<number>();
     (ents ?? []).forEach((e: any) => {
