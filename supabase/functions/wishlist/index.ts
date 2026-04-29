@@ -27,7 +27,10 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 function isRetryableError(error: unknown) {
   const message = String((error as Error)?.message ?? error).toLowerCase();
   const code = String((error as { code?: string })?.code ?? "");
+  // Empty error object from supabase-js usually indicates a transient fetch/network failure
+  const isEmpty = !message && !code;
   return (
+    isEmpty ||
     code === "57P02" || code === "57P03" || code === "57P01" ||
     code === "53300" || code === "08006" || code === "08001" || code === "08000" ||
     message.includes("schema cache") ||
@@ -35,7 +38,9 @@ function isRetryableError(error: unknown) {
     message.includes("starting up") ||
     message.includes("unexpected eof") ||
     message.includes("fetch failed") ||
-    message.includes("terminating connection")
+    message.includes("terminating connection") ||
+    message.includes("network") ||
+    message.includes("timeout")
   );
 }
 
@@ -148,9 +153,11 @@ Deno.serve(async (req) => {
     }
 
     throw new Error("Invalid wishlist action");
-  } catch (e) {
-    console.error("wishlist error", e);
-    const message = e instanceof Error ? e.message : "Wishlist failed";
+  } catch (e: any) {
+    console.error("wishlist error", JSON.stringify({
+      message: e?.message, code: e?.code, details: e?.details, hint: e?.hint, name: e?.name,
+    }));
+    const message = (e?.message && String(e.message)) || "Wishlist failed";
     return json({ error: isRetryableError(e) ? "Database is reconnecting. Please try again." : message }, 400);
   }
 });
