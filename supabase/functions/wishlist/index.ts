@@ -10,8 +10,7 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const DB_URL = Deno.env.get("SUPABASE_DB_URL")!;
 
-const createSql = () => postgres(DB_URL, { max: 1, prepare: false, ssl: "require" });
-let sql: any = createSql();
+const createSql = () => postgres(DB_URL, { max: 1, prepare: false, ssl: "require", idle_timeout: 5, max_lifetime: 30 });
 
 const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const games = new Set(["pokemon", "onepiece", "yugioh"]);
@@ -33,11 +32,11 @@ function isRetryableDbError(error: unknown) {
   const code = String((error as { code?: string })?.code ?? "");
   return (
     code === "57P02" ||
-    code === "57P03" || // cannot_connect_now / recovery mode
-    code === "57P01" || // admin_shutdown
-    code === "53300" || // too_many_connections
-    code === "08006" || // connection_failure
-    code === "08001" || // sqlclient_unable_to_establish_sqlconnection
+    code === "57P03" ||
+    code === "57P01" ||
+    code === "53300" ||
+    code === "08006" ||
+    code === "08001" ||
     code === "08000" ||
     message.includes("recovery mode") ||
     message.includes("starting up") ||
@@ -50,20 +49,22 @@ function isRetryableDbError(error: unknown) {
   );
 }
 
-async function withDb<T>(operation: (db: typeof sql) => Promise<T>, attempts = 6) {
+// Open a fresh connection per request and close it on the way out. Long-lived
+// shared connections get killed by the platform between invocations, leaving
+// a stale TLS socket that fails with "unexpected end of file" on next use.
+async function withDb<T>(operation: (db: ReturnType<typeof createSql>) => Promise<T>, attempts = 4): Promise<T> {
   let lastError: unknown;
   for (let i = 0; i < attempts; i += 1) {
+    const db = createSql();
     try {
-      return await operation(sql);
+      const result = await operation(db);
+      try { await db.end({ timeout: 0 }); } catch (_) {}
+      return result;
     } catch (error) {
       lastError = error;
+      try { await db.end({ timeout: 0 }); } catch (_) {}
       if (!isRetryableDbError(error) || i === attempts - 1) throw error;
-      const old = sql;
-      sql = createSql();
-      try {
-        await old.end({ timeout: 0 });
-      } catch (_) {}
-      await wait(Math.min(500 * 2 ** i, 4000));
+      await wait(Math.min(400 * 2 ** i, 3000));
     }
   }
   throw lastError;
