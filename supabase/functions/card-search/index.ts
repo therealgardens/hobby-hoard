@@ -82,9 +82,17 @@ function splitQuery(query: string): { name: string; setHint: string | null } {
 async function searchPokemon(query: string, setId?: string) {
   // https://docs.pokemontcg.io/
   const parts: string[] = [];
-  if (setId) parts.push(`set.id:${setId}`);
-  if (query) {
-    const q = query.trim();
+  let effectiveSetId = setId;
+  let q = query.trim();
+  if (!setId && q) {
+    const split = splitQuery(q);
+    if (split.setHint) {
+      effectiveSetId = split.setHint.toLowerCase();
+      q = split.name;
+    }
+  }
+  if (effectiveSetId) parts.push(`set.id:${effectiveSetId}`);
+  if (q) {
     if (/^[a-z0-9]+-\d+/i.test(q)) {
       parts.push(`id:${q.toLowerCase()}`);
     } else if (/^\d+$/.test(q)) {
