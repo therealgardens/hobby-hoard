@@ -45,10 +45,12 @@ function extractSetId(s: string | null | undefined): string | null {
 
 function setIdForCard(game: Game, c: { set_id: string | null; set_name: string | null; code: string | null }): string | null {
   if (game === "pokemon" || game === "yugioh") return c.set_id ?? null;
-  // For One Piece, the printing code (e.g. "EB01-057") is the authoritative
-  // set identifier. Bracketed set_name tags like "[OP-11]" can refer to a
-  // *referenced* set rather than the actual printing, so prefer the code.
-  return extractSetId(c.code ?? "") ?? extractSetId(c.set_name);
+  // For One Piece, prefer the explicit set_id (e.g. "ST-26", "OP-06", "EB-03")
+  // since that matches the set the user browsed when adding the card.
+  // Fall back to bracketed tag in set_name (e.g. "[ST-28]"), and finally to
+  // the printing code prefix (e.g. "OP06-103" -> "OP06").
+  const fromSetId = c.set_id ? c.set_id.toUpperCase().replace(/-/g, "") : null;
+  return fromSetId || extractSetId(c.set_name) || extractSetId(c.code ?? "");
 }
 
 export default function MasterSets() {
