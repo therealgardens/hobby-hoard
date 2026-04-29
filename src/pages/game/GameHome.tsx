@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Layers, BookOpen, Heart, Copy, Swords, ListChecks, Upload, Download } from "lucide-react";
+import { Layers, BookOpen, Heart, Copy, Swords, ListChecks, Upload, Download, Library } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import type { Game } from "@/lib/game";
@@ -39,16 +39,22 @@ export default function GameHome() {
         .eq("game", game),
     ]);
 
+    if (coll.error) console.error("[GameHome] collection error", coll.error);
+    if (bindersRes.error) console.error("[GameHome] binders error", bindersRes.error);
+    if (wantedRes.error) console.error("[GameHome] wanted error", wantedRes.error);
+
     const rows = coll.data ?? [];
     const unique = rows.length;
     const total = rows.reduce((s, r) => s + (r.quantity ?? 0), 0);
 
-    setStats({
+    const next = {
       unique,
       total,
       binders: bindersRes.count ?? 0,
       wanted: wantedRes.count ?? 0,
-    });
+    };
+    console.log("[GameHome] stats loaded", { game, userId, ...next });
+    setStats(next);
   };
 
   const exportGame = async () => {
@@ -161,12 +167,14 @@ export default function GameHome() {
 
   return (
     <div className="space-y-8">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Stat label="Unique cards" value={stats.unique} />
-        <Stat label="Total copies" value={stats.total} />
-        <Stat label="Binders" value={stats.binders} />
-        <Stat label="Wanted" value={stats.wanted} />
-      </div>
+      <Card className="p-6 bg-gradient-card shadow-soft">
+        <div className="grid grid-cols-2 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-border">
+          <StatRow icon={Library} label="Unique cards" value={stats.unique} />
+          <StatRow icon={Copy} label="Total copies" value={stats.total} />
+          <StatRow icon={BookOpen} label="Binders" value={stats.binders} />
+          <StatRow icon={Heart} label="Wanted" value={stats.wanted} />
+        </div>
+      </Card>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {tiles.map((t) => (
@@ -205,11 +213,24 @@ export default function GameHome() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function StatRow({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: number;
+}) {
   return (
-    <Card className="p-5 bg-gradient-card shadow-soft">
-      <p className="text-xs uppercase tracking-wider text-muted-foreground">{label}</p>
-      <p className="text-4xl font-display text-primary mt-1">{value}</p>
-    </Card>
+    <div className="flex items-center gap-3 px-4 py-3">
+      <div className="rounded-full bg-primary/10 text-primary p-2 shrink-0">
+        <Icon className="h-5 w-5" />
+      </div>
+      <div className="min-w-0">
+        <p className="text-xs uppercase tracking-wider text-muted-foreground truncate">{label}</p>
+        <p className="text-3xl font-display text-foreground leading-tight">{value}</p>
+      </div>
+    </div>
   );
 }
