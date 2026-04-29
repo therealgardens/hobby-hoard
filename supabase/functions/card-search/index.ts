@@ -145,6 +145,24 @@ function mapOptcgCard(c: any) {
   };
 }
 
+// Cache for optcgapi /allSets/ — used to resolve dual ids like OP14 -> OP14-EB04.
+let _optcgAllSetsCache: { at: number; data: any[] } | null = null;
+async function getOptcgAllSetsCached(): Promise<any[]> {
+  const now = Date.now();
+  if (_optcgAllSetsCache && now - _optcgAllSetsCache.at < 10 * 60 * 1000) {
+    return _optcgAllSetsCache.data;
+  }
+  try {
+    const res = await fetch("https://optcgapi.com/api/allSets/");
+    if (!res.ok) return _optcgAllSetsCache?.data ?? [];
+    const arr = await res.json();
+    _optcgAllSetsCache = { at: now, data: arr };
+    return arr;
+  } catch {
+    return _optcgAllSetsCache?.data ?? [];
+  }
+}
+
 // Fetch a full set from optcgapi. Tries booster sets, then starter decks,
 // and also resolves dual-ids like "OP14" -> "OP14-EB04" via /api/allSets/.
 async function fetchOptcgSet(setId: string): Promise<any[]> {
@@ -158,20 +176,15 @@ async function fetchOptcgSet(setId: string): Promise<any[]> {
     candidates.push(upper);
   }
 
-  // Look up dual ids (e.g. "OP14-EB04") from /api/allSets/
-  try {
-    const res = await fetch("https://optcgapi.com/api/allSets/");
-    if (res.ok) {
-      const arr = await res.json();
-      const norm = upper.replace(/-/g, "");
-      for (const s of arr || []) {
-        const raw = String(s.set_id || "").toUpperCase();
-        if (!raw) continue;
-        const head = raw.split("-EB")[0].split("-OP")[0].replace(/-/g, "");
-        if (head === norm && !candidates.includes(raw)) candidates.push(raw);
-      }
-    }
-  } catch (_) {}
+  // Look up dual ids (e.g. "OP14-EB04") from the cached /allSets/ list
+  const arr = await getOptcgAllSetsCached();
+  const norm = upper.replace(/-/g, "");
+  for (const s of arr || []) {
+    const raw = String(s.set_id || "").toUpperCase();
+    if (!raw) continue;
+    const head = raw.split("-EB")[0].split("-OP")[0].replace(/-/g, "");
+    if (head === norm && !candidates.includes(raw)) candidates.push(raw);
+  }
 
   const isStarter = /^ST/i.test(setId);
   const tryEndpoints = (c: string) =>
@@ -222,18 +235,26 @@ async function fetchOptcgCardVariants(baseCode: string): Promise<any[]> {
   }
 }
 
-// Free-text search on optcgapi by name (scans allCards endpoint).
-async function searchOptcgByName(query: string): Promise<any[]> {
+// optcgapi has no name-search endpoint; free-text One Piece search relies on
+// apitcg only (this function is kept as a no-op stub for compatibility).
+async function searchOptcgByName(_query: string): Promise<any[]> {
+  return [];
+}
+
+// Cache for ygoprodeck cardsets (used to translate set codes -> set names).
+// In-memory cache lives for the lifetime of the edge function instance.
+let _ygoSetsCache: { at: number; data: any[] } | null = null;
+async function getYugiohSetsCached(): Promise<any[]> {
+  const now = Date.now();
+  if (_ygoSetsCache && now - _ygoSetsCache.at < 10 * 60 * 1000) return _ygoSetsCache.data;
   try {
-    const res = await fetch(`https://optcgapi.com/api/allCards/`);
-    if (!res.ok) return [];
-    const json = await res.json();
-    const q = query.toLowerCase();
-    return (json || []).filter((c: any) =>
-      String(c.card_name ?? c.name ?? "").toLowerCase().includes(q),
-    );
+    const res = await fetch("https://db.ygoprodeck.com/api/v7/cardsets.php");
+    if (!res.ok) return _ygoSetsCache?.data ?? [];
+    const arr = await res.json();
+    _ygoSetsCache = { at: now, data: arr };
+    return arr;
   } catch {
-    return [];
+    return _ygoSetsCache?.data ?? [];
   }
 }
 
@@ -371,18 +392,22 @@ async function searchYugioh(query: string, setId?: string) {
   }
 
   if (effectiveSetId) {
-    // Look up the set name for this code, then query by it.
+    // Look up the set name for this code, then query by it. Prefer the
+    // canonical "(series)" entry when one exists (Yu-Gi-Oh splits some
+    // promotional codes like "LART" across many sub-sets that share the
+    // same set_code).
     try {
-      const setRes = await fetch("https://db.ygoprodeck.com/api/v7/cardsets.php");
-      if (setRes.ok) {
-        const arr = await setRes.json();
-        const match = (arr || []).find(
-          (s: any) =>
-            String(s.set_code || "").toUpperCase() === effectiveSetId!.toUpperCase() ||
-            String(s.set_name || "").toUpperCase() === effectiveSetId!.toUpperCase(),
-        );
-        if (match?.set_name) params.set("cardset", match.set_name);
-      }
+      const arr = await getYugiohSetsCached();
+      const want = effectiveSetId!.toUpperCase();
+      const matches = (arr || []).filter(
+        (s: any) =>
+          String(s.set_code || "").toUpperCase() === want ||
+          String(s.set_name || "").toUpperCase() === want,
+      );
+      const preferred =
+        matches.find((s: any) => /\(series\)/i.test(String(s.set_name || ""))) ??
+        matches.sort((a: any, b: any) => (b.num_of_cards ?? 0) - (a.num_of_cards ?? 0))[0];
+      if (preferred?.set_name) params.set("cardset", preferred.set_name);
     } catch (_) {}
     if (!params.has("cardset")) params.set("cardset", effectiveSetId);
     if (q) params.set("fname", q);
@@ -465,7 +490,7 @@ Deno.serve(async (req) => {
 
     // Dedupe by external_id to avoid "ON CONFLICT cannot affect row a second time".
     const seen = new Set<string>();
-    const deduped = results.filter((r) => {
+    const deduped = results.filter((r: any) => {
       if (!r.external_id || seen.has(r.external_id)) return false;
       seen.add(r.external_id);
       return true;
@@ -478,7 +503,7 @@ Deno.serve(async (req) => {
       if (error) console.error("upsert error", error);
     }
 
-    const ids = deduped.map((r) => r.external_id);
+    const ids = deduped.map((r: any) => r.external_id);
     let cached: any[] = [];
     if (ids.length > 0) {
       // Batch the IN() lookup — PostgREST URLs cap out around ~2KB and large
