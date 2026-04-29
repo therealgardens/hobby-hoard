@@ -36,13 +36,20 @@ export default function Binders() {
     if (!game || !name.trim()) return;
     const { data: u } = await supabase.auth.getUser();
     if (!u.user) return;
-    const { error } = await withDbRetry(() =>
-      supabase.from("binders").insert({
-        user_id: u.user!.id, game, name: name.trim(), cols, rows,
-      }),
+    const { data, error } = await withDbRetry(() =>
+      supabase
+        .from("binders")
+        .insert({ user_id: u.user!.id, game, name: name.trim(), cols, rows })
+        .select()
+        .single(),
     );
     if (error) return toast.error(error.message);
-    setName(""); setOpen(false); load();
+    // Optimistically append so the new binder shows even if the reload fails
+    if (data) setBinders((prev) => [...prev, data as Binder]);
+    setName("");
+    setOpen(false);
+    toast.success("Binder created");
+    load();
   };
 
   return (
