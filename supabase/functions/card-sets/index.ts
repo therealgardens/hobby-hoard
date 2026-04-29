@@ -133,6 +133,40 @@ async function onePieceSets(): Promise<SetOut[]> {
     }
   }
 
+  // Probe known set-id ranges that aren't in /allSets/ (newer ST decks,
+  // newer OP boosters, EB/PRB extras). We hit the /decks/ and /sets/
+  // endpoints in parallel and add anything that returns a non-empty payload.
+  const probeIds: string[] = [];
+  for (let i = 1; i <= 35; i++) probeIds.push(`ST-${String(i).padStart(2, "0")}`);
+  for (let i = 1; i <= 20; i++) probeIds.push(`OP-${String(i).padStart(2, "0")}`);
+  for (let i = 1; i <= 6; i++) probeIds.push(`EB-${String(i).padStart(2, "0")}`);
+  for (let i = 1; i <= 4; i++) probeIds.push(`PRB-${String(i).padStart(2, "0")}`);
+
+  await Promise.all(
+    probeIds.map(async (raw) => {
+      const id = raw.replace(/-/g, "");
+      if (map.has(id)) return; // already discovered
+      const isStarter = /^ST/i.test(raw);
+      const urls = isStarter
+        ? [`https://optcgapi.com/api/decks/${raw}/`, `https://optcgapi.com/api/sets/${raw}/`]
+        : [`https://optcgapi.com/api/sets/${raw}/`, `https://optcgapi.com/api/decks/${raw}/`];
+      for (const url of urls) {
+        try {
+          const r = await fetch(url);
+          if (!r.ok) continue;
+          const j = await r.json();
+          if (Array.isArray(j) && j.length > 0) {
+            const setName = j[0]?.set_name || id;
+            map.set(id, {
+              id, name: setName, series: null, releaseDate: null, total: j.length, logo: null,
+            });
+            return;
+          }
+        } catch (_) {}
+      }
+    }),
+  );
+
   // For sets without a logo, use the leader card image as a representative thumbnail.
   for (const s of map.values()) {
     if (!s.logo) {
@@ -140,7 +174,7 @@ async function onePieceSets(): Promise<SetOut[]> {
     }
   }
 
-  // Sort by id (newest OP## first if numeric, ST after, etc.)
+  // Sort: newest by id family. ST first by number desc, then OP desc, then others.
   return Array.from(map.values()).sort((a, b) => b.id.localeCompare(a.id));
 }
 
