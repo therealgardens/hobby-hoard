@@ -308,6 +308,7 @@ export default function MasterSets() {
           ownedCardIds={ownedCardIds}
           ownedLangByCard={ownedLangByCard}
           wantedCardIds={wantedCardIds}
+          onToggleWanted={toggleWanted}
         />
       ) : (
         <>
