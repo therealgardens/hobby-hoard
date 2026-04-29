@@ -42,7 +42,7 @@ function extractSetId(s: string | null | undefined): string | null {
 }
 
 function setIdForCard(game: Game, c: { set_id: string | null; set_name: string | null; code: string | null }): string | null {
-  if (game === "pokemon") return c.set_id ?? null;
+  if (game === "pokemon" || game === "yugioh") return c.set_id ?? null;
   return extractSetId(c.set_name) ?? extractSetId(c.code ?? "");
 }
 
