@@ -652,11 +652,17 @@ function SetView({
                 className="overflow-hidden bg-gradient-card cursor-pointer hover:shadow-card transition-shadow group relative"
                 onClick={() => onPickCard(c)}
               >
-                {wanted && (
-                  <div className="absolute top-2 left-2 z-10 bg-background/90 rounded-full p-1 shadow">
-                    <Star className="h-3.5 w-3.5 fill-yellow-400 text-yellow-500" />
-                  </div>
-                )}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleWanted(c);
+                  }}
+                  className="absolute top-2 left-2 z-10 p-1.5 rounded-full bg-background/90 shadow hover:bg-background transition-colors"
+                  title={wanted ? "Remove from wishlist" : "Add to wishlist"}
+                >
+                  <Heart className={`h-4 w-4 ${wanted ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
+                </button>
                 {owned && lang && (
                   <div className="absolute top-2 right-2 z-10 bg-background/90 rounded px-1.5 py-0.5 text-xs shadow">
                     {LANG_FLAG[lang] ?? lang}
