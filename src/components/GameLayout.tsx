@@ -2,16 +2,14 @@ import { NavLink, Outlet, useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { GAME_LABEL, type Game, setActiveGame } from "@/lib/game";
-import { ArrowLeft, BookOpen, Library, Heart, Layers, Copy, Swords, ListChecks, Search, Settings, FolderHeart } from "lucide-react";
+import { ArrowLeft, BookOpen, Library, Heart, Layers, Copy, Swords, ListChecks, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useTranslation } from "react-i18next";
 
 export default function GameLayout() {
   const { game } = useParams<{ game: Game }>();
   const nav = useNavigate();
   const { signOut } = useAuth();
-  const { t } = useTranslation();
-  if (!game || (game !== "pokemon" && game !== "onepiece" && game !== "yugioh")) {
+  if (!game || (game !== "pokemon" && game !== "onepiece")) {
     nav("/");
     return null;
   }
@@ -19,20 +17,16 @@ export default function GameLayout() {
 
   const links = [
     { to: ``, label: "Home", icon: Library, end: true },
-    { to: `search`, label: "Search", icon: Search },
     { to: `master`, label: "Master Sets", icon: Layers },
-    { to: `collection`, label: "My Collection", icon: FolderHeart },
+    { to: `search`, label: "Search", icon: Search },
     { to: `binders`, label: "Binders", icon: BookOpen },
     { to: `wanted`, label: "Wanted", icon: Heart },
     { to: `duplicates`, label: "Duplicates", icon: Copy },
     ...(game === "pokemon" ? [{ to: `pokedex`, label: "Pokédex", icon: ListChecks }] : []),
-    ...(game === "onepiece" || game === "yugioh" ? [{ to: `decks`, label: "Decks", icon: Swords }] : []),
+    ...(game === "onepiece" ? [{ to: `decks`, label: "Decks", icon: Swords }] : []),
   ];
 
-  const accent =
-    game === "pokemon" ? "bg-gradient-pokemon"
-    : game === "onepiece" ? "bg-gradient-onepiece"
-    : "bg-gradient-yugioh";
+  const accent = game === "pokemon" ? "bg-gradient-pokemon" : "bg-gradient-onepiece";
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -40,18 +34,13 @@ export default function GameLayout() {
         <div className="container mx-auto flex items-center justify-between py-4 px-4">
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="sm" onClick={() => nav("/")} className="text-primary-foreground hover:bg-white/10">
-              <ArrowLeft className="h-4 w-4 mr-1" /> {t("nav.switch")}
+              <ArrowLeft className="h-4 w-4 mr-1" /> Switch
             </Button>
             <h1 className="text-3xl font-display">{GAME_LABEL[game]}</h1>
           </div>
-          <div className="flex items-center gap-1">
-            <Button variant="ghost" size="sm" onClick={() => nav("/settings")} className="text-primary-foreground hover:bg-white/10">
-              <Settings className="h-4 w-4 mr-1" /> {t("nav.settings")}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={signOut} className="text-primary-foreground hover:bg-white/10">
-              {t("nav.signOut")}
-            </Button>
-          </div>
+          <Button variant="ghost" size="sm" onClick={signOut} className="text-primary-foreground hover:bg-white/10">
+            Sign out
+          </Button>
         </div>
         <nav className="container mx-auto px-4 pb-3 flex gap-1 overflow-x-auto">
           {links.map((l) => (
@@ -63,7 +52,7 @@ export default function GameLayout() {
                 cn(
                   "px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-colors flex items-center gap-2",
                   isActive
-                    ? "bg-background text-foreground shadow-sm"
+                    ? "bg-white text-secondary"
                     : "bg-white/10 text-primary-foreground hover:bg-white/20",
                 )
               }

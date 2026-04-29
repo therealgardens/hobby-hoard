@@ -13,8 +13,6 @@ const ALLOWED_HOSTS = new Set([
   "www.apitcg.com",
   "images.pokemontcg.io",
   "assets.pokemon.com",
-  "images.ygoprodeck.com",
-  "storage.googleapis.com",
 ]);
 
 Deno.serve(async (req) => {

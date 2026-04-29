@@ -49,7 +49,6 @@
     --gradient-hero: linear-gradient(135deg, hsl(354 78% 56%) 0%, hsl(33 100% 65%) 100%);
     --gradient-pokemon: linear-gradient(135deg, hsl(354 78% 56%), hsl(33 100% 60%));
     --gradient-onepiece: linear-gradient(135deg, hsl(215 60% 30%), hsl(354 78% 56%));
-    --gradient-yugioh: linear-gradient(135deg, hsl(280 60% 25%), hsl(38 95% 55%));
     --gradient-card: linear-gradient(180deg, hsl(0 0% 100%) 0%, hsl(38 60% 96%) 100%);
 
     --shadow-soft: 0 4px 14px -4px hsl(215 50% 18% / 0.12);
@@ -60,40 +59,24 @@
   }
 
   .dark {
-    --background: 215 50% 8%;
+    --background: 215 50% 10%;
     --foreground: 38 100% 95%;
-    --card: 215 45% 13%;
+    --card: 215 50% 14%;
     --card-foreground: 38 100% 95%;
-    --popover: 215 45% 13%;
+    --popover: 215 50% 14%;
     --popover-foreground: 38 100% 95%;
-    --primary: 354 78% 60%;
+    --primary: 354 78% 56%;
     --primary-foreground: 38 100% 97%;
-    --secondary: 38 90% 65%;
+    --secondary: 38 100% 65%;
     --secondary-foreground: 215 50% 10%;
-    --accent: 33 95% 60%;
+    --accent: 33 100% 60%;
     --accent-foreground: 215 50% 10%;
-    --muted: 215 35% 18%;
-    --muted-foreground: 38 25% 72%;
-    --destructive: 0 75% 55%;
-    --destructive-foreground: 38 100% 97%;
-    --border: 215 35% 22%;
-    --input: 215 35% 22%;
-    --ring: 354 78% 60%;
-    --binder-empty: 215 35% 16%;
-
-    --gradient-card: linear-gradient(180deg, hsl(215 45% 15%) 0%, hsl(215 45% 11%) 100%);
-    --shadow-soft: 0 4px 14px -4px hsl(0 0% 0% / 0.5);
-    --shadow-pop: 0 10px 30px -8px hsl(354 78% 56% / 0.5);
-    --shadow-card: 0 8px 24px -10px hsl(0 0% 0% / 0.6);
-
-    --sidebar-background: 215 50% 10%;
-    --sidebar-foreground: 38 100% 95%;
-    --sidebar-primary: 354 78% 60%;
-    --sidebar-primary-foreground: 38 100% 97%;
-    --sidebar-accent: 215 40% 16%;
-    --sidebar-accent-foreground: 38 100% 95%;
-    --sidebar-border: 215 35% 22%;
-    --sidebar-ring: 354 78% 60%;
+    --muted: 215 40% 18%;
+    --muted-foreground: 38 30% 75%;
+    --border: 215 40% 22%;
+    --input: 215 40% 22%;
+    --ring: 354 78% 56%;
+    --binder-empty: 215 40% 18%;
   }
 }
 
@@ -113,7 +96,6 @@
   .bg-gradient-hero { background: var(--gradient-hero); }
   .bg-gradient-pokemon { background: var(--gradient-pokemon); }
   .bg-gradient-onepiece { background: var(--gradient-onepiece); }
-  .bg-gradient-yugioh { background: var(--gradient-yugioh); }
   .bg-gradient-card { background: var(--gradient-card); }
   .shadow-soft { box-shadow: var(--shadow-soft); }
   .shadow-pop { box-shadow: var(--shadow-pop); }

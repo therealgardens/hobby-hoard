@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,27 +6,33 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Swords, Check, X, Minus } from "lucide-react";
+import { Plus, Swords, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import type { Tables } from "@/integrations/supabase/types";
-import { cardImage, type Game } from "@/lib/game";
-import { withDbRetry } from "@/lib/supabaseRetry";
+import { proxiedImage } from "@/lib/game";
 
 type Deck = Tables<"decks">;
 
-// Card code patterns:
-//   One Piece: OP01-001, ST15-002 (and variants like _p1)
-//   Yu-Gi-Oh!: LOB-005, MRD-EN001, BLAR-EN045
-const CODE_RE = /([A-Z]{2,4}-(?:[A-Z]{2,3})?\d{2,4})/i;
-
+// Parse formats like:
+// 4 OP01-001
+// OP01-001 x4
+// 4xOP01-001
+// 1 Lucy (OP15-002)
+// 4 Viola (OP15-040)
+// Section headers ("Leader", "Character (26)", "Event (24)") are ignored.
+const CODE_RE = /([A-Z]{2,3}\d{2,3}[A-Z]?-\d{2,4})/i;
 function parseDeckList(raw: string): { code: string; copies: number }[] {
   const out: { code: string; copies: number }[] = [];
   for (const line of raw.split("\n")) {
     const t = line.trim();
     if (!t) continue;
     const codeMatch = t.match(CODE_RE);
-    if (!codeMatch) continue;
+    if (!codeMatch) continue; // skip section headers / blank lines
     const code = codeMatch[1].toUpperCase();
+    // Try several count patterns, in priority order:
+    // 1) "<n> ... <code>"  (e.g. "4 Viola (OP15-040)" or "4 OP15-040")
+    // 2) "<code> x<n>" or "<code> <n>"
+    // 3) "<n>x<code>"
     let copies = 1;
     const before = t.slice(0, codeMatch.index ?? 0);
     const after = t.slice((codeMatch.index ?? 0) + codeMatch[1].length);
@@ -41,15 +46,7 @@ function parseDeckList(raw: string): { code: string; copies: number }[] {
   return out;
 }
 
-const PLACEHOLDERS: Record<string, string> = {
-  onepiece: "Leader\n1 Lucy (OP15-002)\n\nCharacter (26)\n4 Viola (OP15-040)\n4 Leo (OP15-052)",
-  yugioh: "Main Deck\n3 Dark Magician (LOB-005)\n3 Pot of Greed (LOB-119)\n2 Mirror Force (MRD-138)",
-};
-
 export default function Decks() {
-  const { game } = useParams<{ game: Game }>();
-  const currentGame: Game = (game === "yugioh" ? "yugioh" : "onepiece");
-
   const [decks, setDecks] = useState<Deck[]>([]);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -58,13 +55,10 @@ export default function Decks() {
   const [analysis, setAnalysis] = useState<{ code: string; needed: number; have: number; cardId?: string; name?: string; imageSmall?: string }[]>([]);
 
   const load = async () => {
-    const { data, error } = await withDbRetry(() =>
-      supabase.from("decks").select("*").eq("game", currentGame).order("created_at"),
-    );
-    if (error) return toast.error(error.message);
+    const { data } = await supabase.from("decks").select("*").order("created_at");
     setDecks(data ?? []);
   };
-  useEffect(() => { load(); }, [currentGame]);
+  useEffect(() => { load(); }, []);
 
   const create = async () => {
     if (!name.trim() || !raw.trim()) return;
@@ -73,7 +67,7 @@ export default function Decks() {
     const { data: u } = await supabase.auth.getUser();
     if (!u.user) return;
     const { data: deck, error } = await supabase.from("decks").insert({
-      user_id: u.user.id, name: name.trim(), raw_list: raw, game: currentGame,
+      user_id: u.user.id, name: name.trim(), raw_list: raw,
     }).select().single();
     if (error || !deck) return toast.error(error?.message ?? "Failed");
     await supabase.from("deck_cards").insert(
@@ -89,15 +83,16 @@ export default function Decks() {
     const { data: dcards } = await supabase.from("deck_cards").select("*").eq("deck_id", deck.id);
     if (!dcards) return;
     const codes = dcards.map(d => d.code);
-    let { data: cards } = await supabase.from("cards").select("*").eq("game", currentGame).in("code", codes);
+    let { data: cards } = await supabase.from("cards").select("*").eq("game", "onepiece").in("code", codes);
     let cardByCode = new Map((cards ?? []).map(c => [c.code, c]));
 
+    // Auto-fetch any missing codes from the API so the deck view shows images.
     const missing = codes.filter(c => !cardByCode.has(c));
     if (missing.length) {
       await Promise.all(missing.map(code =>
-        supabase.functions.invoke("card-search", { body: { game: currentGame, query: code } })
+        supabase.functions.invoke("card-search", { body: { game: "onepiece", query: code } })
       ));
-      const { data: refreshed } = await supabase.from("cards").select("*").eq("game", currentGame).in("code", codes);
+      const { data: refreshed } = await supabase.from("cards").select("*").eq("game", "onepiece").in("code", codes);
       cards = refreshed ?? cards;
       cardByCode = new Map((cards ?? []).map(c => [c.code, c]));
     }
@@ -120,50 +115,6 @@ export default function Decks() {
     }));
   };
 
-  const ensureCardId = async (code: string): Promise<string | null> => {
-    const { data: existing } = await supabase
-      .from("cards").select("id").eq("game", currentGame).eq("code", code).maybeSingle();
-    if (existing?.id) return existing.id;
-    await supabase.functions.invoke("card-search", { body: { game: currentGame, query: code } });
-    const { data: refreshed } = await supabase
-      .from("cards").select("id").eq("game", currentGame).eq("code", code).maybeSingle();
-    return refreshed?.id ?? null;
-  };
-
-  const addOne = async (a: typeof analysis[number]) => {
-    const { data: u } = await supabase.auth.getUser();
-    if (!u.user) return;
-    const cardId = a.cardId ?? await ensureCardId(a.code);
-    if (!cardId) return toast.error(`Card ${a.code} not found in catalog`);
-    const { error } = await supabase.from("collection_entries").insert({
-      user_id: u.user.id, card_id: cardId, game: currentGame,
-      rarity: null, language: "EN", quantity: 1,
-    });
-    if (error) return toast.error(error.message);
-    setAnalysis(prev => prev.map(p => p.code === a.code ? { ...p, have: p.have + 1, cardId } : p));
-    toast.success(`Added ${a.name ?? a.code}`);
-  };
-
-  const removeOne = async (a: typeof analysis[number]) => {
-    if (a.have <= 0) return;
-    const { data: u } = await supabase.auth.getUser();
-    if (!u.user) return;
-    const cardId = a.cardId ?? await ensureCardId(a.code);
-    if (!cardId) return;
-    const { data: rows } = await supabase
-      .from("collection_entries")
-      .select("id")
-      .eq("user_id", u.user.id)
-      .eq("card_id", cardId)
-      .order("created_at", { ascending: false })
-      .limit(1);
-    const target = rows?.[0]?.id;
-    if (!target) return;
-    const { error } = await supabase.from("collection_entries").delete().eq("id", target);
-    if (error) return toast.error(error.message);
-    setAnalysis(prev => prev.map(p => p.code === a.code ? { ...p, have: Math.max(0, p.have - 1), cardId } : p));
-  };
-
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
@@ -176,14 +127,14 @@ export default function Decks() {
           <DialogContent>
             <DialogHeader><DialogTitle>Import deck list</DialogTitle></DialogHeader>
             <div className="space-y-3">
-              <div><Label>Name</Label><Input value={name} onChange={e => setName(e.target.value)} placeholder={currentGame === "yugioh" ? "Blue-Eyes Control" : "Red Aggro"} /></div>
+              <div><Label>Name</Label><Input value={name} onChange={e => setName(e.target.value)} placeholder="Red Aggro" /></div>
               <div>
                 <Label>List</Label>
                 <Textarea
                   rows={10}
                   value={raw}
                   onChange={e => setRaw(e.target.value)}
-                  placeholder={PLACEHOLDERS[currentGame]}
+                  placeholder={"Leader\n1 Lucy (OP15-002)\n\nCharacter (26)\n4 Viola (OP15-040)\n4 Leo (OP15-052)"}
                 />
               </div>
               <Button className="w-full" onClick={create}>Import</Button>
@@ -216,7 +167,9 @@ export default function Decks() {
             {analysis.map(a => {
               const ok = a.have >= a.needed;
               const owned = a.have > 0;
-              const imgSrc = cardImage(currentGame, a.code, a.imageSmall);
+              // Use proxy + fallback to the official One Piece card image
+              const rawSrc = a.imageSmall ?? `https://en.onepiece-cardgame.com/images/cardlist/card/${a.code}.png`;
+              const imgSrc = proxiedImage(rawSrc);
               return (
                 <div key={a.code} className="relative rounded-lg overflow-hidden bg-muted shadow-soft">
                   <img
@@ -233,30 +186,9 @@ export default function Decks() {
                     {ok ? <Check className="h-3 w-3 text-green-600" /> : <X className="h-3 w-3 text-destructive" />}
                     {a.have}/{a.needed}
                   </div>
-                  <div className="p-2 bg-card space-y-1">
+                  <div className="p-2 bg-card">
                     <p className="text-xs font-semibold truncate">{a.name ?? a.code}</p>
                     <p className="text-[10px] text-muted-foreground font-mono">{a.code}</p>
-                    <div className="flex items-center justify-between gap-1 pt-1">
-                      <Button
-                        size="icon"
-                        variant="outline"
-                        className="h-6 w-6"
-                        disabled={a.have <= 0}
-                        onClick={() => removeOne(a)}
-                      >
-                        <Minus className="h-3 w-3" />
-                      </Button>
-                      <span className="text-xs font-semibold tabular-nums">{a.have}</span>
-                      <Button
-                        size="icon"
-                        variant="outline"
-                        className="h-6 w-6"
-                        disabled={false}
-                        onClick={() => addOne(a)}
-                      >
-                        <Plus className="h-3 w-3" />
-                      </Button>
-                    </div>
                   </div>
                 </div>
               );

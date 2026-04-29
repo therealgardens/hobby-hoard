@@ -4,7 +4,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { cardImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
-import { withDbRetry } from "@/lib/supabaseRetry";
 
 type Entry = Tables<"collection_entries"> & { card: Tables<"cards"> | null };
 
@@ -15,19 +14,10 @@ export default function Duplicates() {
   useEffect(() => {
     if (!game) return;
     (async () => {
-      const { data: entries } = await withDbRetry(() =>
-        supabase.from("collection_entries").select("*").eq("game", game),
-      );
-      const filtered = (entries ?? []).filter((e: any) => (e.quantity ?? 0) > 1);
-      const cardIds = Array.from(new Set(filtered.map((e: any) => e.card_id).filter(Boolean))) as string[];
-      let cardsById = new Map<string, Tables<"cards">>();
-      if (cardIds.length) {
-        const { data: cards } = await withDbRetry(() =>
-          supabase.from("cards").select("*").in("id", cardIds),
-        );
-        cardsById = new Map((cards ?? []).map((c: any) => [c.id, c]));
-      }
-      setDupes(filtered.map((e: any) => ({ ...e, card: cardsById.get(e.card_id) ?? null })));
+      const { data } = await supabase
+        .from("collection_entries").select("*, card:cards(*)").eq("game", game);
+      const filtered = ((data as any) as Entry[] ?? []).filter(e => (e.quantity ?? 0) > 1);
+      setDupes(filtered);
     })();
   }, [game]);
 

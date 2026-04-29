@@ -6,7 +6,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { withDbRetry } from "@/lib/supabaseRetry";
 
 const TOTAL = 1025;
 
@@ -35,48 +34,31 @@ export default function Pokedex() {
   const load = async () => {
     const { data: u } = await supabase.auth.getUser();
     if (!u.user) return;
-    const { data } = await withDbRetry(() =>
-      supabase
-        .from("pokedex_entries")
-        .select("pokedex_number")
-        .eq("user_id", u.user!.id)
-        .eq("registered", true),
-    );
+    const { data } = await supabase
+      .from("pokedex_entries")
+      .select("pokedex_number")
+      .eq("user_id", u.user.id)
+      .eq("registered", true);
     setRegistered(new Set((data ?? []).map((d) => d.pokedex_number)));
 
     const [{ data: ents }, { data: bslots }] = await Promise.all([
-      withDbRetry(() =>
-        supabase
-          .from("collection_entries")
-          .select("card_id")
-          .eq("game", "pokemon")
-          .eq("user_id", u.user!.id),
-      ),
-      withDbRetry(() =>
-        supabase
-          .from("binder_slots")
-          .select("card_id")
-          .eq("user_id", u.user!.id),
-      ),
+      supabase
+        .from("collection_entries")
+        .select("card:cards(pokedex_number)")
+        .eq("game", "pokemon")
+        .eq("user_id", u.user.id),
+      supabase
+        .from("binder_slots")
+        .select("card:cards(pokedex_number, game)")
+        .eq("user_id", u.user.id),
     ]);
-    const cardIds = Array.from(
-      new Set([
-        ...((ents ?? []).map((e: any) => e.card_id).filter(Boolean) as string[]),
-        ...((bslots ?? []).map((s: any) => s.card_id).filter(Boolean) as string[]),
-      ]),
-    );
     const nums = new Set<number>();
-    if (cardIds.length) {
-      const { data: cardsData } = await withDbRetry(() =>
-        supabase
-          .from("cards")
-          .select("id, game, pokedex_number")
-          .in("id", cardIds),
-      );
-      for (const c of (cardsData ?? []) as any[]) {
-        if (c.game === "pokemon" && c.pokedex_number) nums.add(c.pokedex_number);
-      }
-    }
+    (ents ?? []).forEach((e: any) => {
+      if (e.card?.pokedex_number) nums.add(e.card.pokedex_number);
+    });
+    (bslots ?? []).forEach((s: any) => {
+      if (s.card?.game === "pokemon" && s.card?.pokedex_number) nums.add(s.card.pokedex_number);
+    });
     setAuto(nums);
   };
 

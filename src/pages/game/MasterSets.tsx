@@ -10,13 +10,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, Plus, Search, Trash2, Heart, LayoutGrid, List, Minus } from "lucide-react";
+import { ArrowLeft, Plus, Search, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { cardImageCandidates, proxiedImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
-import { listWishlist } from "@/lib/wishlist";
-import { addOwnedCard, addWantedCard, removeOneOwned, removeWantedCard } from "@/lib/collection";
-import { withDbRetry } from "@/lib/supabaseRetry";
 
 type CardRow = Tables<"cards">;
 
@@ -45,13 +42,8 @@ function extractSetId(s: string | null | undefined): string | null {
 }
 
 function setIdForCard(game: Game, c: { set_id: string | null; set_name: string | null; code: string | null }): string | null {
-  if (game === "pokemon" || game === "yugioh") return c.set_id ?? null;
-  // For One Piece, prefer the explicit set_id (e.g. "ST-26", "OP-06", "EB-03")
-  // since that matches the set the user browsed when adding the card.
-  // Fall back to bracketed tag in set_name (e.g. "[ST-28]"), and finally to
-  // the printing code prefix (e.g. "OP06-103" -> "OP06").
-  const fromSetId = c.set_id ? c.set_id.toUpperCase().replace(/-/g, "") : null;
-  return fromSetId || extractSetId(c.set_name) || extractSetId(c.code ?? "");
+  if (game === "pokemon") return c.set_id ?? null;
+  return extractSetId(c.set_name) ?? extractSetId(c.code ?? "");
 }
 
 export default function MasterSets() {
@@ -64,7 +56,6 @@ export default function MasterSets() {
   const [ownedCardIds, setOwnedCardIds] = useState<Set<string>>(new Set());
   const [ownedLangByCard, setOwnedLangByCard] = useState<Map<string, string>>(new Map());
   const [wantedCardIds, setWantedCardIds] = useState<Set<string>>(new Set());
-  const [wishlistBusy, setWishlistBusy] = useState<Set<string>>(new Set());
 
   const [picked, setPicked] = useState<CardRow | null>(null);
   const [pickedOwned, setPickedOwned] = useState(false);
@@ -110,68 +101,33 @@ export default function MasterSets() {
       const userRes = await supabase.auth.getUser();
       const uid = userRes.data.user?.id;
       if (uid) {
-        // Warm from sessionStorage so re-entering the page is instant.
-        const ownedCacheKey = `tcg.owned.${game}.${uid}.v3`;
-        try {
-          const raw = sessionStorage.getItem(ownedCacheKey);
-          if (raw) {
-            const parsed = JSON.parse(raw) as {
-              counts: [string, number][];
-              ids: string[];
-              langs: [string, string][];
-            };
-            setOwnedBySet(new Map(parsed.counts));
-            setOwnedCardIds(new Set(parsed.ids));
-            setOwnedLangByCard(new Map(parsed.langs));
-          }
-        } catch (_) {}
-
-        const { data: ownedRows } = await withDbRetry(() =>
-          supabase
-            .from("collection_entries")
-            .select("card_id, language")
-            .eq("user_id", uid)
-            .eq("game", game),
-        );
-        const cardIds = Array.from(new Set((ownedRows ?? []).map((r: any) => r.card_id).filter(Boolean))) as string[];
-        let cardsById = new Map<string, { set_id: string | null; set_name: string | null; code: string | null }>();
-        if (cardIds.length) {
-          const { data: cards } = await withDbRetry(() =>
-            supabase.from("cards").select("id, set_id, set_name, code").in("id", cardIds),
-          );
-          cardsById = new Map((cards ?? []).map((c: any) => [c.id, c]));
-        }
+        const { data: owned } = await supabase
+          .from("collection_entries")
+          .select("card_id, language, cards!inner(set_id, set_name, code, game)")
+          .eq("user_id", uid)
+          .eq("game", game);
         const counts = new Map<string, number>();
         const langs = new Map<string, string>();
         const ids = new Set<string>();
-        for (const row of (ownedRows ?? []) as Array<{ card_id: string; language: string | null }>) {
-          if (!ids.has(row.card_id)) {
-            const cardMeta = cardsById.get(row.card_id);
-            if (cardMeta) {
-              const id = setIdForCard(game, cardMeta);
-              if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
-            }
-            ids.add(row.card_id);
+        for (const row of owned ?? []) {
+          const r = row as unknown as { card_id: string; language: string | null; cards: { set_id: string | null; set_name: string | null; code: string | null } };
+          if (!ids.has(r.card_id)) {
+            const id = setIdForCard(game, r.cards);
+            if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+            ids.add(r.card_id);
           }
-          if (row.language && !langs.has(row.card_id)) langs.set(row.card_id, row.language);
+          if (r.language && !langs.has(r.card_id)) langs.set(r.card_id, r.language);
         }
         setOwnedBySet(counts);
         setOwnedCardIds(ids);
         setOwnedLangByCard(langs);
-        try {
-          sessionStorage.setItem(
-            ownedCacheKey,
-            JSON.stringify({
-              counts: Array.from(counts.entries()),
-              ids: Array.from(ids),
-              langs: Array.from(langs.entries()),
-            }),
-          );
-        } catch (_) {}
 
-        try {
-          setWantedCardIds(new Set((await listWishlist(game)).map((item) => item.card_id)));
-        } catch (_) {}
+        const { data: wanted } = await supabase
+          .from("wanted_cards")
+          .select("card_id")
+          .eq("user_id", uid)
+          .eq("game", game);
+        setWantedCardIds(new Set((wanted ?? []).map((w) => w.card_id)));
       }
       setLoadingSets(false);
     })();
@@ -203,11 +159,17 @@ export default function MasterSets() {
 
   const quickAdd = async (c: CardRow) => {
     if (!game) return;
-    try {
-      await addOwnedCard(c, game);
-    } catch (error) {
-      return toast.error(error instanceof Error ? error.message : "Could not add card");
-    }
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData.user) return;
+    const { error } = await supabase.from("collection_entries").insert({
+      user_id: userData.user.id,
+      card_id: c.id,
+      game,
+      rarity: c.rarity ?? null,
+      language: "EN",
+      quantity: 1,
+    });
+    if (error) return toast.error(error.message);
     toast.success(`Added ${c.name}`);
     const wasOwned = ownedCardIds.has(c.id);
     setOwnedCardIds((prev) => new Set(prev).add(c.id));
@@ -222,49 +184,19 @@ export default function MasterSets() {
     }
   };
 
-  const toggleWanted = async (c: CardRow) => {
-    if (!game) return;
-    if (wishlistBusy.has(c.id)) return;
-    setWishlistBusy((prev) => new Set(prev).add(c.id));
-    const wasWanted = wantedCardIds.has(c.id);
-    setWantedCardIds((prev) => {
-      const n = new Set(prev);
-      if (wasWanted) n.delete(c.id);
-      else n.add(c.id);
-      return n;
-    });
-    try {
-      if (wasWanted) {
-        await removeWantedCard(c, game);
-        toast.success("Removed from wishlist");
-      } else {
-        await addWantedCard(c, game);
-        toast.success("Added to wishlist");
-      }
-    } catch (error) {
-      setWantedCardIds((prev) => {
-        const n = new Set(prev);
-        if (wasWanted) n.add(c.id);
-        else n.delete(c.id);
-        return n;
-      });
-      toast.error(error instanceof Error ? error.message : "Wishlist action failed");
-    } finally {
-      setWishlistBusy((prev) => {
-        const n = new Set(prev);
-        n.delete(c.id);
-        return n;
-      });
-    }
-  };
-
   const saveCard = async () => {
     if (!picked || !game) return;
-    try {
-      await addOwnedCard(picked, game, { rarity: rarity || null, language, quantity });
-    } catch (error) {
-      return toast.error(error instanceof Error ? error.message : "Could not add card");
-    }
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData.user) return;
+    const { error } = await supabase.from("collection_entries").insert({
+      user_id: userData.user.id,
+      card_id: picked.id,
+      game,
+      rarity: rarity || null,
+      language,
+      quantity,
+    });
+    if (error) return toast.error(error.message);
     toast.success(`Added ${picked.name} ×${quantity}`);
     const savedId = picked.id;
     const savedSetId = setIdForCard(game, picked);
@@ -279,24 +211,28 @@ export default function MasterSets() {
 
   const removeOne = async () => {
     if (!picked || !game) return;
-    let removed = false;
-    try {
-      removed = await removeOneOwned(picked, game);
-    } catch (error) {
-      return toast.error(error instanceof Error ? error.message : "Could not remove card");
-    }
-    if (!removed) {
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData.user) return;
+    const { data: rows } = await supabase
+      .from("collection_entries")
+      .select("id")
+      .eq("user_id", userData.user.id)
+      .eq("card_id", picked.id)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    const target = rows?.[0]?.id;
+    if (!target) {
       toast.info("No entry found to remove");
       return;
     }
+    const { error } = await supabase.from("collection_entries").delete().eq("id", target);
+    if (error) return toast.error(error.message);
     toast.success(`Removed one ${picked.name}`);
 
     const removedId = picked.id;
     const removedSetId = setIdForCard(game, picked);
     setPicked(null);
 
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
     const { data: remain } = await supabase
       .from("collection_entries")
       .select("id")
@@ -343,7 +279,6 @@ export default function MasterSets() {
           ownedCardIds={ownedCardIds}
           ownedLangByCard={ownedLangByCard}
           wantedCardIds={wantedCardIds}
-          onToggleWanted={toggleWanted}
         />
       ) : (
         <>
@@ -353,8 +288,6 @@ export default function MasterSets() {
               placeholder={
                 game === "onepiece"
                   ? "Search by name or code (e.g. Azure Sea Seven, OP14, ST21)"
-                  : game === "yugioh"
-                  ? "Search by name or code (e.g. Legend of Blue Eyes, LOB, MRD)"
                   : "Search by name or code (e.g. Crown Zenith, sv1, swsh12)"
               }
               className="pl-9"
@@ -546,6 +479,9 @@ function SetGrid({
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
       {sets.map((s) => {
+        const owned = ownedBySet.get(s.id) ?? 0;
+        const total = s.total ?? 0;
+        const pct = total > 0 ? Math.min(100, Math.round((owned / total) * 100)) : 0;
         return (
           <Card
             key={s.id}
@@ -560,7 +496,15 @@ function SetGrid({
                   {s.id}{s.releaseDate ? ` · ${s.releaseDate}` : ""}
                 </p>
               </div>
+              <Badge variant={owned > 0 ? "default" : "secondary"}>
+                {owned}{total ? `/${total}` : ""}
+              </Badge>
             </div>
+            {total > 0 && (
+              <div className="mt-3 h-1.5 bg-muted rounded-full overflow-hidden">
+                <div className="h-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+              </div>
+            )}
           </Card>
         );
       })}
@@ -593,7 +537,6 @@ function SetView({
   ownedCardIds,
   ownedLangByCard,
   wantedCardIds,
-  onToggleWanted,
 }: {
   game: Game;
   set: SetInfo;
@@ -603,18 +546,9 @@ function SetView({
   ownedCardIds: Set<string>;
   ownedLangByCard: Map<string, string>;
   wantedCardIds: Set<string>;
-  onToggleWanted: (c: CardRow) => void;
 }) {
   const [cards, setCards] = useState<CardRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<"grid" | "list">(() => {
-    if (typeof window === "undefined") return "grid";
-    return (localStorage.getItem("masterset.view") as "grid" | "list") ?? "grid";
-  });
-
-  useEffect(() => {
-    try { localStorage.setItem("masterset.view", view); } catch (_) {}
-  }, [view]);
 
   useEffect(() => {
     setLoading(true);
@@ -661,28 +595,6 @@ function SetView({
             {set.id}{set.releaseDate ? ` · ${set.releaseDate}` : ""}
           </p>
         </div>
-        <div className="flex items-center gap-1 rounded-md border bg-muted p-0.5">
-          <Button
-            type="button"
-            size="sm"
-            variant={view === "grid" ? "default" : "ghost"}
-            className="h-7 w-7 p-0"
-            onClick={() => setView("grid")}
-            title="Full image view"
-          >
-            <LayoutGrid className="h-4 w-4" />
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant={view === "list" ? "default" : "ghost"}
-            className="h-7 w-7 p-0"
-            onClick={() => setView("list")}
-            title="List view"
-          >
-            <List className="h-4 w-4" />
-          </Button>
-        </div>
         <Badge variant="default" className="text-sm">
           {ownedCount}/{cards.length || set.total || "?"}
         </Badge>
@@ -694,7 +606,7 @@ function SetView({
         <p className="text-muted-foreground text-center py-12">
           No cards available for this expansion yet.
         </p>
-      ) : view === "grid" ? (
+      ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           {cards.map((c) => {
             const owned = ownedCardIds.has(c.id);
@@ -706,17 +618,11 @@ function SetView({
                 className="overflow-hidden bg-gradient-card cursor-pointer hover:shadow-card transition-shadow group relative"
                 onClick={() => onPickCard(c)}
               >
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleWanted(c);
-                  }}
-                  className="absolute top-2 left-2 z-10 p-1.5 rounded-full bg-background/90 shadow hover:bg-background transition-colors"
-                  title={wanted ? "Remove from wishlist" : "Add to wishlist"}
-                >
-                  <Heart className={`h-4 w-4 ${wanted ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
-                </button>
+                {wanted && (
+                  <div className="absolute top-2 left-2 z-10 bg-background/90 rounded-full p-1 shadow">
+                    <Star className="h-3.5 w-3.5 fill-yellow-400 text-yellow-500" />
+                  </div>
+                )}
                 {owned && lang && (
                   <div className="absolute top-2 right-2 z-10 bg-background/90 rounded px-1.5 py-0.5 text-xs shadow">
                     {LANG_FLAG[lang] ?? lang}
@@ -746,77 +652,6 @@ function SetView({
                   <p className="text-xs text-muted-foreground truncate">
                     {c.code}{c.rarity ? ` · ${c.rarity}` : ""}
                   </p>
-                </div>
-              </Card>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="flex flex-col gap-1.5">
-          {cards.map((c) => {
-            const owned = ownedCardIds.has(c.id);
-            const wanted = wantedCardIds.has(c.id);
-            const lang = ownedLangByCard.get(c.id);
-            return (
-              <Card
-                key={c.id}
-                className={`flex items-center gap-3 px-3 py-2 bg-gradient-card cursor-pointer hover:shadow-card transition-shadow ${owned ? "" : "opacity-70"}`}
-                onClick={() => onPickCard(c)}
-              >
-                <div className="font-mono text-xs text-muted-foreground w-20 shrink-0 truncate">
-                  {c.code ?? "—"}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold truncate">{c.name}</p>
-                  {c.rarity && <p className="text-xs text-muted-foreground truncate">{c.rarity}</p>}
-                </div>
-                {owned && lang && (
-                  <Badge variant="secondary" className="text-xs shrink-0">
-                    {LANG_FLAG[lang] ?? lang}
-                  </Badge>
-                )}
-                <div className="flex items-center gap-1 shrink-0">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="h-8 w-8 p-0"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onToggleWanted(c);
-                    }}
-                    title={wanted ? "Remove from wishlist" : "Add to wishlist"}
-                  >
-                    <Heart className={`h-4 w-4 ${wanted ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="h-8 w-8 p-0"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onQuickAdd(c);
-                    }}
-                    title="Add one to collection"
-                  >
-                    <Plus className="h-4 w-4" />
-                  </Button>
-                  {owned && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="h-8 w-8 p-0"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onPickCard(c);
-                      }}
-                      title="Adjust collection"
-                    >
-                      <Minus className="h-4 w-4" />
-                    </Button>
-                  )}
                 </div>
               </Card>
             );

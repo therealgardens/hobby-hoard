@@ -10,7 +10,6 @@ import { Plus, BookOpen } from "lucide-react";
 import { toast } from "sonner";
 import type { Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
-import { withDbRetry } from "@/lib/supabaseRetry";
 
 type Binder = Tables<"binders">;
 
@@ -24,10 +23,7 @@ export default function Binders() {
 
   const load = async () => {
     if (!game) return;
-    const { data, error } = await withDbRetry(() =>
-      supabase.from("binders").select("*").eq("game", game).order("created_at"),
-    );
-    if (error) return toast.error(error.message);
+    const { data } = await supabase.from("binders").select("*").eq("game", game).order("created_at");
     setBinders(data ?? []);
   };
   useEffect(() => { load(); }, [game]);
@@ -36,20 +32,11 @@ export default function Binders() {
     if (!game || !name.trim()) return;
     const { data: u } = await supabase.auth.getUser();
     if (!u.user) return;
-    const { data, error } = await withDbRetry(() =>
-      supabase
-        .from("binders")
-        .insert({ user_id: u.user!.id, game, name: name.trim(), cols, rows })
-        .select()
-        .single(),
-    );
+    const { error } = await supabase.from("binders").insert({
+      user_id: u.user.id, game, name: name.trim(), cols, rows,
+    });
     if (error) return toast.error(error.message);
-    // Optimistically append so the new binder shows even if the reload fails
-    if (data) setBinders((prev) => [...prev, data as Binder]);
-    setName("");
-    setOpen(false);
-    toast.success("Binder created");
-    load();
+    setName(""); setOpen(false); load();
   };
 
   return (
