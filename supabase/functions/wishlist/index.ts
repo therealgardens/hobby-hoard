@@ -1,5 +1,4 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.105.1";
-import postgres from "https://deno.land/x/postgresjs@v3.4.5/mod.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -8,9 +7,6 @@ const corsHeaders = {
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
-const DB_URL = Deno.env.get("SUPABASE_DB_URL")!;
-
-const createSql = () => postgres(DB_URL, { max: 1, prepare: false, ssl: "require", idle_timeout: 5, max_lifetime: 30 });
 
 const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const games = new Set(["pokemon", "onepiece", "yugioh"]);
@@ -27,7 +23,7 @@ function requireUuid(value: unknown, name: string) {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function isRetryableDbError(error: unknown) {
+function isRetryableBackendError(error: unknown) {
   const message = String((error as Error)?.message ?? error).toLowerCase();
   const code = String((error as { code?: string })?.code ?? "");
   return (
@@ -42,6 +38,8 @@ function isRetryableDbError(error: unknown) {
     message.includes("starting up") ||
     message.includes("unexpectedeof") ||
     message.includes("unexpected eof") ||
+    message.includes("unexpected end of file") ||
+    message.includes("failed to fetch") ||
     message.includes("tls close_notify") ||
     message.includes("peer closed connection") ||
     message.includes("terminating connection") ||
@@ -49,21 +47,14 @@ function isRetryableDbError(error: unknown) {
   );
 }
 
-// Open a fresh connection per request and close it on the way out. Long-lived
-// shared connections get killed by the platform between invocations, leaving
-// a stale TLS socket that fails with "unexpected end of file" on next use.
-async function withDb<T>(operation: (db: ReturnType<typeof createSql>) => Promise<T>, attempts = 4): Promise<T> {
+async function withRetry<T>(operation: () => Promise<T>, attempts = 4): Promise<T> {
   let lastError: unknown;
   for (let i = 0; i < attempts; i += 1) {
-    const db = createSql();
     try {
-      const result = await operation(db);
-      try { await db.end({ timeout: 0 }); } catch (_) {}
-      return result;
+      return await operation();
     } catch (error) {
       lastError = error;
-      try { await db.end({ timeout: 0 }); } catch (_) {}
-      if (!isRetryableDbError(error) || i === attempts - 1) throw error;
+      if (!isRetryableBackendError(error) || i === attempts - 1) throw error;
       await wait(Math.min(400 * 2 ** i, 3000));
     }
   }
