@@ -196,28 +196,41 @@ export default function MasterSets() {
 
   const toggleWanted = async (c: CardRow) => {
     if (!game) return;
+    if (wishlistBusy.has(c.id)) return;
     const { data: u } = await supabase.auth.getUser();
     if (!u.user) return;
-    if (wantedCardIds.has(c.id)) {
-      try {
+    setWishlistBusy((prev) => new Set(prev).add(c.id));
+    const wasWanted = wantedCardIds.has(c.id);
+    // Optimistic update
+    setWantedCardIds((prev) => {
+      const n = new Set(prev);
+      if (wasWanted) n.delete(c.id);
+      else n.add(c.id);
+      return n;
+    });
+    try {
+      if (wasWanted) {
         await removeWishlistByCard(c.id, game);
-      } catch (error) {
-        return toast.error(error instanceof Error ? error.message : "Could not remove from wishlist");
+        toast.success("Removed from wishlist");
+      } else {
+        await addWishlist(c, game);
+        toast.success("Added to wishlist");
       }
+    } catch (error) {
+      // Rollback
       setWantedCardIds((prev) => {
+        const n = new Set(prev);
+        if (wasWanted) n.add(c.id);
+        else n.delete(c.id);
+        return n;
+      });
+      toast.error(error instanceof Error ? error.message : "Wishlist action failed");
+    } finally {
+      setWishlistBusy((prev) => {
         const n = new Set(prev);
         n.delete(c.id);
         return n;
       });
-      toast.success("Removed from wishlist");
-    } else {
-      try {
-        await addWishlist(c, game);
-      } catch (error) {
-        return toast.error(error instanceof Error ? error.message : "Could not add to wishlist");
-      }
-      setWantedCardIds((prev) => new Set(prev).add(c.id));
-      toast.success("Added to wishlist");
     }
   };
 
