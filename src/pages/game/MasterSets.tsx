@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import { cardImageCandidates, proxiedImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 import { addWishlist, listWishlist, removeWishlistByCard } from "@/lib/wishlist";
+import { withDbRetry } from "@/lib/supabaseRetry";
 
 type CardRow = Tables<"cards">;
 
