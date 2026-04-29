@@ -69,7 +69,12 @@ export function ChatDialog({ open, onOpenChange, friend }: Props) {
       (cs ?? []).forEach((c: any) => { map[c.id] = c; });
       setCards(map);
     }
-    await supabase.rpc("mark_thread_read", { _friend_id: friend.id });
+    await supabase
+      .from("chat_messages")
+      .update({ read_at: new Date().toISOString() })
+      .eq("recipient_id", user.id)
+      .eq("sender_id", friend.id)
+      .is("read_at", null);
     queueMicrotask(() => {
       scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
     });
@@ -101,10 +106,10 @@ export function ChatDialog({ open, onOpenChange, friend }: Props) {
   };
 
   const updateTradeStatus = async (m: Msg, status: "accepted" | "declined" | "cancelled") => {
-    const { error } =
-      status === "cancelled"
-        ? await supabase.rpc("cancel_trade", { _message_id: m.id })
-        : await supabase.rpc("respond_to_trade", { _message_id: m.id, _status: status });
+    const { error } = await supabase
+      .from("chat_messages")
+      .update({ trade_status: status })
+      .eq("id", m.id);
     if (error) {
       toast.error(error.message);
       return;
