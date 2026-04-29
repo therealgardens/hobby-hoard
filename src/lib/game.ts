@@ -41,9 +41,8 @@ export function cardImage(
   if (game === "onepiece" && code) {
     return proxiedImage(`https://en.onepiece-cardgame.com/images/cardlist/card/${code}.png`);
   }
-  if (game === "yugioh" && code) {
-    return proxiedImage(`https://images.ygoprodeck.com/images/cards/${code}.jpg`);
-  }
+  // Yu-Gi-Oh image URLs use the numeric card id, not the printing code.
+  // We can't reconstruct the URL from `code`, so just rely on imageUrl above.
   return undefined;
 }
 
