@@ -10,6 +10,8 @@ function isRetryableWishlistError(error: unknown) {
   const message = String((error as Error)?.message ?? error).toLowerCase();
   return (
     message.includes("database is reconnecting") ||
+    message.includes("recovery mode") ||
+    message.includes("starting up") ||
     message.includes("unexpected eof") ||
     message.includes("tls close_notify") ||
     message.includes("peer closed connection") ||
