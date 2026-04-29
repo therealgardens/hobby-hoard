@@ -16,17 +16,65 @@ export default function GameHome() {
 
   const load = async () => {
     if (!game) return;
-    const { data: entries } = await supabase
+    const { data: u } = await supabase.auth.getUser();
+    if (!u.user) return;
+    const userId = u.user.id;
+
+    // Unique cards: exact count via head request (not bound by 1000-row limit)
+    const uniquePromise = supabase
       .from("collection_entries")
-      .select("quantity")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", userId)
       .eq("game", game);
-    const unique = entries?.length ?? 0;
-    const total = entries?.reduce((s, e) => s + (e.quantity ?? 0), 0) ?? 0;
-    const { count: binders } = await supabase
-      .from("binders").select("*", { count: "exact", head: true }).eq("game", game);
-    const { count: wanted } = await supabase
-      .from("wanted_cards").select("*", { count: "exact", head: true }).eq("game", game);
-    setStats({ unique, total, binders: binders ?? 0, wanted: wanted ?? 0 });
+
+    // Total copies: page through quantities to avoid the 1000-row cap
+    const fetchTotal = async () => {
+      const pageSize = 1000;
+      let from = 0;
+      let total = 0;
+      // Loop until we get a short page
+      // (collection_entries table is small per user, so this is cheap)
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { data, error } = await supabase
+          .from("collection_entries")
+          .select("quantity")
+          .eq("user_id", userId)
+          .eq("game", game)
+          .range(from, from + pageSize - 1);
+        if (error || !data) break;
+        for (const e of data) total += e.quantity ?? 0;
+        if (data.length < pageSize) break;
+        from += pageSize;
+      }
+      return total;
+    };
+
+    const bindersPromise = supabase
+      .from("binders")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("game", game);
+
+    const wantedPromise = supabase
+      .from("wanted_cards")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("game", game);
+
+    const [uniqueRes, total, bindersRes, wantedRes] = await Promise.all([
+      uniquePromise,
+      fetchTotal(),
+      bindersPromise,
+      wantedPromise,
+    ]);
+
+    setStats({
+      unique: uniqueRes.count ?? 0,
+      total,
+      binders: bindersRes.count ?? 0,
+      wanted: wantedRes.count ?? 0,
+    });
   };
 
   const exportGame = async () => {
