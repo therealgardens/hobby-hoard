@@ -14,7 +14,7 @@ import { ArrowLeft, Plus, Search, Star, Trash2, Heart } from "lucide-react";
 import { toast } from "sonner";
 import { cardImageCandidates, proxiedImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
-import { addWishlist, removeWishlistByCard, wishlistStatus } from "@/lib/wishlist";
+import { addWishlist, listWishlist, removeWishlistByCard } from "@/lib/wishlist";
 
 type CardRow = Tables<"cards">;
 
@@ -124,8 +124,7 @@ export default function MasterSets() {
         setOwnedLangByCard(langs);
 
         try {
-          const { data: gameCards } = await supabase.from("cards").select("id").eq("game", game).limit(1000);
-          setWantedCardIds(await wishlistStatus((gameCards ?? []).map((card) => card.id)));
+          setWantedCardIds(new Set((await listWishlist(game)).map((item) => item.card_id)));
         } catch (_) {}
       }
       setLoadingSets(false);
