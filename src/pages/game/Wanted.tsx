@@ -3,11 +3,19 @@ import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Trash2, Download, Copy } from "lucide-react";
 import { CardSearch } from "@/components/CardSearch";
 import { toast } from "sonner";
 import { cardImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 
 type Wanted = Tables<"wanted_cards"> & { card: Tables<"cards"> | null };
 
