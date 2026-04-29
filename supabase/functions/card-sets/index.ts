@@ -215,6 +215,11 @@ async function yugiohSets(): Promise<SetOut[]> {
     );
 }
 
+// In-memory cache (per edge function instance) — sets lists rarely change,
+// so cache for 30 minutes to make subsequent loads instant.
+const _setsCache: Record<string, { at: number; data: SetOut[] }> = {};
+const SETS_TTL_MS = 30 * 60 * 1000;
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
