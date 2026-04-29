@@ -96,7 +96,17 @@ export default function Wanted() {
 
       {items.length > 0 && (
         <div>
-          <h3 className="font-display text-2xl mb-3">Your wishlist ({items.length})</h3>
+          <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+            <h3 className="font-display text-2xl">Your wishlist ({items.length})</h3>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={copyText}>
+                <Copy className="h-4 w-4 mr-2" /> Copy as text
+              </Button>
+              <Button variant="outline" size="sm" onClick={exportCsv}>
+                <Download className="h-4 w-4 mr-2" /> Export CSV
+              </Button>
+            </div>
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
             {items.map(w => {
               const img = cardImage(w.card?.game, w.card?.code, w.card?.image_small);
