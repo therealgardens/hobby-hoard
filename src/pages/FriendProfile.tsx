@@ -71,7 +71,7 @@ export default function FriendProfile() {
     (async () => {
       const [{ data: col }, { data: bin }, { data: dks }, { data: wnt }] = await Promise.all([
         isShared("collection")
-          ? supabase.from("collection_entries").select("*, card:cards(*)").eq("user_id", friendId).eq("game", activeGame)
+          ? supabase.from("collection_entries").select("*").eq("user_id", friendId).eq("game", activeGame)
           : Promise.resolve({ data: [] as any[] }),
         isShared("binders")
           ? supabase.from("binders").select("*").eq("user_id", friendId).eq("game", activeGame)
@@ -80,13 +80,24 @@ export default function FriendProfile() {
           ? supabase.from("decks").select("*").eq("user_id", friendId).eq("game", activeGame)
           : Promise.resolve({ data: [] as any[] }),
         isShared("wanted")
-          ? supabase.from("wanted_cards").select("*, card:cards(*)").eq("user_id", friendId).eq("game", activeGame)
+          ? supabase.from("wanted_cards").select("*").eq("user_id", friendId).eq("game", activeGame)
           : Promise.resolve({ data: [] as any[] }),
       ]);
-      setCollection(col ?? []);
+
+      // Hydrate card details for collection + wanted via a single cards query
+      const cardIds = Array.from(new Set([
+        ...((col ?? []).map((r: any) => r.card_id).filter(Boolean) as string[]),
+        ...((wnt ?? []).map((r: any) => r.card_id).filter(Boolean) as string[]),
+      ]));
+      let cardsById = new Map<string, any>();
+      if (cardIds.length) {
+        const { data: cards } = await supabase.from("cards").select("*").in("id", cardIds);
+        cardsById = new Map((cards ?? []).map((c: any) => [c.id, c]));
+      }
+      setCollection((col ?? []).map((r: any) => ({ ...r, card: cardsById.get(r.card_id) ?? null })));
       setBinders(bin ?? []);
       setDecks(dks ?? []);
-      setWanted(wnt ?? []);
+      setWanted((wnt ?? []).map((r: any) => ({ ...r, card: cardsById.get(r.card_id) ?? null })));
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [friendId, activeGame, shares]);

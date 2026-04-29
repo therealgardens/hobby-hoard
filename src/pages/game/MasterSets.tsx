@@ -102,22 +102,33 @@ export default function MasterSets() {
       const userRes = await supabase.auth.getUser();
       const uid = userRes.data.user?.id;
       if (uid) {
-        const { data: owned } = await supabase
+        const { data: ownedRows } = await supabase
           .from("collection_entries")
-          .select("card_id, language, cards!inner(set_id, set_name, code, game)")
+          .select("card_id, language")
           .eq("user_id", uid)
           .eq("game", game);
+        const cardIds = Array.from(new Set((ownedRows ?? []).map((r: any) => r.card_id).filter(Boolean))) as string[];
+        let cardsById = new Map<string, { set_id: string | null; set_name: string | null; code: string | null }>();
+        if (cardIds.length) {
+          const { data: cards } = await supabase
+            .from("cards")
+            .select("id, set_id, set_name, code")
+            .in("id", cardIds);
+          cardsById = new Map((cards ?? []).map((c: any) => [c.id, c]));
+        }
         const counts = new Map<string, number>();
         const langs = new Map<string, string>();
         const ids = new Set<string>();
-        for (const row of owned ?? []) {
-          const r = row as unknown as { card_id: string; language: string | null; cards: { set_id: string | null; set_name: string | null; code: string | null } };
-          if (!ids.has(r.card_id)) {
-            const id = setIdForCard(game, r.cards);
-            if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
-            ids.add(r.card_id);
+        for (const row of (ownedRows ?? []) as Array<{ card_id: string; language: string | null }>) {
+          if (!ids.has(row.card_id)) {
+            const cardMeta = cardsById.get(row.card_id);
+            if (cardMeta) {
+              const id = setIdForCard(game, cardMeta);
+              if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+            }
+            ids.add(row.card_id);
           }
-          if (r.language && !langs.has(r.card_id)) langs.set(r.card_id, r.language);
+          if (row.language && !langs.has(row.card_id)) langs.set(row.card_id, row.language);
         }
         setOwnedBySet(counts);
         setOwnedCardIds(ids);

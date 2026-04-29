@@ -11,6 +11,7 @@ import { Plus, Swords, Check, X, Minus } from "lucide-react";
 import { toast } from "sonner";
 import type { Tables } from "@/integrations/supabase/types";
 import { cardImage, type Game } from "@/lib/game";
+import { withDbRetry } from "@/lib/supabaseRetry";
 
 type Deck = Tables<"decks">;
 
@@ -57,11 +58,10 @@ export default function Decks() {
   const [analysis, setAnalysis] = useState<{ code: string; needed: number; have: number; cardId?: string; name?: string; imageSmall?: string }[]>([]);
 
   const load = async () => {
-    const { data } = await supabase
-      .from("decks")
-      .select("*")
-      .eq("game", currentGame)
-      .order("created_at");
+    const { data, error } = await withDbRetry(() =>
+      supabase.from("decks").select("*").eq("game", currentGame).order("created_at"),
+    );
+    if (error) return toast.error(error.message);
     setDecks(data ?? []);
   };
   useEffect(() => { load(); }, [currentGame]);
