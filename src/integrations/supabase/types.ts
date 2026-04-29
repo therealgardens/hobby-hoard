@@ -140,6 +140,42 @@ export type Database = {
         }
         Relationships: []
       }
+      chat_messages: {
+        Row: {
+          body: string | null
+          card_id: string | null
+          created_at: string
+          game: string | null
+          id: string
+          kind: string
+          read_at: string | null
+          recipient_id: string
+          sender_id: string
+        }
+        Insert: {
+          body?: string | null
+          card_id?: string | null
+          created_at?: string
+          game?: string | null
+          id?: string
+          kind?: string
+          read_at?: string | null
+          recipient_id: string
+          sender_id: string
+        }
+        Update: {
+          body?: string | null
+          card_id?: string | null
+          created_at?: string
+          game?: string | null
+          id?: string
+          kind?: string
+          read_at?: string | null
+          recipient_id?: string
+          sender_id?: string
+        }
+        Relationships: []
+      }
       collection_entries: {
         Row: {
           card_id: string
@@ -246,6 +282,69 @@ export type Database = {
         }
         Relationships: []
       }
+      friend_shares: {
+        Row: {
+          friend_id: string
+          game: string
+          id: string
+          owner_id: string
+          share_binders: boolean
+          share_collection: boolean
+          share_decks: boolean
+          share_wanted: boolean
+          updated_at: string
+        }
+        Insert: {
+          friend_id: string
+          game: string
+          id?: string
+          owner_id: string
+          share_binders?: boolean
+          share_collection?: boolean
+          share_decks?: boolean
+          share_wanted?: boolean
+          updated_at?: string
+        }
+        Update: {
+          friend_id?: string
+          game?: string
+          id?: string
+          owner_id?: string
+          share_binders?: boolean
+          share_collection?: boolean
+          share_decks?: boolean
+          share_wanted?: boolean
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      friendships: {
+        Row: {
+          addressee_id: string
+          created_at: string
+          id: string
+          requester_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          addressee_id: string
+          created_at?: string
+          id?: string
+          requester_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          addressee_id?: string
+          created_at?: string
+          id?: string
+          requester_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       pokedex_entries: {
         Row: {
           created_at: string
@@ -278,16 +377,19 @@ export type Database = {
           created_at: string
           display_name: string | null
           id: string
+          username: string | null
         }
         Insert: {
           created_at?: string
           display_name?: string | null
           id: string
+          username?: string | null
         }
         Update: {
           created_at?: string
           display_name?: string | null
           id?: string
+          username?: string | null
         }
         Relationships: []
       }
@@ -347,7 +449,16 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      are_friends: { Args: { _a: string; _b: string }; Returns: boolean }
+      shares_with: {
+        Args: {
+          _friend: string
+          _game: string
+          _module: string
+          _owner: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
       [_ in never]: never
