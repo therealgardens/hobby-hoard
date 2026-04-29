@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
@@ -8,7 +7,6 @@ import { Search, Plus, Loader2, Heart, Check } from "lucide-react";
 import { toast } from "sonner";
 import { cardImageCandidates, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
-import { withDbRetry } from "@/lib/supabaseRetry";
 
 type CardRow = Tables<"cards">;
 
@@ -20,7 +18,6 @@ interface Props {
 }
 
 export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
-  const { user } = useAuth();
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<CardRow[]>([]);
@@ -30,18 +27,15 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
   const reqIdRef = useRef(0);
 
   const refreshStatus = async (cards: CardRow[]) => {
-    if (!user || cards.length === 0) return;
-    // Guard against non-UUID ids (e.g. if an upstream proxy ever returns
-    // synthesized cards) — Postgres rejects the whole IN() with 22P02 otherwise.
-    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const ids = cards.map((c) => c.id).filter((id) => uuidRe.test(id));
-    if (ids.length === 0) return;
-    const [{ data: owned, error: ownedError }, { data: wanted, error: wantedError }] = await Promise.all([
-      withDbRetry(() => supabase.from("collection_entries").select("card_id").eq("user_id", user.id).in("card_id", ids)),
-      withDbRetry(() => supabase.from("wanted_cards").select("card_id").eq("user_id", user.id).in("card_id", ids)),
+    const { data: u } = await supabase.auth.getUser();
+    if (!u.user || cards.length === 0) return;
+    const ids = cards.map((c) => c.id);
+    const [{ data: owned }, { data: wanted }] = await Promise.all([
+      supabase.from("collection_entries").select("card_id").eq("user_id", u.user.id).in("card_id", ids),
+      supabase.from("wanted_cards").select("card_id").eq("user_id", u.user.id).in("card_id", ids),
     ]);
-    if (!ownedError) setOwnedIds(new Set((owned ?? []).map((r: any) => r.card_id)));
-    if (!wantedError) setWantedIds(new Set((wanted ?? []).map((r: any) => r.card_id)));
+    setOwnedIds(new Set((owned ?? []).map((r: any) => r.card_id)));
+    setWantedIds(new Set((wanted ?? []).map((r: any) => r.card_id)));
   };
 
   const runSearch = async (term: string) => {
@@ -97,10 +91,11 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
   };
 
   const addToCollection = async (c: CardRow) => {
-    if (!user) return toast.error("Not signed in");
+    const { data: u } = await supabase.auth.getUser();
+    if (!u.user) return toast.error("Not signed in");
     const quantity = Math.max(1, qty[c.id] ?? 1);
     const { error } = await supabase.from("collection_entries").insert({
-      user_id: user.id,
+      user_id: u.user.id,
       card_id: c.id,
       game,
       rarity: c.rarity ?? null,
@@ -113,15 +108,14 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
   };
 
   const toggleWanted = async (c: CardRow) => {
-    if (!user) return toast.error("Not signed in");
+    const { data: u } = await supabase.auth.getUser();
+    if (!u.user) return toast.error("Not signed in");
     if (wantedIds.has(c.id)) {
-      const { error } = await withDbRetry(() =>
-        supabase
-          .from("wanted_cards")
-          .delete()
-          .eq("user_id", user.id)
-          .eq("card_id", c.id),
-      );
+      const { error } = await supabase
+        .from("wanted_cards")
+        .delete()
+        .eq("user_id", u.user.id)
+        .eq("card_id", c.id);
       if (error) return toast.error(error.message);
       setWantedIds((prev) => {
         const n = new Set(prev);
@@ -130,13 +124,11 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
       });
       toast.success("Removed from wishlist");
     } else {
-      const { error } = await withDbRetry(() =>
-        supabase.from("wanted_cards").insert({
-          user_id: user.id,
-          card_id: c.id,
-          game,
-        }),
-      );
+      const { error } = await supabase.from("wanted_cards").insert({
+        user_id: u.user.id,
+        card_id: c.id,
+        game,
+      });
       if (error) return toast.error(error.message);
       setWantedIds((prev) => new Set(prev).add(c.id));
       toast.success("Added to wishlist");

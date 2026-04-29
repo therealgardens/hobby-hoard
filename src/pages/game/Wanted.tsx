@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/hooks/useAuth";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +9,6 @@ import { CardSearch } from "@/components/CardSearch";
 import { toast } from "sonner";
 import { cardImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
-import { withDbRetry } from "@/lib/supabaseRetry";
 import {
   Dialog,
   DialogContent,
@@ -23,53 +21,31 @@ type Wanted = Tables<"wanted_cards"> & { card: Tables<"cards"> | null };
 
 export default function Wanted() {
   const { game } = useParams<{ game: Game }>();
-  const { user, loading } = useAuth();
   const [items, setItems] = useState<Wanted[]>([]);
   const [editing, setEditing] = useState<Wanted | null>(null);
   const [editQty, setEditQty] = useState(1);
 
   const load = async () => {
-    if (!game || loading) return;
-    if (!user) {
-      setItems([]);
-      return;
-    }
-    const { data: wantedRows, error } = await withDbRetry(() =>
-      supabase
-        .from("wanted_cards")
-        .select("*")
-        .eq("game", game)
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false }),
-    );
-    if (error) return toast.error(error.message);
-    const rows = (wantedRows ?? []) as Tables<"wanted_cards">[];
-    const cardIds = [...new Set(rows.map((row) => row.card_id))];
-    const { data: cards, error: cardsError } = cardIds.length
-      ? await withDbRetry(() => supabase.from("cards").select("*").in("id", cardIds))
-      : { data: [], error: null };
-    if (cardsError) return toast.error(cardsError.message);
-    const cardsById = new Map(((cards ?? []) as Tables<"cards">[]).map((card) => [card.id, card]));
-    setItems(rows.map((row) => ({ ...row, card: cardsById.get(row.card_id) ?? null })));
+    if (!game) return;
+    const { data } = await supabase
+      .from("wanted_cards").select("*, card:cards(*)").eq("game", game).order("created_at", { ascending: false });
+    setItems((data as any) ?? []);
   };
-  useEffect(() => { load(); }, [game, user?.id, loading]);
+  useEffect(() => { load(); }, [game]);
 
   const add = async (card: Tables<"cards">) => {
-    if (!user) return toast.error("Not signed in");
-    if (!game) return;
-    const { error } = await withDbRetry(() =>
-      supabase.from("wanted_cards").insert({
-        user_id: user.id, card_id: card.id, game,
-      }),
-    );
+    const { data: u } = await supabase.auth.getUser();
+    if (!u.user || !game) return;
+    const { error } = await supabase.from("wanted_cards").insert({
+      user_id: u.user.id, card_id: card.id, game,
+    });
     if (error) return toast.error(error.message);
     toast.success("Added to wishlist");
     load();
   };
 
   const remove = async (id: string) => {
-    const { error } = await withDbRetry(() => supabase.from("wanted_cards").delete().eq("id", id));
-    if (error) return toast.error(error.message);
+    await supabase.from("wanted_cards").delete().eq("id", id);
     setEditing(null);
     load();
   };
@@ -82,12 +58,10 @@ export default function Wanted() {
   const saveQty = async () => {
     if (!editing) return;
     const q = Math.max(1, editQty);
-    const { error } = await withDbRetry(() =>
-      supabase
-        .from("wanted_cards")
-        .update({ quantity: q })
-        .eq("id", editing.id),
-    );
+    const { error } = await supabase
+      .from("wanted_cards")
+      .update({ quantity: q })
+      .eq("id", editing.id);
     if (error) return toast.error(error.message);
     toast.success("Updated");
     setEditing(null);

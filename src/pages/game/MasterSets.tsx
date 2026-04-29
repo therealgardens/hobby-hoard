@@ -14,7 +14,6 @@ import { ArrowLeft, Plus, Search, Star, Trash2, Heart } from "lucide-react";
 import { toast } from "sonner";
 import { cardImageCandidates, proxiedImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
-import { withDbRetry } from "@/lib/supabaseRetry";
 
 type CardRow = Tables<"cards">;
 
@@ -123,13 +122,11 @@ export default function MasterSets() {
         setOwnedCardIds(ids);
         setOwnedLangByCard(langs);
 
-        const { data: wanted } = await withDbRetry(() =>
-          supabase
-            .from("wanted_cards")
-            .select("card_id")
-            .eq("user_id", uid)
-            .eq("game", game),
-        );
+        const { data: wanted } = await supabase
+          .from("wanted_cards")
+          .select("card_id")
+          .eq("user_id", uid)
+          .eq("game", game);
         setWantedCardIds(new Set((wanted ?? []).map((w) => w.card_id)));
       }
       setLoadingSets(false);
@@ -192,13 +189,11 @@ export default function MasterSets() {
     const { data: u } = await supabase.auth.getUser();
     if (!u.user) return;
     if (wantedCardIds.has(c.id)) {
-      const { error } = await withDbRetry(() =>
-        supabase
-          .from("wanted_cards")
-          .delete()
-          .eq("user_id", u.user.id)
-          .eq("card_id", c.id),
-      );
+      const { error } = await supabase
+        .from("wanted_cards")
+        .delete()
+        .eq("user_id", u.user.id)
+        .eq("card_id", c.id);
       if (error) return toast.error(error.message);
       setWantedCardIds((prev) => {
         const n = new Set(prev);
@@ -207,13 +202,11 @@ export default function MasterSets() {
       });
       toast.success("Removed from wishlist");
     } else {
-      const { error } = await withDbRetry(() =>
-        supabase.from("wanted_cards").insert({
-          user_id: u.user.id,
-          card_id: c.id,
-          game,
-        }),
-      );
+      const { error } = await supabase.from("wanted_cards").insert({
+        user_id: u.user.id,
+        card_id: c.id,
+        game,
+      });
       if (error) return toast.error(error.message);
       setWantedCardIds((prev) => new Set(prev).add(c.id));
       toast.success("Added to wishlist");

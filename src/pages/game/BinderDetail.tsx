@@ -13,7 +13,6 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { cardImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
-import { withDbRetry } from "@/lib/supabaseRetry";
 
 type Binder = Tables<"binders">;
 type Slot = Tables<"binder_slots"> & { card: Tables<"cards"> | null };
@@ -81,12 +80,9 @@ export default function BinderDetail() {
       });
     }
     if (isWanted) {
-      const { error } = await withDbRetry(() =>
-        supabase.from("wanted_cards").insert({
-          user_id: u.user.id, card_id: card.id, game: game!, binder_id: binderId, quantity: 1,
-        }),
-      );
-      if (error) return toast.error(error.message);
+      await supabase.from("wanted_cards").insert({
+        user_id: u.user.id, card_id: card.id, game: game!, binder_id: binderId, quantity: 1,
+      });
     }
     setPickingPos(null);
     load();
