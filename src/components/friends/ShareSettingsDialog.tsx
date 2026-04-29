@@ -117,13 +117,9 @@ export function ShareSettingsDialog({ open, onOpenChange, friend }: Props) {
                     />
                   </div>
                 ))}
-                {g === "all" ? (
+                {g === "all" && (
                   <p className="text-xs text-muted-foreground">
-                    “All games” is the default. Per-game tabs can override these values — turn a module off in a specific game to hide it there even if it's on here.
-                  </p>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    These settings override the “All games” defaults for {LABELS[g]}.
+                    “All games” acts as a fallback — if it's on for a module, the friend can see that module across every game.
                   </p>
                 )}
               </TabsContent>
