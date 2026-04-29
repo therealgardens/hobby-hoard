@@ -104,18 +104,35 @@ export default function MasterSets() {
       const userRes = await supabase.auth.getUser();
       const uid = userRes.data.user?.id;
       if (uid) {
-        const { data: ownedRows } = await supabase
-          .from("collection_entries")
-          .select("card_id, language")
-          .eq("user_id", uid)
-          .eq("game", game);
+        // Warm from sessionStorage so re-entering the page is instant.
+        const ownedCacheKey = `tcg.owned.${game}.${uid}.v1`;
+        try {
+          const raw = sessionStorage.getItem(ownedCacheKey);
+          if (raw) {
+            const parsed = JSON.parse(raw) as {
+              counts: [string, number][];
+              ids: string[];
+              langs: [string, string][];
+            };
+            setOwnedBySet(new Map(parsed.counts));
+            setOwnedCardIds(new Set(parsed.ids));
+            setOwnedLangByCard(new Map(parsed.langs));
+          }
+        } catch (_) {}
+
+        const { data: ownedRows } = await withDbRetry(() =>
+          supabase
+            .from("collection_entries")
+            .select("card_id, language")
+            .eq("user_id", uid)
+            .eq("game", game),
+        );
         const cardIds = Array.from(new Set((ownedRows ?? []).map((r: any) => r.card_id).filter(Boolean))) as string[];
         let cardsById = new Map<string, { set_id: string | null; set_name: string | null; code: string | null }>();
         if (cardIds.length) {
-          const { data: cards } = await supabase
-            .from("cards")
-            .select("id, set_id, set_name, code")
-            .in("id", cardIds);
+          const { data: cards } = await withDbRetry(() =>
+            supabase.from("cards").select("id, set_id, set_name, code").in("id", cardIds),
+          );
           cardsById = new Map((cards ?? []).map((c: any) => [c.id, c]));
         }
         const counts = new Map<string, number>();
@@ -135,6 +152,16 @@ export default function MasterSets() {
         setOwnedBySet(counts);
         setOwnedCardIds(ids);
         setOwnedLangByCard(langs);
+        try {
+          sessionStorage.setItem(
+            ownedCacheKey,
+            JSON.stringify({
+              counts: Array.from(counts.entries()),
+              ids: Array.from(ids),
+              langs: Array.from(langs.entries()),
+            }),
+          );
+        } catch (_) {}
 
         try {
           setWantedCardIds(new Set((await listWishlist(game)).map((item) => item.card_id)));
