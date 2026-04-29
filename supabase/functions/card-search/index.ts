@@ -334,6 +334,28 @@ async function searchYugioh(query: string, setId?: string) {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
+    // Require an authenticated caller — this proxy uses a private API key
+    // and writes to public.cards via the service role.
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: authHeader } },
+    });
+    const { data: userData, error: authError } = await userClient.auth.getUser(
+      authHeader.replace("Bearer ", ""),
+    );
+    if (authError || !userData?.user) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const body = (await req.json()) as SearchBody;
     if (!body?.game || !["pokemon", "onepiece", "yugioh"].includes(body.game)) {
       return new Response(JSON.stringify({ error: "invalid game" }), {
