@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { z } from "zod";
+import { validateUsername } from "@/lib/username";
 
 const schema = z.object({
   email: z.string().trim().email("Invalid email").max(255),
@@ -21,6 +22,7 @@ export default function Auth() {
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("");
   const [forgotOpen, setForgotOpen] = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
 
@@ -28,24 +30,43 @@ export default function Auth() {
     e.preventDefault();
     const parsed = schema.safeParse({ email, password });
     if (!parsed.success) return toast.error(parsed.error.errors[0].message);
+    const u = validateUsername(username);
+    if (!u.ok) return toast.error(u.error);
+
+    // Pre-check uniqueness
+    const { data: taken } = await supabase
+      .from("profiles")
+      .select("id")
+      .ilike("username", u.value)
+      .maybeSingle();
+    if (taken) return toast.error("That username is already taken.");
+
     setLoading(true);
     const { data, error } = await supabase.auth.signUp({
       email: parsed.data.email,
       password: parsed.data.password,
-      options: { emailRedirectTo: `${window.location.origin}/` },
+      options: {
+        emailRedirectTo: `${window.location.origin}/`,
+        data: { username: u.value, display_name: u.value },
+      },
     });
-    setLoading(false);
     if (error) {
+      setLoading(false);
       const msg = error.message.toLowerCase();
       if (msg.includes("registered") || msg.includes("already")) {
         return toast.error("An account with this email already exists. Try signing in instead.");
       }
       return toast.error(error.message);
     }
-    // Supabase returns a user with empty identities array when the email is already taken
     if (data.user && data.user.identities && data.user.identities.length === 0) {
+      setLoading(false);
       return toast.error("An account with this email already exists. Try signing in instead.");
     }
+    // Persist username on profile (handle_new_user trigger created the row)
+    if (data.user) {
+      await supabase.from("profiles").update({ username: u.value, display_name: u.value }).eq("id", data.user.id);
+    }
+    setLoading(false);
     toast.success("Check your email to confirm your account!");
   };
 
