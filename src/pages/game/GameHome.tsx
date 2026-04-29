@@ -167,12 +167,14 @@ export default function GameHome() {
 
   return (
     <div className="space-y-8">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Stat label="Unique cards" value={stats.unique} />
-        <Stat label="Total copies" value={stats.total} />
-        <Stat label="Binders" value={stats.binders} />
-        <Stat label="Wanted" value={stats.wanted} />
-      </div>
+      <Card className="p-6 bg-gradient-card shadow-soft">
+        <div className="grid grid-cols-2 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-border">
+          <StatRow icon={Library} label="Unique cards" value={stats.unique} />
+          <StatRow icon={Copy} label="Total copies" value={stats.total} />
+          <StatRow icon={BookOpen} label="Binders" value={stats.binders} />
+          <StatRow icon={Heart} label="Wanted" value={stats.wanted} />
+        </div>
+      </Card>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {tiles.map((t) => (
