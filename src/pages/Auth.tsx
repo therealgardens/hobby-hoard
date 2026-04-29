@@ -65,10 +65,8 @@ export default function Auth() {
       setLoading(false);
       return toast.error("An account with this email already exists. Try signing in instead.");
     }
-    // Persist username on profile (handle_new_user trigger created the row)
-    if (data.user) {
-      await supabase.from("profiles").update({ username: u.value, display_name: u.value }).eq("id", data.user.id);
-    }
+    // The handle_new_user DB trigger reads the username from auth metadata
+    // and stores it on the profile atomically — no follow-up update needed.
     setLoading(false);
     toast.success("Check your email to confirm your account!");
   };
