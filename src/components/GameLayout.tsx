@@ -2,13 +2,15 @@ import { NavLink, Outlet, useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { GAME_LABEL, type Game, setActiveGame } from "@/lib/game";
-import { ArrowLeft, BookOpen, Library, Heart, Layers, Copy, Swords, ListChecks, Search } from "lucide-react";
+import { ArrowLeft, BookOpen, Library, Heart, Layers, Copy, Swords, ListChecks, Search, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "react-i18next";
 
 export default function GameLayout() {
   const { game } = useParams<{ game: Game }>();
   const nav = useNavigate();
   const { signOut } = useAuth();
+  const { t } = useTranslation();
   if (!game || (game !== "pokemon" && game !== "onepiece")) {
     nav("/");
     return null;
@@ -34,13 +36,18 @@ export default function GameLayout() {
         <div className="container mx-auto flex items-center justify-between py-4 px-4">
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="sm" onClick={() => nav("/")} className="text-primary-foreground hover:bg-white/10">
-              <ArrowLeft className="h-4 w-4 mr-1" /> Switch
+              <ArrowLeft className="h-4 w-4 mr-1" /> {t("nav.switch")}
             </Button>
             <h1 className="text-3xl font-display">{GAME_LABEL[game]}</h1>
           </div>
-          <Button variant="ghost" size="sm" onClick={signOut} className="text-primary-foreground hover:bg-white/10">
-            Sign out
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" onClick={() => nav("/settings")} className="text-primary-foreground hover:bg-white/10">
+              <Settings className="h-4 w-4 mr-1" /> {t("nav.settings")}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={signOut} className="text-primary-foreground hover:bg-white/10">
+              {t("nav.signOut")}
+            </Button>
+          </div>
         </div>
         <nav className="container mx-auto px-4 pb-3 flex gap-1 overflow-x-auto">
           {links.map((l) => (

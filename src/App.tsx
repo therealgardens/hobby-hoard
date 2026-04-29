@@ -18,11 +18,14 @@ import Duplicates from "./pages/game/Duplicates";
 import Pokedex from "./pages/game/Pokedex";
 import Decks from "./pages/game/Decks";
 import CardSearchPage from "./pages/game/CardSearchPage";
+import Settings from "./pages/Settings";
+import { ThemeProvider } from "./components/ThemeProvider";
 
 const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
+    <ThemeProvider>
     <TooltipProvider>
       <Toaster />
       <Sonner />
@@ -47,6 +50,7 @@ const App = () => (
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>
+    </ThemeProvider>
   </QueryClientProvider>
 );
 

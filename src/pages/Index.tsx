@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { setActiveGame } from "@/lib/game";
 import { useAuth } from "@/hooks/useAuth";
 import heroImg from "@/assets/hero-binder.jpg";
-import { LogOut } from "lucide-react";
+import { LogOut, Settings as SettingsIcon } from "lucide-react";
 
 export default function Index() {
   const nav = useNavigate();
@@ -20,9 +20,14 @@ export default function Index() {
       <header className="container mx-auto flex items-center justify-between py-6">
         <h2 className="text-3xl text-primary font-display">CardKeeper</h2>
         {user && (
-          <Button variant="ghost" size="sm" onClick={signOut}>
-            <LogOut className="h-4 w-4 mr-2" /> Sign out
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="ghost" size="sm" onClick={() => nav("/settings")}>
+              <SettingsIcon className="h-4 w-4 mr-2" /> Settings
+            </Button>
+            <Button variant="ghost" size="sm" onClick={signOut}>
+              <LogOut className="h-4 w-4 mr-2" /> Sign out
+            </Button>
+          </div>
         )}
       </header>
 
