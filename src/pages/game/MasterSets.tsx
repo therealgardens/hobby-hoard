@@ -549,15 +549,7 @@ function SetGrid({
                   {s.id}{s.releaseDate ? ` · ${s.releaseDate}` : ""}
                 </p>
               </div>
-              <Badge variant={owned > 0 ? "default" : "secondary"}>
-                {owned}{total ? `/${total}` : ""}
-              </Badge>
             </div>
-            {total > 0 && (
-              <div className="mt-3 h-1.5 bg-muted rounded-full overflow-hidden">
-                <div className="h-full bg-primary transition-all" style={{ width: `${pct}%` }} />
-              </div>
-            )}
           </Card>
         );
       })}
