@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { cardImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 import { addWishlist } from "@/lib/wishlist";
+import { withDbRetry } from "@/lib/supabaseRetry";
 
 type Binder = Tables<"binders">;
 type Slot = Tables<"binder_slots"> & { card: Tables<"cards"> | null };
@@ -30,14 +31,29 @@ export default function BinderDetail() {
 
   const load = async () => {
     if (!binderId) return;
-    const { data: b } = await supabase.from("binders").select("*").eq("id", binderId).maybeSingle();
+    const { data: b } = await withDbRetry(() =>
+      supabase.from("binders").select("*").eq("id", binderId).maybeSingle(),
+    );
     setBinder(b);
-    const { data: s } = await supabase
-      .from("binder_slots")
-      .select("*, card:cards(*)")
-      .eq("binder_id", binderId)
-      .order("position");
-    setSlots((s as any) ?? []);
+    const { data: s } = await withDbRetry(() =>
+      supabase
+        .from("binder_slots")
+        .select("*")
+        .eq("binder_id", binderId)
+        .order("position"),
+    );
+    const slotRows = (s ?? []) as Tables<"binder_slots">[];
+    const cardIds = Array.from(
+      new Set(slotRows.map((row) => row.card_id).filter(Boolean) as string[]),
+    );
+    let cardsById = new Map<string, Tables<"cards">>();
+    if (cardIds.length) {
+      const { data: cards } = await withDbRetry(() =>
+        supabase.from("cards").select("*").in("id", cardIds),
+      );
+      cardsById = new Map((cards ?? []).map((c: any) => [c.id, c]));
+    }
+    setSlots(slotRows.map((row) => ({ ...row, card: row.card_id ? cardsById.get(row.card_id) ?? null : null })));
   };
   useEffect(() => { load(); }, [binderId]);
 
