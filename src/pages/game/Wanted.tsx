@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Trash2 } from "lucide-react";
+import { Trash2, Download, Copy } from "lucide-react";
 import { CardSearch } from "@/components/CardSearch";
 import { toast } from "sonner";
 import { cardImage, type Game } from "@/lib/game";
@@ -39,6 +39,49 @@ export default function Wanted() {
     load();
   };
 
+  const buildRows = () =>
+    items.map((w) => ({
+      quantity: w.quantity ?? 1,
+      code: w.card?.code ?? "",
+      name: w.card?.name ?? "",
+      set: w.card?.set_name ?? "",
+      rarity: w.rarity ?? w.card?.rarity ?? "",
+      language: w.language ?? "EN",
+    }));
+
+  const exportCsv = () => {
+    if (!items.length) return toast.error("Wishlist is empty");
+    const rows = buildRows();
+    const header = ["quantity", "code", "name", "set", "rarity", "language"];
+    const escape = (v: any) => {
+      const s = String(v ?? "");
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = [header.join(","), ...rows.map((r) => header.map((h) => escape((r as any)[h])).join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `wishlist-${game}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("CSV downloaded");
+  };
+
+  const copyText = async () => {
+    if (!items.length) return toast.error("Wishlist is empty");
+    const text = buildRows()
+      .map((r) => `${r.quantity}x ${r.code}${r.name ? ` — ${r.name}` : ""}`)
+      .join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("Copied to clipboard");
+    } catch {
+      toast.error("Could not copy");
+    }
+  };
+
+
   return (
     <div className="space-y-8">
       <div>
@@ -53,7 +96,17 @@ export default function Wanted() {
 
       {items.length > 0 && (
         <div>
-          <h3 className="font-display text-2xl mb-3">Your wishlist ({items.length})</h3>
+          <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+            <h3 className="font-display text-2xl">Your wishlist ({items.length})</h3>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={copyText}>
+                <Copy className="h-4 w-4 mr-2" /> Copy as text
+              </Button>
+              <Button variant="outline" size="sm" onClick={exportCsv}>
+                <Download className="h-4 w-4 mr-2" /> Export CSV
+              </Button>
+            </div>
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
             {items.map(w => {
               const img = cardImage(w.card?.game, w.card?.code, w.card?.image_small);
