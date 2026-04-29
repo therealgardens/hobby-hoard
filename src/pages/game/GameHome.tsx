@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
@@ -8,10 +8,95 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import type { Game } from "@/lib/game";
 
+type TileCounts = {
+  master?: string;
+  binders?: string;
+  wanted?: string;
+  duplicates?: string;
+  decks?: string;
+  pokedex?: string;
+};
+
+function setIdForCard(game: Game, c: { set_id: string | null; set_name: string | null; code: string | null }): string | null {
+  if (game === "pokemon" || game === "yugioh") return c.set_id ?? null;
+  // onepiece: derive from code prefix like "OP01-001" or set_name
+  const fromCode = c.code?.match(/^([A-Z]+\d+)/i)?.[1] ?? null;
+  if (fromCode) return fromCode.toUpperCase();
+  const fromName = c.set_name?.match(/\b([A-Z]+\d+)\b/)?.[1] ?? null;
+  return fromName ? fromName.toUpperCase() : null;
+}
+
 export default function GameHome() {
   const { game } = useParams<{ game: Game }>();
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const [counts, setCounts] = useState<TileCounts>({});
+
+  useEffect(() => {
+    if (!game) return;
+    let cancelled = false;
+    (async () => {
+      const { data: u } = await supabase.auth.getUser();
+      if (!u.user) return;
+      const uid = u.user.id;
+
+      const [collectionRes, bindersRes, wantedRes, decksRes, pokedexRes, setsRes] = await Promise.all([
+        supabase
+          .from("collection_entries")
+          .select("card_id, quantity, cards!inner(set_id, set_name, code, game)")
+          .eq("user_id", uid)
+          .eq("game", game),
+        supabase.from("binders").select("id", { count: "exact", head: true }).eq("user_id", uid).eq("game", game),
+        supabase.from("wanted_cards").select("card_id, quantity").eq("user_id", uid).eq("game", game),
+        (game === "onepiece" || game === "yugioh")
+          ? supabase.from("decks").select("id", { count: "exact", head: true }).eq("user_id", uid).eq("game", game)
+          : Promise.resolve({ count: 0 } as any),
+        game === "pokemon"
+          ? supabase.from("pokedex_entries").select("id", { count: "exact", head: true }).eq("user_id", uid)
+          : Promise.resolve({ count: 0 } as any),
+        fetch(`https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/functions/v1/card-sets?game=${game}`)
+          .then((r) => (r.ok ? r.json() : { sets: [] }))
+          .catch(() => ({ sets: [] })),
+      ]);
+
+      if (cancelled) return;
+
+      // Master sets: owned-set count / total sets
+      const totalSets = Array.isArray((setsRes as any).sets) ? (setsRes as any).sets.length : 0;
+      const ownedSetIds = new Set<string>();
+      let totalCopies = 0;
+      const uniqueWithDupes = new Set<string>();
+      let dupExtras = 0;
+      for (const row of (collectionRes.data ?? []) as any[]) {
+        const c = row.cards;
+        const id = c ? setIdForCard(game, c) : null;
+        if (id) ownedSetIds.add(id);
+        const q = row.quantity ?? 0;
+        totalCopies += q;
+        if (q > 1) {
+          uniqueWithDupes.add(row.card_id);
+          dupExtras += q - 1;
+        }
+      }
+
+      // Wanted: distinct cards / total copies
+      const wantedRows = (wantedRes.data ?? []) as Array<{ card_id: string; quantity: number }>;
+      const wantedUnique = new Set(wantedRows.map((r) => r.card_id)).size;
+      const wantedTotal = wantedRows.reduce((s, r) => s + (r.quantity ?? 0), 0);
+
+      setCounts({
+        master: `${ownedSetIds.size}/${totalSets || "?"}`,
+        binders: String((bindersRes as any).count ?? 0),
+        wanted: `${wantedUnique}/${wantedTotal}`,
+        duplicates: `${dupExtras}/${uniqueWithDupes.size}`,
+        decks: String((decksRes as any).count ?? 0),
+        pokedex: String((pokedexRes as any).count ?? 0),
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [game]);
 
   const exportGame = async () => {
     if (!game) return;
