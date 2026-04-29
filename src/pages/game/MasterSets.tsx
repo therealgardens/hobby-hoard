@@ -184,6 +184,35 @@ export default function MasterSets() {
     }
   };
 
+  const toggleWanted = async (c: CardRow) => {
+    if (!game) return;
+    const { data: u } = await supabase.auth.getUser();
+    if (!u.user) return;
+    if (wantedCardIds.has(c.id)) {
+      const { error } = await supabase
+        .from("wanted_cards")
+        .delete()
+        .eq("user_id", u.user.id)
+        .eq("card_id", c.id);
+      if (error) return toast.error(error.message);
+      setWantedCardIds((prev) => {
+        const n = new Set(prev);
+        n.delete(c.id);
+        return n;
+      });
+      toast.success("Removed from wishlist");
+    } else {
+      const { error } = await supabase.from("wanted_cards").insert({
+        user_id: u.user.id,
+        card_id: c.id,
+        game,
+      });
+      if (error) return toast.error(error.message);
+      setWantedCardIds((prev) => new Set(prev).add(c.id));
+      toast.success("Added to wishlist");
+    }
+  };
+
   const saveCard = async () => {
     if (!picked || !game) return;
     const { data: userData } = await supabase.auth.getUser();
