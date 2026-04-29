@@ -20,6 +20,43 @@ const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 
 const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function isRetryablePgError(error: any) {
+  if (!error) return false;
+  const code = String(error.code ?? "");
+  const msg = String(error.message ?? "").toLowerCase();
+  return (
+    code === "PGRST002" ||
+    code === "PGRST001" ||
+    code === "57P03" ||
+    code === "57P01" ||
+    code === "57P02" ||
+    code === "53300" ||
+    code.startsWith("08") ||
+    msg.includes("schema cache") ||
+    msg.includes("recovery mode") ||
+    msg.includes("starting up") ||
+    msg.includes("no connection") ||
+    msg.includes("connection closed") ||
+    msg.includes("retrying the connection")
+  );
+}
+
+// Retry transient PostgREST/Postgres errors (schema cache reload, recovery, etc.)
+async function withDbRetry<T extends { error: any }>(
+  op: () => PromiseLike<T>,
+  attempts = 5,
+): Promise<T> {
+  let last: T | null = null;
+  for (let i = 0; i < attempts; i++) {
+    last = await op();
+    if (!last.error || !isRetryablePgError(last.error) || i === attempts - 1) return last;
+    await wait(400 * 2 ** i);
+  }
+  return last as T;
+}
+
 async function searchPokemon(query: string, setId?: string) {
   // https://docs.pokemontcg.io/
   const parts: string[] = [];
