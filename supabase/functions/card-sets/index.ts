@@ -149,10 +149,27 @@ async function yugiohSets(): Promise<SetOut[]> {
   const res = await fetch("https://db.ygoprodeck.com/api/v7/cardsets.php");
   if (!res.ok) return [];
   const arr = await res.json();
-  return (arr || [])
+  // Some promotional codes (e.g. "LART" — The Lost Art Promotion) split a
+  // single set across dozens of sub-entries that all share the same set_code.
+  // Collapse them into one row per set_code, preferring the canonical
+  // "(series)" entry when it exists, otherwise the entry with the most cards.
+  const byCode = new Map<string, any>();
+  for (const s of arr || []) {
+    const code = String(s.set_code || s.set_name || "").toUpperCase();
+    if (!code) continue;
+    const existing = byCode.get(code);
+    if (!existing) { byCode.set(code, s); continue; }
+    const existingIsSeries = /\(series\)/i.test(String(existing.set_name || ""));
+    const newIsSeries = /\(series\)/i.test(String(s.set_name || ""));
+    if (newIsSeries && !existingIsSeries) { byCode.set(code, s); continue; }
+    if (existingIsSeries && !newIsSeries) continue;
+    if ((s.num_of_cards ?? 0) > (existing.num_of_cards ?? 0)) byCode.set(code, s);
+  }
+  return Array.from(byCode.values())
     .map((s: any) => ({
       id: String(s.set_code || s.set_name).toUpperCase(),
-      name: s.set_name,
+      // Strip the "(series)" suffix from the display name.
+      name: String(s.set_name).replace(/\s*\(series\)\s*$/i, "").trim(),
       series: null,
       releaseDate: s.tcg_date ?? null,
       total: s.num_of_cards ?? null,
