@@ -22,18 +22,26 @@ type Wanted = Tables<"wanted_cards"> & { card: Tables<"cards"> | null };
 
 export default function Wanted() {
   const { game } = useParams<{ game: Game }>();
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
   const [items, setItems] = useState<Wanted[]>([]);
   const [editing, setEditing] = useState<Wanted | null>(null);
   const [editQty, setEditQty] = useState(1);
 
   const load = async () => {
-    if (!game) return;
+    if (!game || loading) return;
+    if (!user) {
+      setItems([]);
+      return;
+    }
     const { data } = await supabase
-      .from("wanted_cards").select("*, card:cards(*)").eq("game", game).order("created_at", { ascending: false });
+      .from("wanted_cards")
+      .select("*, card:cards(*)")
+      .eq("game", game)
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
     setItems((data as any) ?? []);
   };
-  useEffect(() => { load(); }, [game]);
+  useEffect(() => { load(); }, [game, user?.id, loading]);
 
   const add = async (card: Tables<"cards">) => {
     if (!user) return toast.error("Not signed in");
