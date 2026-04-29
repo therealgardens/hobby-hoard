@@ -39,6 +39,49 @@ export default function Wanted() {
     load();
   };
 
+  const buildRows = () =>
+    items.map((w) => ({
+      quantity: w.quantity ?? 1,
+      code: w.card?.code ?? "",
+      name: w.card?.name ?? "",
+      set: w.card?.set_name ?? "",
+      rarity: w.rarity ?? w.card?.rarity ?? "",
+      language: w.language ?? "EN",
+    }));
+
+  const exportCsv = () => {
+    if (!items.length) return toast.error("Wishlist is empty");
+    const rows = buildRows();
+    const header = ["quantity", "code", "name", "set", "rarity", "language"];
+    const escape = (v: any) => {
+      const s = String(v ?? "");
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = [header.join(","), ...rows.map((r) => header.map((h) => escape((r as any)[h])).join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `wishlist-${game}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("CSV downloaded");
+  };
+
+  const copyText = async () => {
+    if (!items.length) return toast.error("Wishlist is empty");
+    const text = buildRows()
+      .map((r) => `${r.quantity}x ${r.code}${r.name ? ` — ${r.name}` : ""}`)
+      .join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("Copied to clipboard");
+    } catch {
+      toast.error("Could not copy");
+    }
+  };
+
+
   return (
     <div className="space-y-8">
       <div>
