@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { cardImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
-import { addWishlist } from "@/lib/wishlist";
+import { addOwnedCard, addWantedCard } from "@/lib/collection";
 import { withDbRetry } from "@/lib/supabaseRetry";
 
 type Binder = Tables<"binders">;
@@ -84,10 +84,10 @@ export default function BinderDetail() {
   };
 
   const place = async (card: Tables<"cards">) => {
-    if (pickingPos === null || !binderId) return;
+    if (pickingPos === null || !binderId || !game) return;
     const { data: u } = await supabase.auth.getUser();
     if (!u.user) return;
-    // upsert
+    // 1) write the binder slot (owned or wanted)
     const existing = slotMap.get(pickingPos);
     if (existing) {
       await supabase.from("binder_slots").update({ card_id: card.id, is_wanted: isWanted }).eq("id", existing.id);
@@ -96,12 +96,17 @@ export default function BinderDetail() {
         binder_id: binderId, user_id: u.user.id, position: pickingPos, card_id: card.id, is_wanted: isWanted,
       });
     }
-    if (isWanted) {
-      try {
-        await addWishlist(card, game!, { binder_id: binderId, quantity: 1 });
-      } catch (error) {
-        return toast.error(error instanceof Error ? error.message : "Could not add to wishlist");
+    // 2) follow the rules:
+    //    - wanted (gray): wishlist only — do NOT touch collection / master set
+    //    - owned: add to collection (which also makes the master set count it)
+    try {
+      if (isWanted) {
+        await addWantedCard(card, game);
+      } else {
+        await addOwnedCard(card, game);
       }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not sync card");
     }
     setPickingPos(null);
     load();
