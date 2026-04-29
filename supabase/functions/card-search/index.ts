@@ -385,7 +385,7 @@ Deno.serve(async (req) => {
           created_at: new Date().toISOString(),
         }));
       }
-    } else if (body.setId && body.game === "onepiece") {
+    } else if (body.setId && (body.game === "onepiece" || body.game === "yugioh")) {
       const id = body.setId.toUpperCase().replace(/-/g, "");
       const { data } = await admin
         .from("cards")
