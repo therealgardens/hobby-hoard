@@ -1,5 +1,4 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.105.1";
-import postgres from "https://deno.land/x/postgresjs@v3.4.5/mod.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -8,10 +7,7 @@ const corsHeaders = {
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
-const DB_URL = Deno.env.get("SUPABASE_DB_URL")!;
-
-const createSql = () => postgres(DB_URL, { max: 1, prepare: false, ssl: "require" });
-let sql: any = createSql();
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const games = new Set(["pokemon", "onepiece", "yugioh"]);
@@ -28,48 +24,41 @@ function requireUuid(value: unknown, name: string) {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function isRetryableDbError(error: unknown) {
+function isRetryableError(error: unknown) {
   const message = String((error as Error)?.message ?? error).toLowerCase();
   const code = String((error as { code?: string })?.code ?? "");
   return (
-    code === "57P02" ||
-    code === "57P03" || // cannot_connect_now / recovery mode
-    code === "57P01" || // admin_shutdown
-    code === "53300" || // too_many_connections
-    code === "08006" || // connection_failure
-    code === "08001" || // sqlclient_unable_to_establish_sqlconnection
-    code === "08000" ||
+    code === "57P02" || code === "57P03" || code === "57P01" ||
+    code === "53300" || code === "08006" || code === "08001" || code === "08000" ||
+    message.includes("schema cache") ||
     message.includes("recovery mode") ||
     message.includes("starting up") ||
-    message.includes("unexpectedeof") ||
     message.includes("unexpected eof") ||
-    message.includes("tls close_notify") ||
-    message.includes("peer closed connection") ||
-    message.includes("terminating connection") ||
-    message.includes("connection")
+    message.includes("fetch failed") ||
+    message.includes("terminating connection")
   );
 }
 
-async function withDb<T>(operation: (db: typeof sql) => Promise<T>, attempts = 6) {
-  let lastError: unknown;
+async function withRetry<T>(op: () => Promise<{ data: T | null; error: any }>, attempts = 5) {
+  let lastError: any;
   for (let i = 0; i < attempts; i += 1) {
     try {
-      return await operation(sql);
-    } catch (error) {
+      const { data, error } = await op();
+      if (!error) return data as T;
       lastError = error;
-      if (!isRetryableDbError(error) || i === attempts - 1) throw error;
-      const old = sql;
-      sql = createSql();
-      try {
-        await old.end({ timeout: 0 });
-      } catch (_) {}
-      await wait(Math.min(500 * 2 ** i, 4000));
+      if (!isRetryableError(error) || i === attempts - 1) throw error;
+    } catch (e) {
+      lastError = e;
+      if (!isRetryableError(e) || i === attempts - 1) throw e;
     }
+    await wait(Math.min(500 * 2 ** i, 4000));
   }
   throw lastError;
 }
 
-type DbRow = Record<string, any>;
+const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -89,31 +78,17 @@ Deno.serve(async (req) => {
 
     if (action === "list") {
       const game = requireGame(body.game);
-      const rows = await withDb<DbRow[]>((db) => db`
-        select
-          w.id, w.user_id, w.card_id, w.game, w.rarity, w.language, w.quantity, w.binder_id, w.created_at,
-          case when c.id is null then null else jsonb_build_object(
-            'id', c.id,
-            'game', c.game,
-            'external_id', c.external_id,
-            'code', c.code,
-            'name', c.name,
-            'set_id', c.set_id,
-            'set_name', c.set_name,
-            'number', c.number,
-            'rarity', c.rarity,
-            'image_small', c.image_small,
-            'image_large', c.image_large,
-            'pokedex_number', c.pokedex_number,
-            'data', c.data,
-            'created_at', c.created_at
-          ) end as card
-        from public.wanted_cards w
-        left join public.cards c on c.id = w.card_id
-        where w.user_id = ${userId}::uuid and w.game = ${game}
-        order by w.created_at desc
-      `);
-      return json({ items: rows });
+      const wanted = await withRetry(() =>
+        admin.from("wanted_cards").select("*").eq("user_id", userId).eq("game", game).order("created_at", { ascending: false }),
+      );
+      const cardIds = Array.from(new Set((wanted ?? []).map((r: any) => r.card_id).filter(Boolean))) as string[];
+      let cardsById = new Map<string, any>();
+      if (cardIds.length) {
+        const cards = await withRetry(() => admin.from("cards").select("*").in("id", cardIds));
+        cardsById = new Map((cards ?? []).map((c: any) => [c.id, c]));
+      }
+      const items = (wanted ?? []).map((r: any) => ({ ...r, card: cardsById.get(r.card_id) ?? null }));
+      return json({ items });
     }
 
     if (action === "status") {
@@ -121,12 +96,11 @@ Deno.serve(async (req) => {
         ? body.cardIds.filter((id: unknown) => typeof id === "string" && uuidRe.test(id))
         : [];
       if (!cardIds.length) return json({ cardIds: [] });
-      const rows = await withDb<DbRow[]>((db) => db`
-        select distinct card_id
-        from public.wanted_cards
-        where user_id = ${userId}::uuid and card_id in ${db(cardIds)}
-      `);
-      return json({ cardIds: rows.map((row) => row.card_id) });
+      const rows = await withRetry(() =>
+        admin.from("wanted_cards").select("card_id").eq("user_id", userId).in("card_id", cardIds),
+      );
+      const set = new Set((rows ?? []).map((r: any) => r.card_id));
+      return json({ cardIds: Array.from(set) });
     }
 
     if (action === "add") {
@@ -137,26 +111,29 @@ Deno.serve(async (req) => {
       const rarity = typeof body.rarity === "string" && body.rarity ? body.rarity : null;
       const language = typeof body.language === "string" && body.language ? body.language : "EN";
 
-      const rows = await withDb<DbRow[]>((db) => db`
-        insert into public.wanted_cards (user_id, card_id, game, rarity, language, quantity, binder_id)
-        select ${userId}::uuid, ${cardId}::uuid, ${game}, ${rarity}, ${language}, ${quantity}, ${binderId}::uuid
-        where not exists (
-          select 1 from public.wanted_cards
-          where user_id = ${userId}::uuid and card_id = ${cardId}::uuid and game = ${game}
-        )
-        returning *
-      `);
-      return json({ item: rows[0] ?? null });
+      const existing = await withRetry(() =>
+        admin.from("wanted_cards").select("id").eq("user_id", userId).eq("card_id", cardId).eq("game", game).limit(1),
+      );
+      if (existing && existing.length) return json({ item: null });
+
+      const inserted = await withRetry(() =>
+        admin.from("wanted_cards").insert({
+          user_id: userId, card_id: cardId, game, rarity, language, quantity, binder_id: binderId,
+        }).select().single(),
+      );
+      return json({ item: inserted ?? null });
     }
 
     if (action === "remove") {
       if (body.id) {
         const id = requireUuid(body.id, "wishlist id");
-        await withDb((db) => db`delete from public.wanted_cards where id = ${id}::uuid and user_id = ${userId}::uuid`);
+        await withRetry(() => admin.from("wanted_cards").delete().eq("id", id).eq("user_id", userId).select());
       } else {
         const game = requireGame(body.game);
         const cardId = requireUuid(body.cardId, "card id");
-        await withDb((db) => db`delete from public.wanted_cards where user_id = ${userId}::uuid and card_id = ${cardId}::uuid and game = ${game}`);
+        await withRetry(() =>
+          admin.from("wanted_cards").delete().eq("user_id", userId).eq("card_id", cardId).eq("game", game).select(),
+        );
       }
       return json({ ok: true });
     }
@@ -164,11 +141,9 @@ Deno.serve(async (req) => {
     if (action === "update") {
       const id = requireUuid(body.id, "wishlist id");
       const quantity = Math.max(1, Number.parseInt(String(body.quantity ?? 1), 10) || 1);
-      await withDb((db) => db`
-        update public.wanted_cards
-        set quantity = ${quantity}
-        where id = ${id}::uuid and user_id = ${userId}::uuid
-      `);
+      await withRetry(() =>
+        admin.from("wanted_cards").update({ quantity }).eq("id", id).eq("user_id", userId).select(),
+      );
       return json({ ok: true });
     }
 
@@ -176,7 +151,7 @@ Deno.serve(async (req) => {
   } catch (e) {
     console.error("wishlist error", e);
     const message = e instanceof Error ? e.message : "Wishlist failed";
-    return json({ error: isRetryableDbError(e) ? "Database is reconnecting. Please try again." : message }, 400);
+    return json({ error: isRetryableError(e) ? "Database is reconnecting. Please try again." : message }, 400);
   }
 });
 
