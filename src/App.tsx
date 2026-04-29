@@ -36,6 +36,7 @@ const App = () => (
             <Route path="/auth" element={<Auth />} />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
+            <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
             <Route path="/:game" element={<ProtectedRoute><GameLayout /></ProtectedRoute>}>
               <Route index element={<GameHome />} />
               <Route path="master" element={<MasterSets />} />
