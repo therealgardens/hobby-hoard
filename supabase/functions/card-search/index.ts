@@ -431,9 +431,9 @@ async function searchYugioh(query: string, setId?: string) {
           (p.code ?? "").toUpperCase().startsWith(wantSet + "-"),
         ));
       } else {
-        // Free-text search: only show one row per unique card (first printing)
-        // to avoid flooding results with every reprint of the same card.
-        if (exploded.length > 0) out.push(exploded[0]);
+        // Free-text search: return ALL printings of each matching card so
+        // users can find reprints across every expansion (e.g. PGL2, YGLD).
+        out.push(...exploded);
       }
     }
     return out;
