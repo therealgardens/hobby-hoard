@@ -194,27 +194,38 @@ export default function GameHome() {
     }
   };
 
-  const tiles = [
+  const tiles: Array<{ to: keyof TileCounts; icon: any; label: string; desc: string }> = [
     { to: "master", icon: Layers, label: "Master Sets", desc: "Browse every set and add cards" },
     { to: "binders", icon: BookOpen, label: "Binders", desc: "Build virtual binders" },
     { to: "wanted", icon: Heart, label: "Wanted", desc: "Wishlist & set fillers" },
     { to: "duplicates", icon: Copy, label: "Duplicates", desc: "See your extras" },
-    ...(game === "pokemon" ? [{ to: "pokedex", icon: ListChecks, label: "Pokédex", desc: "Track all species" }] : []),
-    ...(game === "onepiece" || game === "yugioh" ? [{ to: "decks", icon: Swords, label: "Decks", desc: "Import & track deck lists" }] : []),
+    ...(game === "pokemon" ? [{ to: "pokedex" as const, icon: ListChecks, label: "Pokédex", desc: "Track all species" }] : []),
+    ...(game === "onepiece" || game === "yugioh" ? [{ to: "decks" as const, icon: Swords, label: "Decks", desc: "Import & track deck lists" }] : []),
   ];
 
   return (
     <div className="space-y-8">
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {tiles.map((t) => (
-          <Link key={t.to} to={t.to}>
-            <Card className="p-6 bg-gradient-card hover:shadow-pop transition-all hover:-translate-y-1 cursor-pointer h-full">
-              <t.icon className="h-8 w-8 text-primary mb-3" />
-              <h3 className="text-2xl font-display">{t.label}</h3>
-              <p className="text-sm text-muted-foreground mt-1">{t.desc}</p>
-            </Card>
-          </Link>
-        ))}
+        {tiles.map((t) => {
+          const count = counts[t.to];
+          return (
+            <Link key={t.to} to={t.to}>
+              <Card className="p-6 bg-gradient-card hover:shadow-pop transition-all hover:-translate-y-1 cursor-pointer h-full relative">
+                {count !== undefined && (
+                  <span
+                    className="absolute top-3 right-3 inline-flex items-center justify-center min-w-[2.5rem] h-8 px-2 rounded-full bg-primary text-primary-foreground text-xs font-bold shadow-md"
+                    title={`${t.label} count`}
+                  >
+                    {count}
+                  </span>
+                )}
+                <t.icon className="h-8 w-8 text-primary mb-3" />
+                <h3 className="text-2xl font-display">{t.label}</h3>
+                <p className="text-sm text-muted-foreground mt-1">{t.desc}</p>
+              </Card>
+            </Link>
+          );
+        })}
       </div>
 
       <Card className="p-6 bg-gradient-card">
