@@ -49,6 +49,7 @@
     --gradient-hero: linear-gradient(135deg, hsl(354 78% 56%) 0%, hsl(33 100% 65%) 100%);
     --gradient-pokemon: linear-gradient(135deg, hsl(354 78% 56%), hsl(33 100% 60%));
     --gradient-onepiece: linear-gradient(135deg, hsl(215 60% 30%), hsl(354 78% 56%));
+    --gradient-yugioh: linear-gradient(135deg, hsl(280 60% 25%), hsl(38 95% 55%));
     --gradient-card: linear-gradient(180deg, hsl(0 0% 100%) 0%, hsl(38 60% 96%) 100%);
 
     --shadow-soft: 0 4px 14px -4px hsl(215 50% 18% / 0.12);

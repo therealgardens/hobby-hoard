@@ -49,7 +49,7 @@ export default function Index() {
         </div>
 
         <h3 className="text-4xl mt-20 mb-6 text-secondary font-display text-center">Pick your collection</h3>
-        <div className="grid md:grid-cols-2 gap-6 max-w-4xl mx-auto">
+        <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
           <Card
             onClick={() => pick("pokemon")}
             className="group cursor-pointer p-10 bg-gradient-pokemon text-primary-foreground border-0 shadow-card hover:shadow-pop transition-all hover:-translate-y-1"
@@ -64,6 +64,14 @@ export default function Index() {
           >
             <div className="text-7xl mb-3">🏴‍☠️</div>
             <h3 className="text-5xl font-display">One Piece</h3>
+            <p className="opacity-90 mt-2">Master sets, binders, deck importer & wishlist.</p>
+          </Card>
+          <Card
+            onClick={() => pick("yugioh")}
+            className="group cursor-pointer p-10 bg-gradient-yugioh text-primary-foreground border-0 shadow-card hover:shadow-pop transition-all hover:-translate-y-1"
+          >
+            <div className="text-7xl mb-3">🎴</div>
+            <h3 className="text-5xl font-display">Yu-Gi-Oh!</h3>
             <p className="opacity-90 mt-2">Master sets, binders, deck importer & wishlist.</p>
           </Card>
         </div>
