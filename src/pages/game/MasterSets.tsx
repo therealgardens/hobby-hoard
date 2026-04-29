@@ -604,6 +604,14 @@ function SetView({
 }) {
   const [cards, setCards] = useState<CardRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<"grid" | "list">(() => {
+    if (typeof window === "undefined") return "grid";
+    return (localStorage.getItem("masterset.view") as "grid" | "list") ?? "grid";
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem("masterset.view", view); } catch (_) {}
+  }, [view]);
 
   useEffect(() => {
     setLoading(true);
@@ -650,6 +658,28 @@ function SetView({
             {set.id}{set.releaseDate ? ` · ${set.releaseDate}` : ""}
           </p>
         </div>
+        <div className="flex items-center gap-1 rounded-md border bg-muted p-0.5">
+          <Button
+            type="button"
+            size="sm"
+            variant={view === "grid" ? "default" : "ghost"}
+            className="h-7 w-7 p-0"
+            onClick={() => setView("grid")}
+            title="Full image view"
+          >
+            <LayoutGrid className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={view === "list" ? "default" : "ghost"}
+            className="h-7 w-7 p-0"
+            onClick={() => setView("list")}
+            title="List view"
+          >
+            <List className="h-4 w-4" />
+          </Button>
+        </div>
         <Badge variant="default" className="text-sm">
           {ownedCount}/{cards.length || set.total || "?"}
         </Badge>
@@ -661,7 +691,7 @@ function SetView({
         <p className="text-muted-foreground text-center py-12">
           No cards available for this expansion yet.
         </p>
-      ) : (
+      ) : view === "grid" ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           {cards.map((c) => {
             const owned = ownedCardIds.has(c.id);
@@ -713,6 +743,77 @@ function SetView({
                   <p className="text-xs text-muted-foreground truncate">
                     {c.code}{c.rarity ? ` · ${c.rarity}` : ""}
                   </p>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {cards.map((c) => {
+            const owned = ownedCardIds.has(c.id);
+            const wanted = wantedCardIds.has(c.id);
+            const lang = ownedLangByCard.get(c.id);
+            return (
+              <Card
+                key={c.id}
+                className={`flex items-center gap-3 px-3 py-2 bg-gradient-card cursor-pointer hover:shadow-card transition-shadow ${owned ? "" : "opacity-70"}`}
+                onClick={() => onPickCard(c)}
+              >
+                <div className="font-mono text-xs text-muted-foreground w-20 shrink-0 truncate">
+                  {c.code ?? "—"}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate">{c.name}</p>
+                  {c.rarity && <p className="text-xs text-muted-foreground truncate">{c.rarity}</p>}
+                </div>
+                {owned && lang && (
+                  <Badge variant="secondary" className="text-xs shrink-0">
+                    {LANG_FLAG[lang] ?? lang}
+                  </Badge>
+                )}
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 w-8 p-0"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleWanted(c);
+                    }}
+                    title={wanted ? "Remove from wishlist" : "Add to wishlist"}
+                  >
+                    <Heart className={`h-4 w-4 ${wanted ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 w-8 p-0"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onQuickAdd(c);
+                    }}
+                    title="Add one to collection"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                  {owned && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 w-8 p-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onPickCard(c);
+                      }}
+                      title="Adjust collection"
+                    >
+                      <Minus className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
               </Card>
             );
