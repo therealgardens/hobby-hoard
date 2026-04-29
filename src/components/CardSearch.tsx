@@ -96,11 +96,10 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
   };
 
   const addToCollection = async (c: CardRow) => {
-    const { data: u } = await supabase.auth.getUser();
-    if (!u.user) return toast.error("Not signed in");
+    if (!user) return toast.error("Not signed in");
     const quantity = Math.max(1, qty[c.id] ?? 1);
     const { error } = await supabase.from("collection_entries").insert({
-      user_id: u.user.id,
+      user_id: user.id,
       card_id: c.id,
       game,
       rarity: c.rarity ?? null,
@@ -113,13 +112,12 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
   };
 
   const toggleWanted = async (c: CardRow) => {
-    const { data: u } = await supabase.auth.getUser();
-    if (!u.user) return toast.error("Not signed in");
+    if (!user) return toast.error("Not signed in");
     if (wantedIds.has(c.id)) {
       const { error } = await supabase
         .from("wanted_cards")
         .delete()
-        .eq("user_id", u.user.id)
+        .eq("user_id", user.id)
         .eq("card_id", c.id);
       if (error) return toast.error(error.message);
       setWantedIds((prev) => {
@@ -130,7 +128,7 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
       toast.success("Removed from wishlist");
     } else {
       const { error } = await supabase.from("wanted_cards").insert({
-        user_id: u.user.id,
+        user_id: user.id,
         card_id: c.id,
         game,
       });
