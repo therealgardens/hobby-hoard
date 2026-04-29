@@ -148,7 +148,7 @@ export default function GameHome() {
     }
   };
 
-  useEffect(() => { load(); }, [game]);
+  useEffect(() => { load(); }, [game, user?.id]);
 
   const tiles = [
     { to: "master", icon: Layers, label: "Master Sets", desc: "Browse every set and add cards" },
