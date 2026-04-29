@@ -17,62 +17,34 @@ export default function GameHome() {
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
-    if (!game) return;
-    const { data: u } = await supabase.auth.getUser();
-    if (!u.user) return;
-    const userId = u.user.id;
+    if (!game || !user) return;
+    const userId = user.id;
 
-    // Unique cards: exact count via head request (not bound by 1000-row limit)
-    const uniquePromise = supabase
-      .from("collection_entries")
-      .select("*", { count: "exact", head: true })
-      .eq("user_id", userId)
-      .eq("game", game);
-
-    // Total copies: page through quantities to avoid the 1000-row cap
-    const fetchTotal = async () => {
-      const pageSize = 1000;
-      let from = 0;
-      let total = 0;
-      // Loop until we get a short page
-      // (collection_entries table is small per user, so this is cheap)
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { data, error } = await supabase
-          .from("collection_entries")
-          .select("quantity")
-          .eq("user_id", userId)
-          .eq("game", game)
-          .range(from, from + pageSize - 1);
-        if (error || !data) break;
-        for (const e of data) total += e.quantity ?? 0;
-        if (data.length < pageSize) break;
-        from += pageSize;
-      }
-      return total;
-    };
-
-    const bindersPromise = supabase
-      .from("binders")
-      .select("*", { count: "exact", head: true })
-      .eq("user_id", userId)
-      .eq("game", game);
-
-    const wantedPromise = supabase
-      .from("wanted_cards")
-      .select("*", { count: "exact", head: true })
-      .eq("user_id", userId)
-      .eq("game", game);
-
-    const [uniqueRes, total, bindersRes, wantedRes] = await Promise.all([
-      uniquePromise,
-      fetchTotal(),
-      bindersPromise,
-      wantedPromise,
+    const [coll, bindersRes, wantedRes] = await Promise.all([
+      supabase
+        .from("collection_entries")
+        .select("quantity")
+        .eq("user_id", userId)
+        .eq("game", game)
+        .limit(10000),
+      supabase
+        .from("binders")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("game", game),
+      supabase
+        .from("wanted_cards")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", userId)
+        .eq("game", game),
     ]);
 
+    const rows = coll.data ?? [];
+    const unique = rows.length;
+    const total = rows.reduce((s, r) => s + (r.quantity ?? 0), 0);
+
     setStats({
-      unique: uniqueRes.count ?? 0,
+      unique,
       total,
       binders: bindersRes.count ?? 0,
       wanted: wantedRes.count ?? 0,
