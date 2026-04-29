@@ -408,7 +408,6 @@ async function searchYugioh(query: string, setId?: string) {
         matches.find((s: any) => /\(series\)/i.test(String(s.set_name || ""))) ??
         matches.sort((a: any, b: any) => (b.num_of_cards ?? 0) - (a.num_of_cards ?? 0))[0];
       if (preferred?.set_name) params.set("cardset", preferred.set_name);
-      }
     } catch (_) {}
     if (!params.has("cardset")) params.set("cardset", effectiveSetId);
     if (q) params.set("fname", q);
