@@ -31,7 +31,10 @@ export default function Auth() {
     const parsed = schema.safeParse({ email, password });
     if (!parsed.success) return toast.error(parsed.error.errors[0].message);
     const u = validateUsername(username);
-    if (!u.ok) return toast.error(u.error);
+    if (!u.ok) {
+      toast.error(u.error);
+      return;
+    }
 
     // Pre-check uniqueness
     const { data: taken } = await supabase
