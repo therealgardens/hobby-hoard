@@ -213,11 +213,24 @@ export default function GameHome() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function StatRow({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: number;
+}) {
   return (
-    <Card className="p-5 bg-gradient-card shadow-soft">
-      <p className="text-xs uppercase tracking-wider text-muted-foreground">{label}</p>
-      <p className="text-4xl font-display text-primary mt-1">{value}</p>
-    </Card>
+    <div className="flex items-center gap-3 px-4 py-3">
+      <div className="rounded-full bg-primary/10 text-primary p-2 shrink-0">
+        <Icon className="h-5 w-5" />
+      </div>
+      <div className="min-w-0">
+        <p className="text-xs uppercase tracking-wider text-muted-foreground truncate">{label}</p>
+        <p className="text-3xl font-display text-foreground leading-tight">{value}</p>
+      </div>
+    </div>
   );
 }
