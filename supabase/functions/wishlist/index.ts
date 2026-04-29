@@ -61,6 +61,8 @@ async function withDb<T>(operation: (db: typeof sql) => Promise<T>, attempts = 4
   throw lastError;
 }
 
+type DbRow = Record<string, any>;
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -79,7 +81,7 @@ Deno.serve(async (req) => {
 
     if (action === "list") {
       const game = requireGame(body.game);
-      const rows = await withDb((db) => db`
+      const rows = await withDb<DbRow[]>((db) => db`
         select
           w.id, w.user_id, w.card_id, w.game, w.rarity, w.language, w.quantity, w.binder_id, w.created_at,
           case when c.id is null then null else jsonb_build_object(
@@ -111,7 +113,7 @@ Deno.serve(async (req) => {
         ? body.cardIds.filter((id: unknown) => typeof id === "string" && uuidRe.test(id))
         : [];
       if (!cardIds.length) return json({ cardIds: [] });
-      const rows = await withDb((db) => db`
+      const rows = await withDb<DbRow[]>((db) => db`
         select distinct card_id
         from public.wanted_cards
         where user_id = ${userId}::uuid and card_id in ${db(cardIds)}
@@ -127,7 +129,7 @@ Deno.serve(async (req) => {
       const rarity = typeof body.rarity === "string" && body.rarity ? body.rarity : null;
       const language = typeof body.language === "string" && body.language ? body.language : "EN";
 
-      const rows = await withDb((db) => db`
+      const rows = await withDb<DbRow[]>((db) => db`
         insert into public.wanted_cards (user_id, card_id, game, rarity, language, quantity, binder_id)
         select ${userId}::uuid, ${cardId}::uuid, ${game}, ${rarity}, ${language}, ${quantity}, ${binderId}::uuid
         where not exists (
