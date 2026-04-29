@@ -288,6 +288,8 @@ export default function MasterSets() {
               placeholder={
                 game === "onepiece"
                   ? "Search by name or code (e.g. Azure Sea Seven, OP14, ST21)"
+                  : game === "yugioh"
+                  ? "Search by name or code (e.g. Legend of Blue Eyes, LOB, MRD)"
                   : "Search by name or code (e.g. Crown Zenith, sv1, swsh12)"
               }
               className="pl-9"
