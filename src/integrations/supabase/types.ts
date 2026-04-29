@@ -480,7 +480,14 @@ export type Database = {
     }
     Functions: {
       are_friends: { Args: { _a: string; _b: string }; Returns: boolean }
+      cancel_trade: { Args: { _message_id: string }; Returns: undefined }
       is_blocked: { Args: { _a: string; _b: string }; Returns: boolean }
+      mark_message_read: { Args: { _message_id: string }; Returns: undefined }
+      mark_thread_read: { Args: { _friend_id: string }; Returns: undefined }
+      respond_to_trade: {
+        Args: { _message_id: string; _status: string }
+        Returns: undefined
+      }
       shares_with: {
         Args: {
           _friend: string
