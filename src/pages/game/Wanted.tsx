@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,7 +9,7 @@ import { CardSearch } from "@/components/CardSearch";
 import { toast } from "sonner";
 import { cardImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
-import { withDbRetry } from "@/lib/supabaseRetry";
+import { addWishlist, listWishlist, removeWishlistById, updateWishlistQuantity, type WishlistItem } from "@/lib/wishlist";
 import {
   Dialog,
   DialogContent,
@@ -19,7 +18,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 
-type Wanted = Tables<"wanted_cards"> & { card: Tables<"cards"> | null };
+type Wanted = WishlistItem;
 
 export default function Wanted() {
   const { game } = useParams<{ game: Game }>();
@@ -34,42 +33,32 @@ export default function Wanted() {
       setItems([]);
       return;
     }
-    const { data: wantedRows, error } = await withDbRetry(() =>
-      supabase
-        .from("wanted_cards")
-        .select("*")
-        .eq("game", game)
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false }),
-    );
-    if (error) return toast.error(error.message);
-    const rows = (wantedRows ?? []) as Tables<"wanted_cards">[];
-    const cardIds = [...new Set(rows.map((row) => row.card_id))];
-    const { data: cards, error: cardsError } = cardIds.length
-      ? await withDbRetry(() => supabase.from("cards").select("*").in("id", cardIds))
-      : { data: [], error: null };
-    if (cardsError) return toast.error(cardsError.message);
-    const cardsById = new Map(((cards ?? []) as Tables<"cards">[]).map((card) => [card.id, card]));
-    setItems(rows.map((row) => ({ ...row, card: cardsById.get(row.card_id) ?? null })));
+    try {
+      setItems(await listWishlist(game));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not load wishlist");
+    }
   };
   useEffect(() => { load(); }, [game, user?.id, loading]);
 
   const add = async (card: Tables<"cards">) => {
     if (!user) return toast.error("Not signed in");
     if (!game) return;
-    const { error } = await withDbRetry(() =>
-      supabase.from("wanted_cards").insert({
-        user_id: user.id, card_id: card.id, game,
-      }),
-    );
-    if (error) return toast.error(error.message);
+    try {
+      await addWishlist(card, game);
+    } catch (error) {
+      return toast.error(error instanceof Error ? error.message : "Could not add to wishlist");
+    }
     toast.success("Added to wishlist");
     load();
   };
 
   const remove = async (id: string) => {
-    const { error } = await withDbRetry(() => supabase.from("wanted_cards").delete().eq("id", id));
-    if (error) return toast.error(error.message);
+    try {
+      await removeWishlistById(id);
+    } catch (error) {
+      return toast.error(error instanceof Error ? error.message : "Could not remove from wishlist");
+    }
     setEditing(null);
     load();
   };
@@ -82,13 +71,11 @@ export default function Wanted() {
   const saveQty = async () => {
     if (!editing) return;
     const q = Math.max(1, editQty);
-    const { error } = await withDbRetry(() =>
-      supabase
-        .from("wanted_cards")
-        .update({ quantity: q })
-        .eq("id", editing.id),
-    );
-    if (error) return toast.error(error.message);
+    try {
+      await updateWishlistQuantity(editing.id, q);
+    } catch (error) {
+      return toast.error(error instanceof Error ? error.message : "Could not update wishlist");
+    }
     toast.success("Updated");
     setEditing(null);
     load();

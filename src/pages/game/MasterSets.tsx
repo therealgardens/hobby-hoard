@@ -14,7 +14,7 @@ import { ArrowLeft, Plus, Search, Star, Trash2, Heart } from "lucide-react";
 import { toast } from "sonner";
 import { cardImageCandidates, proxiedImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
-import { withDbRetry } from "@/lib/supabaseRetry";
+import { addWishlist, listWishlist, removeWishlistByCard } from "@/lib/wishlist";
 
 type CardRow = Tables<"cards">;
 
@@ -123,14 +123,9 @@ export default function MasterSets() {
         setOwnedCardIds(ids);
         setOwnedLangByCard(langs);
 
-        const { data: wanted } = await withDbRetry(() =>
-          supabase
-            .from("wanted_cards")
-            .select("card_id")
-            .eq("user_id", uid)
-            .eq("game", game),
-        );
-        setWantedCardIds(new Set((wanted ?? []).map((w) => w.card_id)));
+        try {
+          setWantedCardIds(new Set((await listWishlist(game)).map((item) => item.card_id)));
+        } catch (_) {}
       }
       setLoadingSets(false);
     })();
@@ -192,14 +187,11 @@ export default function MasterSets() {
     const { data: u } = await supabase.auth.getUser();
     if (!u.user) return;
     if (wantedCardIds.has(c.id)) {
-      const { error } = await withDbRetry(() =>
-        supabase
-          .from("wanted_cards")
-          .delete()
-          .eq("user_id", u.user.id)
-          .eq("card_id", c.id),
-      );
-      if (error) return toast.error(error.message);
+      try {
+        await removeWishlistByCard(c.id, game);
+      } catch (error) {
+        return toast.error(error instanceof Error ? error.message : "Could not remove from wishlist");
+      }
       setWantedCardIds((prev) => {
         const n = new Set(prev);
         n.delete(c.id);
@@ -207,14 +199,11 @@ export default function MasterSets() {
       });
       toast.success("Removed from wishlist");
     } else {
-      const { error } = await withDbRetry(() =>
-        supabase.from("wanted_cards").insert({
-          user_id: u.user.id,
-          card_id: c.id,
-          game,
-        }),
-      );
-      if (error) return toast.error(error.message);
+      try {
+        await addWishlist(c, game);
+      } catch (error) {
+        return toast.error(error instanceof Error ? error.message : "Could not add to wishlist");
+      }
       setWantedCardIds((prev) => new Set(prev).add(c.id));
       toast.success("Added to wishlist");
     }

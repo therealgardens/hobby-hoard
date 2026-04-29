@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { cardImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
-import { withDbRetry } from "@/lib/supabaseRetry";
+import { addWishlist } from "@/lib/wishlist";
 
 type Binder = Tables<"binders">;
 type Slot = Tables<"binder_slots"> & { card: Tables<"cards"> | null };
@@ -81,12 +81,11 @@ export default function BinderDetail() {
       });
     }
     if (isWanted) {
-      const { error } = await withDbRetry(() =>
-        supabase.from("wanted_cards").insert({
-          user_id: u.user.id, card_id: card.id, game: game!, binder_id: binderId, quantity: 1,
-        }),
-      );
-      if (error) return toast.error(error.message);
+      try {
+        await addWishlist(card, game!, { binder_id: binderId, quantity: 1 });
+      } catch (error) {
+        return toast.error(error instanceof Error ? error.message : "Could not add to wishlist");
+      }
     }
     setPickingPos(null);
     load();
