@@ -63,7 +63,7 @@ async function withDb<T>(operation: (db: typeof sql) => Promise<T>, attempts = 6
       try {
         await old.end({ timeout: 0 });
       } catch (_) {}
-      await wait(350 * 2 ** i);
+      await wait(Math.min(500 * 2 ** i, 4000));
     }
   }
   throw lastError;
