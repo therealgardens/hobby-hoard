@@ -128,23 +128,6 @@ export default function GameHome() {
 
   useEffect(() => { load(); }, [game]);
 
-  useEffect(() => {
-    if (!game) return;
-    (async () => {
-      const { data: entries } = await supabase
-        .from("collection_entries")
-        .select("quantity")
-        .eq("game", game);
-      const unique = entries?.length ?? 0;
-      const total = entries?.reduce((s, e) => s + (e.quantity ?? 0), 0) ?? 0;
-      const { count: binders } = await supabase
-        .from("binders").select("*", { count: "exact", head: true }).eq("game", game);
-      const { count: wanted } = await supabase
-        .from("wanted_cards").select("*", { count: "exact", head: true }).eq("game", game);
-      setStats({ unique, total, binders: binders ?? 0, wanted: wanted ?? 0 });
-    })();
-  }, [game]);
-
   const tiles = [
     { to: "master", icon: Layers, label: "Master Sets", desc: "Browse every set and add cards" },
     { to: "binders", icon: BookOpen, label: "Binders", desc: "Build virtual binders" },
@@ -174,6 +157,28 @@ export default function GameHome() {
           </Link>
         ))}
       </div>
+
+      <Card className="p-6 bg-gradient-card">
+        <h3 className="text-2xl font-display mb-1">Import / Export collection</h3>
+        <p className="text-sm text-muted-foreground mb-4">
+          Only cards belonging to this game ({game}) will be imported or exported.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={exportGame} disabled={busy}>
+            <Download className="h-4 w-4 mr-2" /> Export {game}
+          </Button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="application/json"
+            className="hidden"
+            onChange={(e) => e.target.files?.[0] && importGame(e.target.files[0])}
+          />
+          <Button variant="outline" onClick={() => fileRef.current?.click()} disabled={busy}>
+            <Upload className="h-4 w-4 mr-2" /> Import {game}
+          </Button>
+        </div>
+      </Card>
     </div>
   );
 }
