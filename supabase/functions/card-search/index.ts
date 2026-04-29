@@ -422,9 +422,9 @@ Deno.serve(async (req) => {
     });
 
     if (deduped.length) {
-      const { error } = await admin
-        .from("cards")
-        .upsert(deduped, { onConflict: "game,external_id" });
+      const { error } = await withDbRetry(() =>
+        admin.from("cards").upsert(deduped, { onConflict: "game,external_id" }),
+      );
       if (error) console.error("upsert error", error);
     }
 
@@ -436,11 +436,13 @@ Deno.serve(async (req) => {
       const BATCH = 60;
       for (let i = 0; i < ids.length; i += BATCH) {
         const slice = ids.slice(i, i + BATCH);
-        const { data, error } = await admin
-          .from("cards")
-          .select("*")
-          .eq("game", body.game)
-          .in("external_id", slice);
+        const { data, error } = await withDbRetry(() =>
+          admin
+            .from("cards")
+            .select("*")
+            .eq("game", body.game)
+            .in("external_id", slice),
+        );
         if (error) {
           console.error("cards lookup error", error);
           continue;
