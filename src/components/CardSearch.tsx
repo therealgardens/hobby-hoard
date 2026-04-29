@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { cardImageCandidates, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 import { withDbRetry } from "@/lib/supabaseRetry";
+import { addWishlist, removeWishlistByCard, wishlistStatus } from "@/lib/wishlist";
 
 type CardRow = Tables<"cards">;
 
@@ -20,7 +21,7 @@ interface Props {
 }
 
 export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<CardRow[]>([]);
@@ -36,12 +37,12 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
     const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const ids = cards.map((c) => c.id).filter((id) => uuidRe.test(id));
     if (ids.length === 0) return;
-    const [{ data: owned, error: ownedError }, { data: wanted, error: wantedError }] = await Promise.all([
+    const [{ data: owned, error: ownedError }, wanted] = await Promise.all([
       withDbRetry(() => supabase.from("collection_entries").select("card_id").eq("user_id", user.id).in("card_id", ids)),
-      withDbRetry(() => supabase.from("wanted_cards").select("card_id").eq("user_id", user.id).in("card_id", ids)),
+      wishlistStatus(ids).catch(() => null),
     ]);
     if (!ownedError) setOwnedIds(new Set((owned ?? []).map((r: any) => r.card_id)));
-    if (!wantedError) setWantedIds(new Set((wanted ?? []).map((r: any) => r.card_id)));
+    if (wanted) setWantedIds(wanted);
   };
 
   const runSearch = async (term: string) => {
@@ -113,16 +114,14 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
   };
 
   const toggleWanted = async (c: CardRow) => {
+    if (authLoading) return toast.info("Signing you in…");
     if (!user) return toast.error("Not signed in");
     if (wantedIds.has(c.id)) {
-      const { error } = await withDbRetry(() =>
-        supabase
-          .from("wanted_cards")
-          .delete()
-          .eq("user_id", user.id)
-          .eq("card_id", c.id),
-      );
-      if (error) return toast.error(error.message);
+      try {
+        await removeWishlistByCard(c.id, game);
+      } catch (error) {
+        return toast.error(error instanceof Error ? error.message : "Could not remove from wishlist");
+      }
       setWantedIds((prev) => {
         const n = new Set(prev);
         n.delete(c.id);
@@ -130,14 +129,11 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
       });
       toast.success("Removed from wishlist");
     } else {
-      const { error } = await withDbRetry(() =>
-        supabase.from("wanted_cards").insert({
-          user_id: user.id,
-          card_id: c.id,
-          game,
-        }),
-      );
-      if (error) return toast.error(error.message);
+      try {
+        await addWishlist(c, game);
+      } catch (error) {
+        return toast.error(error instanceof Error ? error.message : "Could not add to wishlist");
+      }
       setWantedIds((prev) => new Set(prev).add(c.id));
       toast.success("Added to wishlist");
     }
