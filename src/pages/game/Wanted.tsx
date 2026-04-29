@@ -68,7 +68,8 @@ export default function Wanted() {
   };
 
   const remove = async (id: string) => {
-    await supabase.from("wanted_cards").delete().eq("id", id);
+    const { error } = await withDbRetry(() => supabase.from("wanted_cards").delete().eq("id", id));
+    if (error) return toast.error(error.message);
     setEditing(null);
     load();
   };
@@ -81,10 +82,12 @@ export default function Wanted() {
   const saveQty = async () => {
     if (!editing) return;
     const q = Math.max(1, editQty);
-    const { error } = await supabase
-      .from("wanted_cards")
-      .update({ quantity: q })
-      .eq("id", editing.id);
+    const { error } = await withDbRetry(() =>
+      supabase
+        .from("wanted_cards")
+        .update({ quantity: q })
+        .eq("id", editing.id),
+    );
     if (error) return toast.error(error.message);
     toast.success("Updated");
     setEditing(null);
