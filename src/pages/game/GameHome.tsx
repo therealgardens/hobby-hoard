@@ -39,16 +39,22 @@ export default function GameHome() {
         .eq("game", game),
     ]);
 
+    if (coll.error) console.error("[GameHome] collection error", coll.error);
+    if (bindersRes.error) console.error("[GameHome] binders error", bindersRes.error);
+    if (wantedRes.error) console.error("[GameHome] wanted error", wantedRes.error);
+
     const rows = coll.data ?? [];
     const unique = rows.length;
     const total = rows.reduce((s, r) => s + (r.quantity ?? 0), 0);
 
-    setStats({
+    const next = {
       unique,
       total,
       binders: bindersRes.count ?? 0,
       wanted: wantedRes.count ?? 0,
-    });
+    };
+    console.log("[GameHome] stats loaded", { game, userId, ...next });
+    setStats(next);
   };
 
   const exportGame = async () => {
