@@ -144,18 +144,41 @@ async function onePieceSets(): Promise<SetOut[]> {
   return Array.from(map.values()).sort((a, b) => b.id.localeCompare(a.id));
 }
 
+async function yugiohSets(): Promise<SetOut[]> {
+  // YGOPRODeck — free, no API key required.
+  const res = await fetch("https://db.ygoprodeck.com/api/v7/cardsets.php");
+  if (!res.ok) return [];
+  const arr = await res.json();
+  return (arr || [])
+    .map((s: any) => ({
+      id: String(s.set_code || s.set_name).toUpperCase(),
+      name: s.set_name,
+      series: null,
+      releaseDate: s.tcg_date ?? null,
+      total: s.num_of_cards ?? null,
+      logo: s.set_image ?? null,
+    }))
+    .filter((s: SetOut) => s.id && s.name)
+    .sort((a: SetOut, b: SetOut) =>
+      (b.releaseDate ?? "").localeCompare(a.releaseDate ?? ""),
+    );
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
     const url = new URL(req.url);
     const game = url.searchParams.get("game");
-    if (game !== "pokemon" && game !== "onepiece") {
+    if (game !== "pokemon" && game !== "onepiece" && game !== "yugioh") {
       return new Response(JSON.stringify({ error: "invalid game" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    const sets = game === "pokemon" ? await pokemonSets() : await onePieceSets();
+    const sets =
+      game === "pokemon" ? await pokemonSets()
+      : game === "onepiece" ? await onePieceSets()
+      : await yugiohSets();
     return new Response(JSON.stringify({ sets }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
