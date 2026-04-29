@@ -126,18 +126,7 @@ export default function GameHome() {
     }
   };
 
-  useEffect(() => {
-    load();
-    const onFocus = () => load();
-    const onVisibility = () => { if (document.visibilityState === "visible") load(); };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game]);
+  useEffect(() => { load(); }, [game]);
 
   const tiles = [
     { to: "master", icon: Layers, label: "Master Sets", desc: "Browse every set and add cards" },

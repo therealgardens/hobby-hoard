@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.105.1";
+import postgres from "https://deno.land/x/postgresjs@v3.4.5/mod.js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -7,6 +8,9 @@ const corsHeaders = {
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+const DB_URL = Deno.env.get("SUPABASE_DB_URL")!;
+
+const createSql = () => postgres(DB_URL, { max: 1, prepare: false, ssl: "require", idle_timeout: 5, max_lifetime: 30 });
 
 const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const games = new Set(["pokemon", "onepiece", "yugioh"]);
@@ -23,7 +27,7 @@ function requireUuid(value: unknown, name: string) {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function isRetryableBackendError(error: unknown) {
+function isRetryableDbError(error: unknown) {
   const message = String((error as Error)?.message ?? error).toLowerCase();
   const code = String((error as { code?: string })?.code ?? "");
   return (
@@ -34,18 +38,10 @@ function isRetryableBackendError(error: unknown) {
     code === "08006" ||
     code === "08001" ||
     code === "08000" ||
-    code === "PGRST001" ||
-    code === "PGRST002" ||
     message.includes("recovery mode") ||
     message.includes("starting up") ||
-    message.includes("schema cache") ||
-    message.includes("database client error") ||
-    message.includes("no connection to the server") ||
-    message.includes("retrying") ||
     message.includes("unexpectedeof") ||
     message.includes("unexpected eof") ||
-    message.includes("unexpected end of file") ||
-    message.includes("failed to fetch") ||
     message.includes("tls close_notify") ||
     message.includes("peer closed connection") ||
     message.includes("terminating connection") ||
@@ -53,19 +49,28 @@ function isRetryableBackendError(error: unknown) {
   );
 }
 
-async function withRetry<T>(operation: () => Promise<T>, attempts = 4): Promise<T> {
+// Open a fresh connection per request and close it on the way out. Long-lived
+// shared connections get killed by the platform between invocations, leaving
+// a stale TLS socket that fails with "unexpected end of file" on next use.
+async function withDb<T>(operation: (db: ReturnType<typeof createSql>) => Promise<T>, attempts = 4): Promise<T> {
   let lastError: unknown;
   for (let i = 0; i < attempts; i += 1) {
+    const db = createSql();
     try {
-      return await operation();
+      const result = await operation(db);
+      try { await db.end({ timeout: 0 }); } catch (_) {}
+      return result;
     } catch (error) {
       lastError = error;
-      if (!isRetryableBackendError(error) || i === attempts - 1) throw error;
+      try { await db.end({ timeout: 0 }); } catch (_) {}
+      if (!isRetryableDbError(error) || i === attempts - 1) throw error;
       await wait(Math.min(400 * 2 ** i, 3000));
     }
   }
   throw lastError;
 }
+
+type DbRow = Record<string, any>;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -80,26 +85,35 @@ Deno.serve(async (req) => {
     const userId = claimsData?.claims?.sub;
     if (claimsError || !userId || !uuidRe.test(userId)) return json({ error: "Not signed in" }, 401);
 
-    const dbClient = createClient(SUPABASE_URL, ANON_KEY, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-
     const body = await req.json().catch(() => ({}));
     const action = String(body.action ?? "list");
 
     if (action === "list") {
       const game = requireGame(body.game);
-      const rows = await withRetry(async () => {
-        const { data, error } = await dbClient
-          .from("wanted_cards")
-          .select("id,user_id,card_id,game,rarity,language,quantity,binder_id,created_at,card:cards(id,game,external_id,code,name,set_id,set_name,number,rarity,image_small,image_large,pokedex_number,data,created_at)")
-          .eq("user_id", userId)
-          .eq("game", game)
-          .order("created_at", { ascending: false });
-        if (error) throw error;
-        return data ?? [];
-      });
+      const rows = await withDb<DbRow[]>((db) => db`
+        select
+          w.id, w.user_id, w.card_id, w.game, w.rarity, w.language, w.quantity, w.binder_id, w.created_at,
+          case when c.id is null then null else jsonb_build_object(
+            'id', c.id,
+            'game', c.game,
+            'external_id', c.external_id,
+            'code', c.code,
+            'name', c.name,
+            'set_id', c.set_id,
+            'set_name', c.set_name,
+            'number', c.number,
+            'rarity', c.rarity,
+            'image_small', c.image_small,
+            'image_large', c.image_large,
+            'pokedex_number', c.pokedex_number,
+            'data', c.data,
+            'created_at', c.created_at
+          ) end as card
+        from public.wanted_cards w
+        left join public.cards c on c.id = w.card_id
+        where w.user_id = ${userId}::uuid and w.game = ${game}
+        order by w.created_at desc
+      `);
       return json({ items: rows });
     }
 
@@ -108,16 +122,12 @@ Deno.serve(async (req) => {
         ? body.cardIds.filter((id: unknown) => typeof id === "string" && uuidRe.test(id))
         : [];
       if (!cardIds.length) return json({ cardIds: [] });
-      const wantedIds = await withRetry(async () => {
-        const { data, error } = await dbClient
-          .from("wanted_cards")
-          .select("card_id")
-          .eq("user_id", userId)
-          .in("card_id", cardIds);
-        if (error) throw error;
-        return Array.from(new Set((data ?? []).map((row) => row.card_id)));
-      });
-      return json({ cardIds: wantedIds });
+      const rows = await withDb<DbRow[]>((db) => db`
+        select distinct card_id
+        from public.wanted_cards
+        where user_id = ${userId}::uuid and card_id in ${db(cardIds)}
+      `);
+      return json({ cardIds: rows.map((row) => row.card_id) });
     }
 
     if (action === "add") {
@@ -128,42 +138,26 @@ Deno.serve(async (req) => {
       const rarity = typeof body.rarity === "string" && body.rarity ? body.rarity : null;
       const language = typeof body.language === "string" && body.language ? body.language : "EN";
 
-      const item = await withRetry(async () => {
-        const { data: existing, error: existingError } = await dbClient
-          .from("wanted_cards")
-          .select("*")
-          .eq("user_id", userId)
-          .eq("card_id", cardId)
-          .eq("game", game)
-          .maybeSingle();
-        if (existingError) throw existingError;
-        if (existing) return existing;
-
-        const { data, error } = await dbClient
-          .from("wanted_cards")
-          .insert({ user_id: userId, card_id: cardId, game, rarity, language, quantity, binder_id: binderId })
-          .select("*")
-          .single();
-        if (error) throw error;
-        return data;
-      });
-      return json({ item });
+      const rows = await withDb<DbRow[]>((db) => db`
+        insert into public.wanted_cards (user_id, card_id, game, rarity, language, quantity, binder_id)
+        select ${userId}::uuid, ${cardId}::uuid, ${game}, ${rarity}, ${language}, ${quantity}, ${binderId}::uuid
+        where not exists (
+          select 1 from public.wanted_cards
+          where user_id = ${userId}::uuid and card_id = ${cardId}::uuid and game = ${game}
+        )
+        returning *
+      `);
+      return json({ item: rows[0] ?? null });
     }
 
     if (action === "remove") {
       if (body.id) {
         const id = requireUuid(body.id, "wishlist id");
-        await withRetry(async () => {
-          const { error } = await dbClient.from("wanted_cards").delete().eq("id", id).eq("user_id", userId);
-          if (error) throw error;
-        });
+        await withDb((db) => db`delete from public.wanted_cards where id = ${id}::uuid and user_id = ${userId}::uuid`);
       } else {
         const game = requireGame(body.game);
         const cardId = requireUuid(body.cardId, "card id");
-        await withRetry(async () => {
-          const { error } = await dbClient.from("wanted_cards").delete().eq("user_id", userId).eq("card_id", cardId).eq("game", game);
-          if (error) throw error;
-        });
+        await withDb((db) => db`delete from public.wanted_cards where user_id = ${userId}::uuid and card_id = ${cardId}::uuid and game = ${game}`);
       }
       return json({ ok: true });
     }
@@ -171,19 +165,19 @@ Deno.serve(async (req) => {
     if (action === "update") {
       const id = requireUuid(body.id, "wishlist id");
       const quantity = Math.max(1, Number.parseInt(String(body.quantity ?? 1), 10) || 1);
-      await withRetry(async () => {
-        const { error } = await dbClient.from("wanted_cards").update({ quantity }).eq("id", id).eq("user_id", userId);
-        if (error) throw error;
-      });
+      await withDb((db) => db`
+        update public.wanted_cards
+        set quantity = ${quantity}
+        where id = ${id}::uuid and user_id = ${userId}::uuid
+      `);
       return json({ ok: true });
     }
 
     throw new Error("Invalid wishlist action");
   } catch (e) {
     console.error("wishlist error", e);
-    const retryable = isRetryableBackendError(e);
-    const message = e instanceof Error ? e.message : (e as { message?: string })?.message ?? "Wishlist failed";
-    return json({ error: retryable ? "Database is reconnecting. Please try again." : message }, retryable ? 503 : 400);
+    const message = e instanceof Error ? e.message : "Wishlist failed";
+    return json({ error: isRetryableDbError(e) ? "Database is reconnecting. Please try again." : message }, 400);
   }
 });
 
