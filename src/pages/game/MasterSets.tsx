@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, Plus, Search, Trash2, Heart } from "lucide-react";
+import { ArrowLeft, Plus, Search, Trash2, Heart, LayoutGrid, List, Minus } from "lucide-react";
 import { toast } from "sonner";
 import { cardImageCandidates, proxiedImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
@@ -57,6 +57,7 @@ export default function MasterSets() {
   const [ownedCardIds, setOwnedCardIds] = useState<Set<string>>(new Set());
   const [ownedLangByCard, setOwnedLangByCard] = useState<Map<string, string>>(new Map());
   const [wantedCardIds, setWantedCardIds] = useState<Set<string>>(new Set());
+  const [wishlistBusy, setWishlistBusy] = useState<Set<string>>(new Set());
 
   const [picked, setPicked] = useState<CardRow | null>(null);
   const [pickedOwned, setPickedOwned] = useState(false);
@@ -195,28 +196,41 @@ export default function MasterSets() {
 
   const toggleWanted = async (c: CardRow) => {
     if (!game) return;
+    if (wishlistBusy.has(c.id)) return;
     const { data: u } = await supabase.auth.getUser();
     if (!u.user) return;
-    if (wantedCardIds.has(c.id)) {
-      try {
+    setWishlistBusy((prev) => new Set(prev).add(c.id));
+    const wasWanted = wantedCardIds.has(c.id);
+    // Optimistic update
+    setWantedCardIds((prev) => {
+      const n = new Set(prev);
+      if (wasWanted) n.delete(c.id);
+      else n.add(c.id);
+      return n;
+    });
+    try {
+      if (wasWanted) {
         await removeWishlistByCard(c.id, game);
-      } catch (error) {
-        return toast.error(error instanceof Error ? error.message : "Could not remove from wishlist");
+        toast.success("Removed from wishlist");
+      } else {
+        await addWishlist(c, game);
+        toast.success("Added to wishlist");
       }
+    } catch (error) {
+      // Rollback
       setWantedCardIds((prev) => {
+        const n = new Set(prev);
+        if (wasWanted) n.add(c.id);
+        else n.delete(c.id);
+        return n;
+      });
+      toast.error(error instanceof Error ? error.message : "Wishlist action failed");
+    } finally {
+      setWishlistBusy((prev) => {
         const n = new Set(prev);
         n.delete(c.id);
         return n;
       });
-      toast.success("Removed from wishlist");
-    } else {
-      try {
-        await addWishlist(c, game);
-      } catch (error) {
-        return toast.error(error instanceof Error ? error.message : "Could not add to wishlist");
-      }
-      setWantedCardIds((prev) => new Set(prev).add(c.id));
-      toast.success("Added to wishlist");
     }
   };
 
@@ -518,9 +532,6 @@ function SetGrid({
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
       {sets.map((s) => {
-        const owned = ownedBySet.get(s.id) ?? 0;
-        const total = s.total ?? 0;
-        const pct = total > 0 ? Math.min(100, Math.round((owned / total) * 100)) : 0;
         return (
           <Card
             key={s.id}
@@ -535,15 +546,7 @@ function SetGrid({
                   {s.id}{s.releaseDate ? ` · ${s.releaseDate}` : ""}
                 </p>
               </div>
-              <Badge variant={owned > 0 ? "default" : "secondary"}>
-                {owned}{total ? `/${total}` : ""}
-              </Badge>
             </div>
-            {total > 0 && (
-              <div className="mt-3 h-1.5 bg-muted rounded-full overflow-hidden">
-                <div className="h-full bg-primary transition-all" style={{ width: `${pct}%` }} />
-              </div>
-            )}
           </Card>
         );
       })}
@@ -590,6 +593,14 @@ function SetView({
 }) {
   const [cards, setCards] = useState<CardRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<"grid" | "list">(() => {
+    if (typeof window === "undefined") return "grid";
+    return (localStorage.getItem("masterset.view") as "grid" | "list") ?? "grid";
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem("masterset.view", view); } catch (_) {}
+  }, [view]);
 
   useEffect(() => {
     setLoading(true);
@@ -636,6 +647,28 @@ function SetView({
             {set.id}{set.releaseDate ? ` · ${set.releaseDate}` : ""}
           </p>
         </div>
+        <div className="flex items-center gap-1 rounded-md border bg-muted p-0.5">
+          <Button
+            type="button"
+            size="sm"
+            variant={view === "grid" ? "default" : "ghost"}
+            className="h-7 w-7 p-0"
+            onClick={() => setView("grid")}
+            title="Full image view"
+          >
+            <LayoutGrid className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={view === "list" ? "default" : "ghost"}
+            className="h-7 w-7 p-0"
+            onClick={() => setView("list")}
+            title="List view"
+          >
+            <List className="h-4 w-4" />
+          </Button>
+        </div>
         <Badge variant="default" className="text-sm">
           {ownedCount}/{cards.length || set.total || "?"}
         </Badge>
@@ -647,7 +680,7 @@ function SetView({
         <p className="text-muted-foreground text-center py-12">
           No cards available for this expansion yet.
         </p>
-      ) : (
+      ) : view === "grid" ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           {cards.map((c) => {
             const owned = ownedCardIds.has(c.id);
@@ -699,6 +732,77 @@ function SetView({
                   <p className="text-xs text-muted-foreground truncate">
                     {c.code}{c.rarity ? ` · ${c.rarity}` : ""}
                   </p>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {cards.map((c) => {
+            const owned = ownedCardIds.has(c.id);
+            const wanted = wantedCardIds.has(c.id);
+            const lang = ownedLangByCard.get(c.id);
+            return (
+              <Card
+                key={c.id}
+                className={`flex items-center gap-3 px-3 py-2 bg-gradient-card cursor-pointer hover:shadow-card transition-shadow ${owned ? "" : "opacity-70"}`}
+                onClick={() => onPickCard(c)}
+              >
+                <div className="font-mono text-xs text-muted-foreground w-20 shrink-0 truncate">
+                  {c.code ?? "—"}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate">{c.name}</p>
+                  {c.rarity && <p className="text-xs text-muted-foreground truncate">{c.rarity}</p>}
+                </div>
+                {owned && lang && (
+                  <Badge variant="secondary" className="text-xs shrink-0">
+                    {LANG_FLAG[lang] ?? lang}
+                  </Badge>
+                )}
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 w-8 p-0"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onToggleWanted(c);
+                    }}
+                    title={wanted ? "Remove from wishlist" : "Add to wishlist"}
+                  >
+                    <Heart className={`h-4 w-4 ${wanted ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-8 w-8 p-0"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onQuickAdd(c);
+                    }}
+                    title="Add one to collection"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                  {owned && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 w-8 p-0"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onPickCard(c);
+                      }}
+                      title="Adjust collection"
+                    >
+                      <Minus className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
               </Card>
             );
