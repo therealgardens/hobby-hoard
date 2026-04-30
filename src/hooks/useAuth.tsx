@@ -16,12 +16,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // onAuthStateChange chiama subito il callback con la sessione attuale —
+    // non serve getSession() separato che causava due setState ravvicinati
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s);
-      setLoading(false);
-    });
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
       setLoading(false);
     });
     return () => sub.subscription.unsubscribe();
@@ -33,9 +31,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user: session?.user ?? null,
         session,
         loading,
-        signOut: async () => {
-          await supabase.auth.signOut();
-        },
+        signOut: async () => { await supabase.auth.signOut(); },
       }}
     >
       {children}
