@@ -134,78 +134,60 @@ export default function BinderDetail() {
     }
   };
 
-  // ─── PLACE — select esplicito → insert o update ───────────────────────────
+  // ─── PLACE — DELETE + INSERT, nessun conflitto possibile ─────────────────
   const place = async (card: CardRow) => {
     if (pickingPos === null || !binderId || !user) return;
     const pos = pickingPos;
     const wanted = isWanted;
 
-    // Aggiornamento ottimistico
+    // Aggiornamento ottimistico immediato
     const optimisticId = `optimistic-${pos}-${Date.now()}`;
-    const optimisticSlot: Slot = {
-      id: optimisticId,
-      binder_id: binderId,
-      user_id: user.id,
-      position: pos,
-      card_id: card.id,
-      is_wanted: wanted,
-      created_at: new Date().toISOString(),
-      card,
-    } as Slot;
-
-    setSlots((prev) => [...prev.filter((s) => s.position !== pos), optimisticSlot]);
+    setSlots((prev) => [
+      ...prev.filter((s) => s.position !== pos),
+      {
+        id: optimisticId,
+        binder_id: binderId,
+        user_id: user.id,
+        position: pos,
+        card_id: card.id,
+        is_wanted: wanted,
+        created_at: new Date().toISOString(),
+        card,
+      } as Slot,
+    ]);
     setPickingPos(null);
     setIsWanted(false);
 
     try {
-      // 1. Controlla se esiste già uno slot in quella posizione
-      const { data: existing, error: checkErr } = await supabase
+      // 1. Elimina qualsiasi slot in quella posizione (no-op silenzioso se non esiste)
+      const { error: delErr } = await supabase
         .from("binder_slots")
-        .select("id")
+        .delete()
         .eq("binder_id", binderId)
-        .eq("position", pos)
-        .maybeSingle();
+        .eq("position", pos);
+      if (delErr) throw new Error(`Delete failed: ${delErr.message}`);
 
-      if (checkErr) throw new Error(`Check slot failed: ${checkErr.message}`);
+      // 2. Inserisce — nessun conflitto possibile perché abbiamo appena eliminato
+      const { data: inserted, error: insErr } = await withDbRetry(() =>
+        supabase
+          .from("binder_slots")
+          .insert({
+            binder_id: binderId,
+            user_id: user.id,
+            position: pos,
+            card_id: card.id,
+            is_wanted: wanted,
+          })
+          .select()
+          .maybeSingle(),
+      );
+      if (insErr) throw new Error(`Insert failed: ${insErr.message}`);
 
-      let savedSlot: Tables<"binder_slots"> | null = null;
-
-      if (existing) {
-        // 2a. Update slot esistente
-        const { data, error: updErr } = await withDbRetry(() =>
-          supabase
-            .from("binder_slots")
-            .update({ card_id: card.id, is_wanted: wanted })
-            .eq("id", existing.id)
-            .select()
-            .maybeSingle(),
-        );
-        if (updErr) throw new Error(`Update slot failed: ${updErr.message}`);
-        savedSlot = data;
-      } else {
-        // 2b. Insert nuovo slot
-        const { data, error: insErr } = await withDbRetry(() =>
-          supabase
-            .from("binder_slots")
-            .insert({
-              binder_id: binderId,
-              user_id: user.id,
-              position: pos,
-              card_id: card.id,
-              is_wanted: wanted,
-            })
-            .select()
-            .maybeSingle(),
-        );
-        if (insErr) throw new Error(`Insert slot failed: ${insErr.message}`);
-        savedSlot = data;
-      }
-
-      // 3. Sostituisce lo slot ottimistico con quello reale
-      if (savedSlot) {
+      // 3. Sostituisce lo slot ottimistico con quello reale del DB
+      if (inserted) {
         setSlots((prev) => [
           ...prev.filter((s) => s.id !== optimisticId && s.position !== pos),
-          { ...(savedSlot as Tables<"binder_slots">), card },
+          { ...inserted, card },
         ]);
       }
 
@@ -220,16 +202,18 @@ export default function BinderDetail() {
 
       toast.success(`Placed ${card.name}`);
     } catch (err) {
-      // Rollback ottimistico
       console.error("[BinderDetail] place error:", err);
+      // Rollback ottimistico
       setSlots((prev) => prev.filter((s) => s.id !== optimisticId));
-      toast.error(err instanceof Error ? err.message : "Could not place card — check console for details");
+      toast.error(err instanceof Error ? err.message : "Could not place card");
     }
   };
 
   const clear = async (slotId: string) => {
     setSlots((prev) => prev.filter((s) => s.id !== slotId));
-    const { error } = await withDbRetry(() => supabase.from("binder_slots").delete().eq("id", slotId));
+    const { error } = await withDbRetry(() =>
+      supabase.from("binder_slots").delete().eq("id", slotId),
+    );
     if (error) { toast.error(error.message || "Could not clear slot"); load(); }
   };
 
@@ -256,9 +240,13 @@ export default function BinderDetail() {
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
-          <Button variant="outline" size="sm" onClick={addPage}><Plus className="h-4 w-4 mr-1" /> Page</Button>
+          <Button variant="outline" size="sm" onClick={addPage}>
+            <Plus className="h-4 w-4 mr-1" /> Page
+          </Button>
           {pages > 1 && safePageIdx === pages - 1 && (
-            <Button variant="ghost" size="sm" onClick={() => setConfirmRemovePage(true)}><Trash2 className="h-4 w-4" /></Button>
+            <Button variant="ghost" size="sm" onClick={() => setConfirmRemovePage(true)}>
+              <Trash2 className="h-4 w-4" />
+            </Button>
           )}
           <ToggleGroup type="single" value={view} onValueChange={(v) => v && setView(v as any)}>
             <ToggleGroupItem value="grid" aria-label="Grid view"><LayoutGrid className="h-4 w-4" /></ToggleGroupItem>
@@ -270,7 +258,9 @@ export default function BinderDetail() {
       {loading ? (
         <Card className="p-4 bg-gradient-card shadow-card max-w-3xl mx-auto">
           <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${binder.cols}, minmax(0, 1fr))` }}>
-            {Array.from({ length: perPage }).map((_, i) => <Skeleton key={i} className="w-full card-aspect rounded-lg" />)}
+            {Array.from({ length: perPage }).map((_, i) => (
+              <Skeleton key={i} className="w-full card-aspect rounded-lg" />
+            ))}
           </div>
         </Card>
       ) : view === "grid" ? (
@@ -293,10 +283,21 @@ export default function BinderDetail() {
                     return (
                       <>
                         {img
-                          ? <img src={img} alt={slot.card?.name ?? ""} loading="lazy" onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")} className={cn("w-full h-full object-cover", slot.is_wanted && "opacity-40")} />
-                          : <div className={cn("w-full h-full flex items-center justify-center p-1 text-center text-[11px] font-medium text-foreground bg-muted", slot.is_wanted && "opacity-40")}><span className="line-clamp-3">{slot.card?.name ?? slot.card?.code ?? "Card"}</span></div>}
-                        {slot.is_wanted && <span className="absolute top-1 left-1 text-[10px] bg-accent text-accent-foreground px-1.5 py-0.5 rounded-full">wanted</span>}
-                        <button onClick={(e) => { e.stopPropagation(); clear(slot.id); }} className="absolute top-1 right-1 p-1 rounded-full bg-background/80 opacity-0 group-hover:opacity-100">
+                          ? <img src={img} alt={slot.card?.name ?? ""} loading="lazy"
+                              onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+                              className={cn("w-full h-full object-cover", slot.is_wanted && "opacity-40")} />
+                          : <div className={cn("w-full h-full flex items-center justify-center p-1 text-center text-[11px] font-medium text-foreground bg-muted", slot.is_wanted && "opacity-40")}>
+                              <span className="line-clamp-3">{slot.card?.name ?? slot.card?.code ?? "Card"}</span>
+                            </div>}
+                        {slot.is_wanted && (
+                          <span className="absolute top-1 left-1 text-[10px] bg-accent text-accent-foreground px-1.5 py-0.5 rounded-full">
+                            wanted
+                          </span>
+                        )}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); clear(slot.id); }}
+                          className="absolute top-1 right-1 p-1 rounded-full bg-background/80 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
                           <Trash2 className="h-3 w-3" />
                         </button>
                       </>
@@ -314,15 +315,23 @@ export default function BinderDetail() {
             const slot = slotMap.get(pos);
             const img = cardImage(slot?.card?.game, slot?.card?.code, slot?.card?.image_small);
             return (
-              <div key={pos} onClick={() => !slot && setPickingPos(pos)} className={cn("flex items-center gap-3 p-2 px-4", !slot && "cursor-pointer hover:bg-muted")}>
+              <div
+                key={pos}
+                onClick={() => !slot && setPickingPos(pos)}
+                className={cn("flex items-center gap-3 p-2 px-4", !slot && "cursor-pointer hover:bg-muted")}
+              >
                 <span className="text-xs text-muted-foreground w-10 tabular-nums">#{pos + 1}</span>
                 <div className="w-10 h-14 rounded-md overflow-hidden bg-[hsl(var(--binder-empty))] flex items-center justify-center shrink-0">
                   {img
-                    ? <img src={img} alt={slot?.card?.name} loading="lazy" onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")} className={cn("w-full h-full object-cover", slot?.is_wanted && "opacity-40")} />
+                    ? <img src={img} alt={slot?.card?.name} loading="lazy"
+                        onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+                        className={cn("w-full h-full object-cover", slot?.is_wanted && "opacity-40")} />
                     : <span className="text-muted-foreground text-xs">+</span>}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="font-medium truncate">{slot?.card?.name ?? <span className="text-muted-foreground italic">empty slot</span>}</div>
+                  <div className="font-medium truncate">
+                    {slot?.card?.name ?? <span className="text-muted-foreground italic">empty slot</span>}
+                  </div>
                   {slot?.card && (
                     <div className="text-xs text-muted-foreground truncate">
                       {slot.card.code}{slot.card.set_name ? ` · ${slot.card.set_name}` : ""}
@@ -330,7 +339,14 @@ export default function BinderDetail() {
                     </div>
                   )}
                 </div>
-                {slot && <button onClick={(e) => { e.stopPropagation(); clear(slot.id); }} className="p-2 rounded-full hover:bg-background/80"><Trash2 className="h-4 w-4" /></button>}
+                {slot && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); clear(slot.id); }}
+                    className="p-2 rounded-full hover:bg-background/80"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                )}
               </div>
             );
           })}
@@ -353,10 +369,14 @@ export default function BinderDetail() {
       <Dialog open={confirmRemovePage} onOpenChange={setConfirmRemovePage}>
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle>Rimuovere pagina {pages}?</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">Tutte le carte su questa pagina verranno eliminate. L'operazione non è reversibile.</p>
+          <p className="text-sm text-muted-foreground">
+            Tutte le carte su questa pagina verranno eliminate. L'operazione non è reversibile.
+          </p>
           <DialogFooter className="gap-2 sm:gap-2">
             <Button variant="outline" onClick={() => setConfirmRemovePage(false)}>Annulla</Button>
-            <Button variant="destructive" onClick={removePage}><Trash2 className="h-4 w-4 mr-2" /> Rimuovi pagina</Button>
+            <Button variant="destructive" onClick={removePage}>
+              <Trash2 className="h-4 w-4 mr-2" /> Rimuovi pagina
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -389,11 +409,25 @@ function BinderCardPicker({ game, onPick }: { game: Game; onPick: (card: CardRow
     <div className="space-y-3">
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input autoFocus placeholder="Cerca per nome o codice…" value={q} onChange={(e) => setQ(e.target.value)} className="pl-9" />
+        <Input
+          autoFocus
+          placeholder="Cerca per nome o codice…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          className="pl-9"
+        />
       </div>
-      {loading && <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
-      {!loading && q.trim().length < 2 && <p className="text-sm text-muted-foreground text-center py-6">Digita almeno 2 caratteri per cercare.</p>}
-      {!loading && q.trim().length >= 2 && results.length === 0 && <p className="text-sm text-muted-foreground text-center py-6">Nessuna carta trovata.</p>}
+      {loading && (
+        <div className="flex justify-center py-6">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      )}
+      {!loading && q.trim().length < 2 && (
+        <p className="text-sm text-muted-foreground text-center py-6">Digita almeno 2 caratteri per cercare.</p>
+      )}
+      {!loading && q.trim().length >= 2 && results.length === 0 && (
+        <p className="text-sm text-muted-foreground text-center py-6">Nessuna carta trovata.</p>
+      )}
       <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
         {results.map((c) => {
           const img = cardImage(c.game, c.code, c.image_small);
@@ -401,8 +435,12 @@ function BinderCardPicker({ game, onPick }: { game: Game; onPick: (card: CardRow
             <button key={c.id} type="button" onClick={() => onPick(c)} className="text-left group">
               <Card className="overflow-hidden bg-gradient-card hover:shadow-card transition-shadow">
                 {img
-                  ? <img src={img} alt={c.name} loading="lazy" onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")} className="w-full card-aspect object-cover" />
-                  : <div className="w-full card-aspect bg-muted flex items-center justify-center text-xs text-muted-foreground p-1 text-center">{c.name}</div>}
+                  ? <img src={img} alt={c.name} loading="lazy"
+                      onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+                      className="w-full card-aspect object-cover" />
+                  : <div className="w-full card-aspect bg-muted flex items-center justify-center text-xs text-muted-foreground p-1 text-center">
+                      {c.name}
+                    </div>}
                 <div className="p-1.5">
                   <p className="text-xs font-medium truncate">{c.name}</p>
                   <p className="text-[10px] text-muted-foreground truncate">{c.code}</p>
