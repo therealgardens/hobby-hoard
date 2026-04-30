@@ -65,12 +65,13 @@ export default function BinderDetail() {
     }
     setBinder(b);
     const { data: s, error: sErr } = await withDbRetry(() =>
-      supabase
-        .from("binder_slots")
-        .select("*")
-        .eq("binder_id", binderId)
-        .order("position"),
-    );
+  supabase
+    .from("binder_slots")
+    .select("*")
+    .eq("binder_id", binderId)
+    .eq("user_id", b.user_id)   // filtra per utente — evita slot di altri utenti
+    .order("position"),
+);
     if (sErr) {
       // Don't block the page — show binder with empty slots
       toast.error("Could not load slots — showing empty grid");
@@ -139,48 +140,48 @@ export default function BinderDetail() {
     if (!user) return toast.error("Not signed in");
     const pos = pickingPos;
     const wanted = isWanted;
-    // upsert
-    const existing = slotMap.get(pos);
-    if (existing) {
-      const { error } = await withDbRetry(() =>
-        supabase.from("binder_slots").update({ card_id: card.id, is_wanted: wanted }).eq("id", existing.id),
-      );
-      if (error) return toast.error(error.message || "Could not update slot");
-      // Optimistic local update so the card appears immediately
-      setSlots((prev) =>
-        prev.map((s) => (s.id === existing.id ? { ...s, card_id: card.id, is_wanted: wanted, card } : s)),
-      );
-    } else {
-      const { data: inserted, error } = await withDbRetry(() =>
-        supabase
-          .from("binder_slots")
-          .insert({
+
+    // Usa upsert direttamente sul DB invece di fidarsi della slotMap locale
+    // che potrebbe essere desincronizzata. onConflict su (binder_id, position).
+    const { data: upserted, error } = await withDbRetry(() =>
+      supabase
+        .from("binder_slots")
+        .upsert(
+          {
             binder_id: binderId,
             user_id: user.id,
             position: pos,
             card_id: card.id,
             is_wanted: wanted,
-          })
-          .select()
-          .single(),
-      );
-      if (error) return toast.error(error.message || "Could not place card");
-      // Optimistic local update
-      if (inserted) {
-        setSlots((prev) => [...prev, { ...(inserted as Tables<"binder_slots">), card }]);
-      }
+          },
+          { onConflict: "binder_id,position" },
+        )
+        .select()
+        .single(),
+    );
+
+    if (error) return toast.error(error.message || "Could not place card");
+
+    // Aggiorna la state locale con il risultato reale del DB
+    if (upserted) {
+      const newSlot = { ...(upserted as Tables<"binder_slots">), card };
+      setSlots((prev) => {
+        const filtered = prev.filter((s) => s.position !== pos);
+        return [...filtered, newSlot];
+      });
     }
+
     if (wanted) {
       try {
         await addWishlist(card, game!, { binder_id: binderId, quantity: 1 });
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Could not add to wishlist");
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Could not add to wishlist");
       }
     }
+
     toast.success(`Placed ${card.name}`);
     setPickingPos(null);
     setIsWanted(false);
-    // Re-sync from DB in the background to pick up server-side changes.
     load();
   };
 
