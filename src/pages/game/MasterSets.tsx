@@ -401,6 +401,8 @@ export default function MasterSets() {
     emitCollectionChanged({ game, cardId: removedId });
   };
 
+  if (!game) return null;
+
   return (
     <div>
       <h2 className="text-4xl font-display mb-2">Master Sets</h2>
