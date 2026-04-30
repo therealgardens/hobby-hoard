@@ -136,8 +136,7 @@ export default function BinderDetail() {
 
   const place = async (card: Tables<"cards">) => {
     if (pickingPos === null || !binderId) return;
-    const { data: u } = await supabase.auth.getUser();
-    if (!u.user) return toast.error("Not signed in");
+    if (!user) return toast.error("Not signed in");
     const pos = pickingPos;
     const wanted = isWanted;
     // upsert
