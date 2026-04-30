@@ -19,9 +19,7 @@ interface Props {
   onPick?: (card: CardRow) => void;
   pickLabel?: string;
   autoLoad?: boolean;
-  /** Se true, mostra solo le carte presenti in ownedCardIds */
   ownedOnly?: boolean;
-  /** Set di card ID posseduti — passato da BinderDetail */
   ownedCardIds?: Set<string>;
 }
 
@@ -46,7 +44,6 @@ export function CardSearch({
   const setBusy = (id: string, busy: boolean) =>
     setBusyIds((prev) => { const n = new Set(prev); busy ? n.add(id) : n.delete(id); return n; });
 
-  /** Filtra i risultati se ownedOnly è attivo */
   const applyOwnedFilter = (cards: CardRow[]): CardRow[] => {
     if (!ownedOnly || !ownedCardIds) return cards;
     return cards.filter((c) => ownedCardIds.has(c.id));
@@ -71,24 +68,25 @@ export function CardSearch({
     const id = ++reqIdRef.current;
     setLoading(true);
 
-    // Se ownedOnly, cerca direttamente tra le carte possedute senza chiamare la edge function
+    // Caso ownedOnly: cerca solo tra le carte possedute, niente edge function
     if (ownedOnly && ownedCardIds && ownedCardIds.size > 0) {
-      const ownedArr = Array.from(ownedCardIds);
       const { data: local } = await supabase
         .from("cards")
         .select("*")
         .eq("game", game)
-        .in("id", ownedArr)
+        .in("id", Array.from(ownedCardIds))
         .or(`name.ilike.%${term}%,code.ilike.%${term}%`)
         .limit(40);
       if (id !== reqIdRef.current) return;
       setLoading(false);
       const filtered = local ?? [];
       setResults(filtered);
-      if (filtered.length === 0) toast.info("No owned cards match your search");
+      if (filtered.length > 0) refreshStatus(filtered);
+      else toast.info("No owned cards match your search");
       return;
     }
 
+    // Prima prova il DB locale
     const { data: local } = await supabase
       .from("cards")
       .select("*")
@@ -96,18 +94,36 @@ export function CardSearch({
       .or(`name.ilike.%${term}%,code.ilike.%${term}%`)
       .limit(40);
     if (id !== reqIdRef.current) return;
-    const localFiltered = applyOwnedFilter(local ?? []);
-    if (localFiltered.length) { setResults(localFiltered); refreshStatus(localFiltered); }
 
+    const localFiltered = applyOwnedFilter(local ?? []);
+
+    // Se il DB locale ha già risultati sufficienti, non chiamiamo la edge function
+    if (localFiltered.length >= 10) {
+      setLoading(false);
+      setResults(localFiltered);
+      refreshStatus(localFiltered);
+      return;
+    }
+
+    // Altrimenti chiama la edge function per risultati più completi
     const { data, error } = await supabase.functions.invoke("card-search", {
       body: { game, query: term },
     });
     if (id !== reqIdRef.current) return;
     setLoading(false);
     if (error) { toast.error(error.message); return; }
-    const cards = applyOwnedFilter((data?.cards as CardRow[]) ?? []);
-    if (cards.length) { setResults(cards); refreshStatus(cards); }
-    else if (!localFiltered.length) { setResults([]); toast.info("No cards found"); }
+
+    const remoteCards = applyOwnedFilter((data?.cards as CardRow[]) ?? []);
+    if (remoteCards.length) {
+      setResults(remoteCards);
+      refreshStatus(remoteCards);
+    } else if (localFiltered.length) {
+      setResults(localFiltered);
+      refreshStatus(localFiltered);
+    } else {
+      setResults([]);
+      toast.info("No cards found");
+    }
   };
 
   useEffect(() => {
@@ -116,22 +132,18 @@ export function CardSearch({
       if (onPick && autoLoad) {
         (async () => {
           setLoading(true);
-
-          // Se ownedOnly, carica direttamente le carte possedute (senza alfabetico globale)
           if (ownedOnly && ownedCardIds && ownedCardIds.size > 0) {
-            const ownedArr = Array.from(ownedCardIds);
             const { data } = await supabase
               .from("cards")
               .select("*")
               .eq("game", game)
-              .in("id", ownedArr)
+              .in("id", Array.from(ownedCardIds))
               .order("name", { ascending: true })
               .limit(80);
             setLoading(false);
             if (data) { setResults(data); refreshStatus(data); }
             return;
           }
-
           const { data } = await supabase
             .from("cards").select("*").eq("game", game)
             .order("name", { ascending: true }).limit(40);
@@ -167,11 +179,8 @@ export function CardSearch({
     setOwnedIds((prev) => new Set(prev).add(c.id));
     try {
       const { data: existing } = await supabase
-        .from("collection_entries")
-        .select("id, quantity")
-        .eq("user_id", user.id)
-        .eq("card_id", c.id)
-        .maybeSingle();
+        .from("collection_entries").select("id, quantity")
+        .eq("user_id", user.id).eq("card_id", c.id).maybeSingle();
       let error;
       if (existing) {
         ({ error } = await withDbRetry(() =>
@@ -197,130 +206,112 @@ export function CardSearch({
   };
 
   const toggleWanted = async (c: CardRow) => {
-    if (authLoading) return toast.info("Signing you in…");
-    if (!user) return toast.error("Not signed in");
-    if (busyIds.has(c.id)) return;
+    if (!user) return;
     const wasWanted = wantedIds.has(c.id);
-    setBusy(c.id, true);
     setWantedIds((prev) => { const n = new Set(prev); wasWanted ? n.delete(c.id) : n.add(c.id); return n; });
     try {
       if (wasWanted) { await removeWishlistByCard(c.id, game); toast.success("Removed from wishlist"); }
       else { await addWishlist(c, game); toast.success("Added to wishlist"); }
-    } catch (error) {
+    } catch {
       setWantedIds((prev) => { const n = new Set(prev); wasWanted ? n.add(c.id) : n.delete(c.id); return n; });
-      toast.error(error instanceof Error ? error.message : "Could not update wishlist");
-    } finally {
-      setBusy(c.id, false);
     }
   };
 
+  if (authLoading) return null;
+
   return (
-    <div>
-      <form onSubmit={onSubmit} className="flex gap-2 mb-6">
-        <Input
-          placeholder={
-            ownedOnly
-              ? `Cerca tra le tue carte (es. ${game === "pokemon" ? "Pikachu" : game === "yugioh" ? "Dark Magician" : "Luffy"})`
-              : `Search by name or code (e.g. ${game === "pokemon" ? "Pikachu or sv1-25" : game === "yugioh" ? "Dark Magician or LOB-005" : "Luffy or OP01-001"})`
-          }
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        <Button type="submit" disabled={loading} variant="secondary">
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+    <div className="space-y-4">
+      <form onSubmit={onSubmit} className="flex gap-2">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by name or code…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        <Button type="submit" disabled={loading || q.trim().length < 2}>
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Search"}
         </Button>
       </form>
-      {ownedOnly && results.length === 0 && !loading && q.length < 2 && (
+
+      {results.length === 0 && !loading && (
         <p className="text-muted-foreground text-sm text-center py-8">
-          Digita il nome di una carta che possiedi per aggiungerla allo slot.
+          {q.trim().length < 2 ? "Type at least 2 characters to search." : "No results."}
         </p>
       )}
-      {results.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          {results.map((c) => {
-            const isOwned = ownedIds.has(c.id);
-            const isWanted = wantedIds.has(c.id);
-            const isBusy = busyIds.has(c.id);
-            return (
-              <Card key={c.id} className="overflow-hidden bg-gradient-card shadow-soft hover:shadow-card transition-shadow relative">
-                {!onPick && (
-                  <button
-                    type="button"
-                    onClick={() => toggleWanted(c)}
-                    disabled={isBusy}
-                    className="absolute top-2 left-2 z-10 p-1.5 rounded-full bg-background/90 shadow hover:bg-background transition-colors disabled:opacity-50"
-                    title={isWanted ? "Remove from wishlist" : "Add to wishlist"}
-                  >
-                    <Heart className={`h-4 w-4 ${isWanted ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
-                  </button>
-                )}
-                <CardImg card={c} />
-                <div className="p-2">
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+        {results.map((c) => {
+          const owned = ownedIds.has(c.id);
+          const wanted = wantedIds.has(c.id);
+          const busy = busyIds.has(c.id);
+          const candidates = cardImageCandidates(c.game, c.code, c.image_small ?? c.image_large);
+          return (
+            <Card key={c.id} className="overflow-hidden bg-gradient-card group relative">
+              <button
+                type="button"
+                onClick={() => toggleWanted(c)}
+                className="absolute top-2 left-2 z-10 p-1.5 rounded-full bg-background/90 shadow hover:bg-background transition-colors"
+                title={wanted ? "Remove from wishlist" : "Add to wishlist"}
+              >
+                <Heart className={`h-4 w-4 ${wanted ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
+              </button>
+
+              {onPick ? (
+                <button type="button" className="w-full text-left" onClick={() => onPick(c)}>
+                  <CardImage candidates={candidates} name={c.name} owned={owned} />
+                </button>
+              ) : (
+                <CardImage candidates={candidates} name={c.name} owned={owned} />
+              )}
+
+              <div className="p-2 space-y-2">
+                <div>
                   <p className="text-sm font-semibold truncate">{c.name}</p>
-                  <p className="text-xs text-muted-foreground truncate">
-                    {c.code} {c.rarity && `· ${c.rarity}`}
-                  </p>
-                  {onPick ? (
-                    <Button size="sm" variant="secondary" className="w-full mt-2" onClick={() => onPick(c)}>
-                      <Plus className="h-3 w-3 mr-1" /> {pickLabel}
-                    </Button>
-                  ) : (
-                    <div className="flex gap-1 mt-2">
-                      <Input
-                        type="number"
-                        min={1}
-                        value={qty[c.id] ?? 1}
-                        onChange={(e) =>
-                          setQty((prev) => ({ ...prev, [c.id]: Math.max(1, parseInt(e.target.value) || 1) }))
-                        }
-                        className="h-8 w-14 px-2 text-xs"
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                      <Button
-                        size="sm"
-                        variant={isOwned ? "outline" : "secondary"}
-                        className="flex-1 h-8"
-                        onClick={() => addToCollection(c)}
-                        disabled={isBusy}
-                        title={isOwned ? "Already in collection — add more" : "Add to collection"}
-                      >
-                        {isBusy ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : isOwned ? (
-                          <><Check className="h-3 w-3 mr-1" /> Owned</>
-                        ) : (
-                          <><Plus className="h-3 w-3 mr-1" /> Add</>
-                        )}
-                      </Button>
-                    </div>
-                  )}
+                  <p className="text-xs text-muted-foreground truncate">{c.code}{c.rarity ? ` · ${c.rarity}` : ""}</p>
                 </div>
-              </Card>
-            );
-          })}
-        </div>
-      )}
+
+                {onPick ? (
+                  <Button size="sm" className="w-full h-7 text-xs" onClick={() => onPick(c)}>
+                    {pickLabel}
+                  </Button>
+                ) : (
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number" min={1} value={qty[c.id] ?? 1}
+                      onChange={(e) => setQty((p) => ({ ...p, [c.id]: parseInt(e.target.value) || 1 }))}
+                      className="w-12 h-7 text-xs text-center border rounded bg-background"
+                    />
+                    <Button
+                      size="sm" className="flex-1 h-7 text-xs" disabled={busy}
+                      onClick={() => addToCollection(c)}
+                      variant={owned ? "secondary" : "default"}
+                    >
+                      {busy ? <Loader2 className="h-3 w-3 animate-spin" />
+                        : owned ? <><Check className="h-3 w-3 mr-1" />Add more</>
+                        : <><Plus className="h-3 w-3 mr-1" />Add</>}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </Card>
+          );
+        })}
+      </div>
     </div>
   );
 }
 
-function CardImg({ card }: { card: CardRow }) {
-  const candidates = cardImageCandidates(card.game, card.code, card.image_small ?? card.image_large);
+function CardImage({ candidates, name, owned }: { candidates: string[]; name: string; owned: boolean }) {
   const [idx, setIdx] = useState(0);
   const src = candidates[idx];
-  if (!src) {
-    return (
-      <div className="w-full card-aspect bg-muted flex items-center justify-center text-muted-foreground text-xs">
-        No image
-      </div>
-    );
-  }
+  if (!src) return <div className="w-full card-aspect bg-muted flex items-center justify-center text-muted-foreground text-xs">No image</div>;
   return (
     <img
-      src={src}
-      alt={card.name}
-      loading="lazy"
-      className="w-full card-aspect object-cover"
+      src={src} alt={name} loading="lazy"
+      className={`w-full card-aspect object-cover transition-all ${owned ? "" : "opacity-60 grayscale"}`}
       onError={() => setIdx((i) => i + 1)}
     />
   );
