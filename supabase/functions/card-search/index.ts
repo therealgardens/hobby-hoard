@@ -259,23 +259,74 @@ async function getYugiohSetsCached(): Promise<any[]> {
 }
 
 async function searchOnePiece(query: string, setId?: string) {
-  // Set browse: merge results from BOTH apitcg AND optcgapi to capture every
-  // card + every alternate art across both sources.
-  if (setId) {
-    const code = setId.toUpperCase().replace(/-/g, "");
-    const merged: any[] = [];
+  const merged: any[] = [];
 
-    // apitcg (rich metadata + some alternates)
-    try {
-      const url = `https://www.apitcg.com/api/one-piece/cards?code=${code}&limit=250`;
+  if (setId) {
+    // Parallelo invece di sequenziale — fix principale della lentezza
+    const [apitcgCards, optcgCards] = await Promise.allSettled([
+      (async () => {
+        const code = setId.toUpperCase().replace(/-/g, "");
+        const url = `https://www.apitcg.com/api/one-piece/cards?code=${code}&limit=250`;
+        const res = await fetch(url, {
+          headers: { "x-api-key": Deno.env.get("APITCG_API_KEY") ?? "" },
+        });
+        if (!res.ok) return [];
+        const json = await res.json();
+        return (json.data || []).map(mapApitcgCard);
+      })(),
+      (async () => {
+        const arr = await fetchOptcgSet(setId);
+        return arr.map(mapOptcgCard);
+      })(),
+    ]);
+
+    if (apitcgCards.status === "fulfilled") merged.push(...apitcgCards.value);
+    if (optcgCards.status === "fulfilled") merged.push(...optcgCards.value);
+    return merged;
+  }
+
+  // Free-text search: parallelo anche qui
+  const rawQ = query.trim();
+  const isCode = /^[a-z]{2,4}\d{2,3}-\d+/i.test(rawQ);
+  const split = isCode ? { name: rawQ, setHint: null as string | null } : splitQuery(rawQ);
+  const q = split.name || rawQ;
+  const setFilter = split.setHint ? split.setHint.toUpperCase().replace(/-/g, "") : null;
+
+  const [apitcgResult, optcgResult] = await Promise.allSettled([
+    (async () => {
+      const params = new URLSearchParams();
+      if (isCode) params.set("code", q.toUpperCase());
+      else params.set("name", q);
+      if (setFilter) params.set("code", setFilter);
+      const url = `https://www.apitcg.com/api/one-piece/cards?${params.toString()}&limit=100`;
       const res = await fetch(url, {
         headers: { "x-api-key": Deno.env.get("APITCG_API_KEY") ?? "" },
       });
-      if (res.ok) {
-        const json = await res.json();
-        for (const c of json.data || []) merged.push(mapApitcgCard(c));
+      if (!res.ok) return [];
+      const json = await res.json();
+      return (json.data || []).map(mapApitcgCard);
+    })(),
+    (async () => {
+      if (isCode) {
+        const base = rawQ.toUpperCase().replace(/_.*$/, "");
+        const arr = await fetchOptcgCardVariants(base);
+        return arr.map(mapOptcgCard);
       }
-    } catch (e) { console.error("apitcg setId error", e); }
+      return [];
+    })(),
+  ]);
+
+  if (apitcgResult.status === "fulfilled") merged.push(...apitcgResult.value);
+  if (optcgResult.status === "fulfilled") merged.push(...optcgResult.value);
+
+  return setFilter
+    ? merged.filter((c) => {
+        const code = String(c.code ?? "").toUpperCase().replace(/-/g, "");
+        const sid = String(c.set_id ?? "").toUpperCase().replace(/-/g, "");
+        return code.startsWith(setFilter) || sid === setFilter;
+      })
+    : merged;
+}
 
     // optcgapi (full set coverage including newer sets and many variants)
     try {
@@ -497,11 +548,20 @@ Deno.serve(async (req) => {
     });
 
     if (deduped.length) {
-      const { error } = await withDbRetry(() =>
-        admin.from("cards").upsert(deduped, { onConflict: "game,external_id" }),
-      );
-      if (error) console.error("upsert error", error);
-    }
+  const { data: upserted, error } = await withDbRetry(() =>
+    admin.from("cards").upsert(deduped, {
+      onConflict: "game,external_id",
+      defaultToNull: false,
+    }).select("*"),
+  );
+  if (error) {
+    console.error("upsert error", error);
+  } else if (upserted?.length) {
+    return new Response(JSON.stringify({ cards: upserted }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+}
 
     const ids = deduped.map((r: any) => r.external_id);
     let cached: any[] = [];
