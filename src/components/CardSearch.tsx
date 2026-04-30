@@ -16,12 +16,13 @@ type CardRow = Tables<"cards">;
 
 interface Props {
   game: Game;
-  /** When provided, replaces the built-in collection/wanted actions with a single pick button. */
   onPick?: (card: CardRow) => void;
   pickLabel?: string;
+  /** Se false (default), non carica carte automaticamente in picker mode */
+  autoLoad?: boolean;
 }
 
-export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
+export function CardSearch({ game, onPick, pickLabel = "Add", autoLoad = false }: Props) {
   const { user, loading: authLoading } = useAuth();
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(false);
@@ -84,22 +85,22 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
     const term = q.trim();
     if (term.length < 2) {
       // In picker mode, show some cards by default so the user has something to pick.
-      if (onPick) {
-        (async () => {
-          setLoading(true);
-          const { data } = await supabase
-            .from("cards")
-            .select("*")
-            .eq("game", game)
-            .order("name", { ascending: true })
-            .limit(40);
-          setLoading(false);
-          if (data) {
-            setResults(data);
-            refreshStatus(data);
-          }
-        })();
-      } else {
+      if (onPick && autoLoad) {
+  (async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from("cards")
+      .select("*")
+      .eq("game", game)
+      .order("name", { ascending: true })
+      .limit(40);
+    setLoading(false);
+    if (data) {
+      setResults(data);
+      refreshStatus(data);
+    }
+  })();
+} else {
         setResults([]);
         setLoading(false);
       }
