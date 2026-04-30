@@ -221,7 +221,16 @@ export default function MasterSets() {
 
     const offChange = onCollectionChanged((detail) => {
   if (!detail?.game || detail.game === game) {
-    setTimeout(() => refreshOwned(), 600); // ← aggiunto setTimeout
+    // Aggiornamento ottimistico immediato se il payload contiene la carta
+    if (detail.card && detail.cardId && !ownedCardIds.has(detail.cardId)) {
+      const sid = setIdForCard(game, detail.card);
+      if (sid) {
+        setOwnedBySet((prev) => new Map(prev).set(sid, (prev.get(sid) ?? 0) + 1));
+        setOwnedCardIds((prev) => new Set(prev).add(detail.cardId));
+      }
+    }
+    // Sync col DB dopo
+    refreshOwned();
   }
 });
 
