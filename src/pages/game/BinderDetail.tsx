@@ -239,29 +239,38 @@ export default function BinderDetail() {
                     !slot && "cursor-pointer hover:border-primary hover:bg-muted",
                   )}
                 >
-                  {(() => { const img = cardImage(slot?.card?.game, slot?.card?.code, slot?.card?.image_small); return img ? (
-                    <>
-                      <img
-                        src={img}
-                        alt={slot?.card?.name}
-                        onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                        className={cn("w-full h-full object-cover", slot?.is_wanted && "opacity-40")}
-                      />
-                      {slot.is_wanted && (
-                        <span className="absolute top-1 left-1 text-[10px] bg-accent text-accent-foreground px-1.5 py-0.5 rounded-full">
-                          wanted
-                        </span>
-                      )}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); clear(slot.id); }}
-                        className="absolute top-1 right-1 p-1 rounded-full bg-background/80 opacity-0 group-hover:opacity-100"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
-                    </>
-                  ) : (
+                  {slot ? (() => {
+                    const img = cardImage(slot.card?.game, slot.card?.code, slot.card?.image_small);
+                    return (
+                      <>
+                        {img ? (
+                          <img
+                            src={img}
+                            alt={slot.card?.name ?? ""}
+                            onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+                            className={cn("w-full h-full object-cover", slot.is_wanted && "opacity-40")}
+                          />
+                        ) : (
+                          <div className={cn("w-full h-full flex items-center justify-center p-1 text-center text-[11px] font-medium text-foreground bg-muted", slot.is_wanted && "opacity-40")}>
+                            <span className="line-clamp-3">{slot.card?.name ?? slot.card?.code ?? "Card"}</span>
+                          </div>
+                        )}
+                        {slot.is_wanted && (
+                          <span className="absolute top-1 left-1 text-[10px] bg-accent text-accent-foreground px-1.5 py-0.5 rounded-full">
+                            wanted
+                          </span>
+                        )}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); clear(slot.id); }}
+                          className="absolute top-1 right-1 p-1 rounded-full bg-background/80 opacity-0 group-hover:opacity-100"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </>
+                    );
+                  })() : (
                     <span>+ {pos + 1}</span>
-                  ); })()}
+                  )}
                 </div>
               );
             })}
