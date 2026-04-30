@@ -10,6 +10,7 @@ import { Plus, BookOpen } from "lucide-react";
 import { toast } from "sonner";
 import type { Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
+import { withDbRetry } from "@/lib/supabaseRetry";
 
 type Binder = Tables<"binders">;
 
@@ -23,7 +24,10 @@ export default function Binders() {
 
   const load = async () => {
     if (!game) return;
-    const { data } = await supabase.from("binders").select("*").eq("game", game).order("created_at");
+    const { data, error } = await withDbRetry(() =>
+      supabase.from("binders").select("*").eq("game", game).order("created_at"),
+    );
+    if (error) return toast.error(error.message);
     setBinders(data ?? []);
   };
   useEffect(() => { load(); }, [game]);
@@ -32,9 +36,11 @@ export default function Binders() {
     if (!game || !name.trim()) return;
     const { data: u } = await supabase.auth.getUser();
     if (!u.user) return;
-    const { error } = await supabase.from("binders").insert({
-      user_id: u.user.id, game, name: name.trim(), cols, rows,
-    });
+    const { error } = await withDbRetry(() =>
+      supabase.from("binders").insert({
+        user_id: u.user!.id, game, name: name.trim(), cols, rows,
+      }),
+    );
     if (error) return toast.error(error.message);
     setName(""); setOpen(false); load();
   };

@@ -1,16 +1,20 @@
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { setActiveGame } from "@/lib/game";
 import { useAuth } from "@/hooks/useAuth";
+import { useUnreadCounts } from "@/hooks/useUnreadCounts";
 import heroImg from "@/assets/hero-binder.jpg";
-import { LogOut } from "lucide-react";
+import { LogOut, Settings as SettingsIcon, Users } from "lucide-react";
 
 export default function Index() {
   const nav = useNavigate();
   const { user, signOut } = useAuth();
+  const { pendingRequests, unreadChats, openTradeRequests } = useUnreadCounts();
+  const totalAlerts = pendingRequests + unreadChats + openTradeRequests;
 
-  const pick = (g: "pokemon" | "onepiece") => {
+  const pick = (g: "pokemon" | "onepiece" | "yugioh") => {
     setActiveGame(g);
     nav(`/${g}`);
   };
@@ -20,9 +24,22 @@ export default function Index() {
       <header className="container mx-auto flex items-center justify-between py-6">
         <h2 className="text-3xl text-primary font-display">CardKeeper</h2>
         {user && (
-          <Button variant="ghost" size="sm" onClick={signOut}>
-            <LogOut className="h-4 w-4 mr-2" /> Sign out
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="ghost" size="sm" onClick={() => nav("/friends")} className="relative">
+              <Users className="h-4 w-4 mr-2" /> Friends
+              {totalAlerts > 0 && (
+                <Badge className="ml-2 h-5 min-w-5 px-1.5 text-[10px]" variant="destructive">
+                  {totalAlerts}
+                </Badge>
+              )}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => nav("/settings")}>
+              <SettingsIcon className="h-4 w-4 mr-2" /> Settings
+            </Button>
+            <Button variant="ghost" size="sm" onClick={signOut}>
+              <LogOut className="h-4 w-4 mr-2" /> Sign out
+            </Button>
+          </div>
         )}
       </header>
 
@@ -44,7 +61,7 @@ export default function Index() {
         </div>
 
         <h3 className="text-4xl mt-20 mb-6 text-secondary font-display text-center">Pick your collection</h3>
-        <div className="grid md:grid-cols-2 gap-6 max-w-4xl mx-auto">
+        <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
           <Card
             onClick={() => pick("pokemon")}
             className="group cursor-pointer p-10 bg-gradient-pokemon text-primary-foreground border-0 shadow-card hover:shadow-pop transition-all hover:-translate-y-1"
@@ -59,6 +76,14 @@ export default function Index() {
           >
             <div className="text-7xl mb-3">🏴‍☠️</div>
             <h3 className="text-5xl font-display">One Piece</h3>
+            <p className="opacity-90 mt-2">Master sets, binders, deck importer & wishlist.</p>
+          </Card>
+          <Card
+            onClick={() => pick("yugioh")}
+            className="group cursor-pointer p-10 bg-gradient-yugioh text-primary-foreground border-0 shadow-card hover:shadow-pop transition-all hover:-translate-y-1"
+          >
+            <div className="text-7xl mb-3">🎴</div>
+            <h3 className="text-5xl font-display">Yu-Gi-Oh!</h3>
             <p className="opacity-90 mt-2">Master sets, binders, deck importer & wishlist.</p>
           </Card>
         </div>

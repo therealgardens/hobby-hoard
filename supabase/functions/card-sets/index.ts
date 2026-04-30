@@ -133,6 +133,40 @@ async function onePieceSets(): Promise<SetOut[]> {
     }
   }
 
+  // Probe known set-id ranges that aren't in /allSets/ (newer ST decks,
+  // newer OP boosters, EB/PRB extras). We hit the /decks/ and /sets/
+  // endpoints in parallel and add anything that returns a non-empty payload.
+  const probeIds: string[] = [];
+  for (let i = 1; i <= 35; i++) probeIds.push(`ST-${String(i).padStart(2, "0")}`);
+  for (let i = 1; i <= 20; i++) probeIds.push(`OP-${String(i).padStart(2, "0")}`);
+  for (let i = 1; i <= 6; i++) probeIds.push(`EB-${String(i).padStart(2, "0")}`);
+  for (let i = 1; i <= 4; i++) probeIds.push(`PRB-${String(i).padStart(2, "0")}`);
+
+  await Promise.all(
+    probeIds.map(async (raw) => {
+      const id = raw.replace(/-/g, "");
+      if (map.has(id)) return; // already discovered
+      const isStarter = /^ST/i.test(raw);
+      const urls = isStarter
+        ? [`https://optcgapi.com/api/decks/${raw}/`, `https://optcgapi.com/api/sets/${raw}/`]
+        : [`https://optcgapi.com/api/sets/${raw}/`, `https://optcgapi.com/api/decks/${raw}/`];
+      for (const url of urls) {
+        try {
+          const r = await fetch(url);
+          if (!r.ok) continue;
+          const j = await r.json();
+          if (Array.isArray(j) && j.length > 0) {
+            const setName = j[0]?.set_name || id;
+            map.set(id, {
+              id, name: setName, series: null, releaseDate: null, total: j.length, logo: null,
+            });
+            return;
+          }
+        } catch (_) {}
+      }
+    }),
+  );
+
   // For sets without a logo, use the leader card image as a representative thumbnail.
   for (const s of map.values()) {
     if (!s.logo) {
@@ -140,22 +174,74 @@ async function onePieceSets(): Promise<SetOut[]> {
     }
   }
 
-  // Sort by id (newest OP## first if numeric, ST after, etc.)
+  // Sort: newest by id family. ST first by number desc, then OP desc, then others.
   return Array.from(map.values()).sort((a, b) => b.id.localeCompare(a.id));
 }
+
+async function yugiohSets(): Promise<SetOut[]> {
+  // YGOPRODeck — free, no API key required.
+  const res = await fetch("https://db.ygoprodeck.com/api/v7/cardsets.php");
+  if (!res.ok) return [];
+  const arr = await res.json();
+  // Some promotional codes (e.g. "LART" — The Lost Art Promotion) split a
+  // single set across dozens of sub-entries that all share the same set_code.
+  // Collapse them into one row per set_code, preferring the canonical
+  // "(series)" entry when it exists, otherwise the entry with the most cards.
+  const byCode = new Map<string, any>();
+  for (const s of arr || []) {
+    const code = String(s.set_code || s.set_name || "").toUpperCase();
+    if (!code) continue;
+    const existing = byCode.get(code);
+    if (!existing) { byCode.set(code, s); continue; }
+    const existingIsSeries = /\(series\)/i.test(String(existing.set_name || ""));
+    const newIsSeries = /\(series\)/i.test(String(s.set_name || ""));
+    if (newIsSeries && !existingIsSeries) { byCode.set(code, s); continue; }
+    if (existingIsSeries && !newIsSeries) continue;
+    if ((s.num_of_cards ?? 0) > (existing.num_of_cards ?? 0)) byCode.set(code, s);
+  }
+  return Array.from(byCode.values())
+    .map((s: any) => ({
+      id: String(s.set_code || s.set_name).toUpperCase(),
+      // Strip the "(series)" suffix from the display name.
+      name: String(s.set_name).replace(/\s*\(series\)\s*$/i, "").trim(),
+      series: null,
+      releaseDate: s.tcg_date ?? null,
+      total: s.num_of_cards ?? null,
+      logo: s.set_image ?? null,
+    }))
+    .filter((s: SetOut) => s.id && s.name)
+    .sort((a: SetOut, b: SetOut) =>
+      (b.releaseDate ?? "").localeCompare(a.releaseDate ?? ""),
+    );
+}
+
+// In-memory cache (per edge function instance) — sets lists rarely change,
+// so cache for 30 minutes to make subsequent loads instant.
+const _setsCache: Record<string, { at: number; data: SetOut[] }> = {};
+const SETS_TTL_MS = 30 * 60 * 1000;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
     const url = new URL(req.url);
     const game = url.searchParams.get("game");
-    if (game !== "pokemon" && game !== "onepiece") {
+    if (game !== "pokemon" && game !== "onepiece" && game !== "yugioh") {
       return new Response(JSON.stringify({ error: "invalid game" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    const sets = game === "pokemon" ? await pokemonSets() : await onePieceSets();
+    const cached = _setsCache[game];
+    if (cached && Date.now() - cached.at < SETS_TTL_MS) {
+      return new Response(JSON.stringify({ sets: cached.data }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const sets =
+      game === "pokemon" ? await pokemonSets()
+      : game === "onepiece" ? await onePieceSets()
+      : await yugiohSets();
+    if (sets.length > 0) _setsCache[game] = { at: Date.now(), data: sets };
     return new Response(JSON.stringify({ sets }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
