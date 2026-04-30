@@ -24,7 +24,7 @@ export async function withDbRetry<T extends SupabaseResult>(operation: () => Pro
 
   for (let i = 0; i < attempts; i += 1) {
     last = await operation();
-    if (!last.error || !isRetriableDbError(last.error) || i === attempts - 1) return last;
+    if (!last.error || !isRetriableDbError(last.error, last.status) || i === attempts - 1) return last;
     // Backoff: 400, 800, 1600, 3200, 5000, 5000 ms
     const delay = Math.min(400 * 2 ** i, 5000);
     await wait(delay);
