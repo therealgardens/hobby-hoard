@@ -1,7 +1,3 @@
-// Lightweight event bus to keep views in sync after collection mutations.
-// Any component that adds/removes cards from a user's collection should
-// call `emitCollectionChanged()` so listeners (e.g. Master Sets) refresh.
-
 export const COLLECTION_CHANGED_EVENT = "tcg:collection-changed";
 
 export function emitCollectionChanged(detail?: { game?: string; cardId?: string }) {
@@ -9,7 +5,9 @@ export function emitCollectionChanged(detail?: { game?: string; cardId?: string 
   window.dispatchEvent(new CustomEvent(COLLECTION_CHANGED_EVENT, { detail }));
 }
 
-export function onCollectionChanged(handler: (detail: { game?: string; cardId?: string } | undefined) => void) {
+export function onCollectionChanged(
+  handler: (detail: { game?: string; cardId?: string } | undefined) => void,
+) {
   if (typeof window === "undefined") return () => {};
   const listener = (e: Event) => handler((e as CustomEvent).detail);
   window.addEventListener(COLLECTION_CHANGED_EVENT, listener);
