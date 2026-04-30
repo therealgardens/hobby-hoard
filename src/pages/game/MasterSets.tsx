@@ -208,33 +208,34 @@ export default function MasterSets() {
     })();
   }, [game]);
 
-  // ← SOSTITUISCI il secondo useEffect con questo
-useEffect(() => {
-  if (!game) return;
+  useEffect(() => {
+    if (!game) return;
 
-  const refreshTimeout = { current: null as ReturnType<typeof setTimeout> | null };
-  const debouncedRefresh = () => {
-    if (refreshTimeout.current) clearTimeout(refreshTimeout.current);
-    refreshTimeout.current = setTimeout(() => refreshOwned(), 400);
-  };
+    const refreshTimeout = { current: null as ReturnType<typeof setTimeout> | null };
+    const debouncedRefresh = () => {
+      if (refreshTimeout.current) clearTimeout(refreshTimeout.current);
+      refreshTimeout.current = setTimeout(() => refreshOwned(), 400);
+    };
 
-  const onVisible = () => {
-    if (document.visibilityState === "visible") debouncedRefresh();
-  };
-  const offChange = onCollectionChanged((detail) => {
-    if (!detail?.game || detail.game === game) debouncedRefresh();
-  });
+    const onVisible = () => {
+      if (document.visibilityState === "visible") debouncedRefresh();
+    };
 
-  window.addEventListener("focus", debouncedRefresh);
-  document.addEventListener("visibilitychange", onVisible);
+    // ✅ fix: azione utente esplicita → refresh IMMEDIATO (non debouncato)
+    const offChange = onCollectionChanged((detail) => {
+      if (!detail?.game || detail.game === game) refreshOwned();
+    });
 
-  return () => {
-    if (refreshTimeout.current) clearTimeout(refreshTimeout.current);
-    window.removeEventListener("focus", debouncedRefresh);
-    document.removeEventListener("visibilitychange", onVisible);
-    offChange();
-  };
-}, [game]);
+    window.addEventListener("focus", debouncedRefresh);
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      if (refreshTimeout.current) clearTimeout(refreshTimeout.current);
+      window.removeEventListener("focus", debouncedRefresh);
+      document.removeEventListener("visibilitychange", onVisible);
+      offChange();
+    };
+  }, [game]);
 
   const visibleSets = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -430,7 +431,6 @@ useEffect(() => {
         />
       ) : (
         <>
-          {/* Toggle Espansioni / Cerca carte */}
           <div className="flex items-center gap-1 mb-6 rounded-lg border bg-muted p-1 w-fit">
             <button
               type="button"
