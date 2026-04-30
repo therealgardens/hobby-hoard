@@ -156,7 +156,7 @@ export default function BinderDetail() {
           .from("binder_slots")
           .insert({
             binder_id: binderId,
-            user_id: u.user.id,
+            user_id: user.id,
             position: pos,
             card_id: card.id,
             is_wanted: wanted,
