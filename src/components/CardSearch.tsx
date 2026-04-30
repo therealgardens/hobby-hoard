@@ -10,6 +10,7 @@ import { cardImageCandidates, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 import { withDbRetry } from "@/lib/supabaseRetry";
 import { addWishlist, removeWishlistByCard, wishlistStatus } from "@/lib/wishlist";
+import { emitCollectionChanged } from "@/lib/collectionEvents";
 
 type CardRow = Tables<"cards">;
 
@@ -82,14 +83,32 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
   useEffect(() => {
     const term = q.trim();
     if (term.length < 2) {
-      setResults([]);
-      setLoading(false);
+      // In picker mode, show some cards by default so the user has something to pick.
+      if (onPick) {
+        (async () => {
+          setLoading(true);
+          const { data } = await supabase
+            .from("cards")
+            .select("*")
+            .eq("game", game)
+            .order("name", { ascending: true })
+            .limit(40);
+          setLoading(false);
+          if (data) {
+            setResults(data);
+            refreshStatus(data);
+          }
+        })();
+      } else {
+        setResults([]);
+        setLoading(false);
+      }
       return;
     }
     const t = setTimeout(() => runSearch(term), 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, game]);
+  }, [q, game, onPick]);
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -113,6 +132,7 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
     if (error) return toast.error(error.message);
     toast.success(`Added ${c.name} ×${quantity}`);
     setOwnedIds((prev) => new Set(prev).add(c.id));
+    emitCollectionChanged({ game, cardId: c.id });
   };
 
   const toggleWanted = async (c: CardRow) => {
