@@ -134,14 +134,16 @@ export default function BinderDetail() {
     }
   };
 
-  // ← fix bug 3: check esplicito → insert/update invece di upsert con onConflict
+  // ─── PLACE — select esplicito → insert o update ───────────────────────────
   const place = async (card: CardRow) => {
     if (pickingPos === null || !binderId || !user) return;
     const pos = pickingPos;
     const wanted = isWanted;
 
+    // Aggiornamento ottimistico
+    const optimisticId = `optimistic-${pos}-${Date.now()}`;
     const optimisticSlot: Slot = {
-      id: `optimistic-${pos}`,
+      id: optimisticId,
       binder_id: binderId,
       user_id: user.id,
       position: pos,
@@ -156,51 +158,72 @@ export default function BinderDetail() {
     setIsWanted(false);
 
     try {
-      const { data: existing } = await supabase
+      // 1. Controlla se esiste già uno slot in quella posizione
+      const { data: existing, error: checkErr } = await supabase
         .from("binder_slots")
         .select("id")
         .eq("binder_id", binderId)
         .eq("position", pos)
         .maybeSingle();
 
+      if (checkErr) throw new Error(`Check slot failed: ${checkErr.message}`);
+
       let savedSlot: Tables<"binder_slots"> | null = null;
 
       if (existing) {
-        const { data, error } = await withDbRetry(() =>
-          supabase.from("binder_slots")
+        // 2a. Update slot esistente
+        const { data, error: updErr } = await withDbRetry(() =>
+          supabase
+            .from("binder_slots")
             .update({ card_id: card.id, is_wanted: wanted })
             .eq("id", existing.id)
             .select()
             .maybeSingle(),
         );
-        if (error) throw error;
+        if (updErr) throw new Error(`Update slot failed: ${updErr.message}`);
         savedSlot = data;
       } else {
-        const { data, error } = await withDbRetry(() =>
-          supabase.from("binder_slots")
-            .insert({ binder_id: binderId, user_id: user.id, position: pos, card_id: card.id, is_wanted: wanted })
+        // 2b. Insert nuovo slot
+        const { data, error: insErr } = await withDbRetry(() =>
+          supabase
+            .from("binder_slots")
+            .insert({
+              binder_id: binderId,
+              user_id: user.id,
+              position: pos,
+              card_id: card.id,
+              is_wanted: wanted,
+            })
             .select()
             .maybeSingle(),
         );
-        if (error) throw error;
+        if (insErr) throw new Error(`Insert slot failed: ${insErr.message}`);
         savedSlot = data;
       }
 
+      // 3. Sostituisce lo slot ottimistico con quello reale
       if (savedSlot) {
         setSlots((prev) => [
-          ...prev.filter((s) => s.position !== pos),
+          ...prev.filter((s) => s.id !== optimisticId && s.position !== pos),
           { ...(savedSlot as Tables<"binder_slots">), card },
         ]);
       }
 
+      // 4. Wishlist se richiesto
       if (wanted) {
-        try { await addWishlist(card, game!, { binder_id: binderId, quantity: 1 }); }
-        catch (err) { toast.error(err instanceof Error ? err.message : "Could not add to wishlist"); }
+        try {
+          await addWishlist(card, game!, { binder_id: binderId, quantity: 1 });
+        } catch (wErr) {
+          toast.error(wErr instanceof Error ? wErr.message : "Could not add to wishlist");
+        }
       }
+
       toast.success(`Placed ${card.name}`);
     } catch (err) {
-      setSlots((prev) => prev.filter((s) => s.id !== `optimistic-${pos}`));
-      toast.error(err instanceof Error ? err.message : "Could not place card");
+      // Rollback ottimistico
+      console.error("[BinderDetail] place error:", err);
+      setSlots((prev) => prev.filter((s) => s.id !== optimisticId));
+      toast.error(err instanceof Error ? err.message : "Could not place card — check console for details");
     }
   };
 
@@ -257,11 +280,14 @@ export default function BinderDetail() {
               const pos = pageStart + i;
               const slot = slotMap.get(pos);
               return (
-                <div key={pos} onClick={() => !slot && setPickingPos(pos)}
+                <div
+                  key={pos}
+                  onClick={() => !slot && setPickingPos(pos)}
                   className={cn(
                     "card-aspect rounded-lg border-2 border-dashed border-border bg-[hsl(var(--binder-empty))] flex items-center justify-center text-muted-foreground text-xs relative overflow-hidden group",
                     !slot && "cursor-pointer hover:border-primary hover:bg-muted",
-                  )}>
+                  )}
+                >
                   {slot ? (() => {
                     const img = cardImage(slot.card?.game, slot.card?.code, slot.card?.image_small);
                     return (
@@ -314,7 +340,7 @@ export default function BinderDetail() {
       <Dialog open={pickingPos !== null} onOpenChange={(o) => !o && setPickingPos(null)}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{isWanted ? "Qualsiasi carta" : "Cerca carta"} — slot {pickingPos !== null && pickingPos + 1}</DialogTitle>
+            <DialogTitle>Cerca carta — slot {pickingPos !== null && pickingPos + 1}</DialogTitle>
           </DialogHeader>
           <div className="flex items-center gap-2 mb-3">
             <Switch id="w" checked={isWanted} onCheckedChange={setIsWanted} />
@@ -338,7 +364,7 @@ export default function BinderDetail() {
   );
 }
 
-// ─── Ricerca semplice per binder — solo DB locale ─────────────────────────────
+// ─── Ricerca semplice per binder ──────────────────────────────────────────────
 
 function BinderCardPicker({ game, onPick }: { game: Game; onPick: (card: CardRow) => void }) {
   const [q, setQ] = useState("");
