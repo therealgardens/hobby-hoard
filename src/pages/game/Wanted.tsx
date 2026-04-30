@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { Card } from "@/components/ui/card";
@@ -9,7 +9,13 @@ import { CardSearch } from "@/components/CardSearch";
 import { toast } from "sonner";
 import { cardImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
-import { addWishlist, listWishlist, removeWishlistById, updateWishlistQuantity, type WishlistItem } from "@/lib/wishlist";
+import {
+  addWishlist,
+  listWishlist,
+  removeWishlistById,
+  updateWishlistQuantity,
+  type WishlistItem,
+} from "@/lib/wishlist";
 import {
   Dialog,
   DialogContent,
@@ -22,34 +28,44 @@ type Wanted = WishlistItem;
 
 export default function Wanted() {
   const { game } = useParams<{ game: Game }>();
-  const { user, loading } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [items, setItems] = useState<Wanted[]>([]);
   const [editing, setEditing] = useState<Wanted | null>(null);
   const [editQty, setEditQty] = useState(1);
+  const refreshTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = async () => {
-    if (!game || loading) return;
-    if (!user) {
-      setItems([]);
-      return;
-    }
+    if (!game || authLoading) return;
+    if (!user) { setItems([]); return; }
     try {
       setItems(await listWishlist(game));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not load wishlist");
     }
   };
-  useEffect(() => { load(); }, [game, user?.id, loading]);
 
-  // Refresh on focus so wishlist additions from other pages show up.
+  const debouncedLoad = () => {
+    if (refreshTimeout.current) clearTimeout(refreshTimeout.current);
+    refreshTimeout.current = setTimeout(load, 400);
+  };
+
+  // Caricamento iniziale
   useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game, user?.id, authLoading]);
+
+  // Refresh su focus / visibilitychange con debounce
+  useEffect(() => {
+    if (!game) return;
     const onVisible = () => {
-      if (document.visibilityState === "visible") load();
+      if (document.visibilityState === "visible") debouncedLoad();
     };
-    window.addEventListener("focus", load);
+    window.addEventListener("focus", debouncedLoad);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
-      window.removeEventListener("focus", load);
+      if (refreshTimeout.current) clearTimeout(refreshTimeout.current);
+      window.removeEventListener("focus", debouncedLoad);
       document.removeEventListener("visibilitychange", onVisible);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -60,21 +76,21 @@ export default function Wanted() {
     if (!game) return;
     try {
       await addWishlist(card, game);
+      toast.success("Added to wishlist");
+      load();
     } catch (error) {
-      return toast.error(error instanceof Error ? error.message : "Could not add to wishlist");
+      toast.error(error instanceof Error ? error.message : "Could not add to wishlist");
     }
-    toast.success("Added to wishlist");
-    load();
   };
 
   const remove = async (id: string) => {
     try {
       await removeWishlistById(id);
+      setEditing(null);
+      load();
     } catch (error) {
-      return toast.error(error instanceof Error ? error.message : "Could not remove from wishlist");
+      toast.error(error instanceof Error ? error.message : "Could not remove from wishlist");
     }
-    setEditing(null);
-    load();
   };
 
   const openEdit = (w: Wanted) => {
@@ -84,15 +100,14 @@ export default function Wanted() {
 
   const saveQty = async () => {
     if (!editing) return;
-    const q = Math.max(1, editQty);
     try {
-      await updateWishlistQuantity(editing.id, q);
+      await updateWishlistQuantity(editing.id, Math.max(1, editQty));
+      toast.success("Updated");
+      setEditing(null);
+      load();
     } catch (error) {
-      return toast.error(error instanceof Error ? error.message : "Could not update wishlist");
+      toast.error(error instanceof Error ? error.message : "Could not update wishlist");
     }
-    toast.success("Updated");
-    setEditing(null);
-    load();
   };
 
   const buildRows = () =>
@@ -113,7 +128,10 @@ export default function Wanted() {
       const s = String(v ?? "");
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const csv = [header.join(","), ...rows.map((r) => header.map((h) => escape((r as any)[h])).join(","))].join("\n");
+    const csv = [
+      header.join(","),
+      ...rows.map((r) => header.map((h) => escape((r as any)[h])).join(",")),
+    ].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -137,12 +155,13 @@ export default function Wanted() {
     }
   };
 
-
   return (
     <div className="space-y-8">
       <div>
         <h2 className="text-4xl font-display">Wanted</h2>
-        <p className="text-muted-foreground">Cards you're chasing — show up transparent in binders.</p>
+        <p className="text-muted-foreground">
+          Cards you're chasing — show up transparent in binders.
+        </p>
       </div>
 
       <Card className="p-4 bg-gradient-card">
@@ -164,29 +183,37 @@ export default function Wanted() {
             </div>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-            {items.map(w => {
+            {items.map((w) => {
               const img = cardImage(w.card?.game, w.card?.code, w.card?.image_small);
               return (
-              <Card
-                key={w.id}
-                className="overflow-hidden bg-gradient-card relative group cursor-pointer hover:shadow-card transition-shadow"
-                onClick={() => openEdit(w)}
-              >
-                {img && <img src={img} alt={w.card?.name} className="w-full card-aspect object-cover opacity-70" onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")} />}
-                <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded-md bg-background/90 text-[11px] font-bold shadow">
-                  ×{w.quantity ?? 1}
-                </div>
-                <div className="p-2">
-                  <p className="text-xs font-semibold truncate">{w.card?.name}</p>
-                  <p className="text-[10px] text-muted-foreground truncate">{w.card?.code}</p>
-                </div>
-                <button
-                  onClick={(e) => { e.stopPropagation(); remove(w.id); }}
-                  className="absolute top-1 right-1 p-1 rounded-full bg-background/80 opacity-0 group-hover:opacity-100"
+                <Card
+                  key={w.id}
+                  className="overflow-hidden bg-gradient-card relative group cursor-pointer hover:shadow-card transition-shadow"
+                  onClick={() => openEdit(w)}
                 >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-              </Card>
+                  {img && (
+                    <img
+                      src={img}
+                      alt={w.card?.name}
+                      loading="lazy"
+                      className="w-full card-aspect object-cover opacity-70"
+                      onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+                    />
+                  )}
+                  <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded-md bg-background/90 text-[11px] font-bold shadow">
+                    ×{w.quantity ?? 1}
+                  </div>
+                  <div className="p-2">
+                    <p className="text-xs font-semibold truncate">{w.card?.name}</p>
+                    <p className="text-[10px] text-muted-foreground truncate">{w.card?.code}</p>
+                  </div>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); remove(w.id); }}
+                    className="absolute top-1 right-1 p-1 rounded-full bg-background/80 opacity-0 group-hover:opacity-100"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </Card>
               );
             })}
           </div>
