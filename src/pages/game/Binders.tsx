@@ -106,13 +106,20 @@ export default function Binders() {
                 <div><Label>Columns</Label><Input type="number" min={2} max={6} value={cols} onChange={e => setCols(parseInt(e.target.value) || 3)} /></div>
                 <div><Label>Rows</Label><Input type="number" min={2} max={6} value={rows} onChange={e => setRows(parseInt(e.target.value) || 3)} /></div>
               </div>
-              <Button className="w-full" onClick={create}>Create</Button>
+              <Button className="w-full" onClick={create} disabled={creating || !name.trim()}>
+                {creating ? "Creating…" : "Create"}
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
       </div>
 
-      {binders.length === 0 ? (
+      {loading && binders.length === 0 ? (
+        <Card className="p-12 text-center bg-gradient-card">
+          <BookOpen className="h-12 w-12 mx-auto text-muted-foreground animate-pulse" />
+          <p className="mt-3 text-muted-foreground">Loading binders…</p>
+        </Card>
+      ) : binders.length === 0 ? (
         <Card className="p-12 text-center bg-gradient-card">
           <BookOpen className="h-12 w-12 mx-auto text-muted-foreground" />
           <p className="mt-3 text-muted-foreground">No binders yet. Create your first one!</p>
