@@ -266,14 +266,36 @@ export default function MasterSets() {
     if (!game) return;
     const { data: userData } = await supabase.auth.getUser();
     if (!userData.user) return;
-    const { error } = await supabase.from("collection_entries").insert({
-      user_id: userData.user.id,
-      card_id: c.id,
-      game,
-      rarity: c.rarity ?? null,
-      language: "EN",
-      quantity: 1,
-    });
+
+    const { data: existing } = await withDbRetry(() =>
+      supabase
+        .from("collection_entries")
+        .select("id, quantity")
+        .eq("user_id", userData.user!.id)
+        .eq("card_id", c.id)
+        .maybeSingle()
+    );
+
+    let error;
+    if (existing) {
+      ({ error } = await withDbRetry(() =>
+        supabase
+          .from("collection_entries")
+          .update({ quantity: existing.quantity + 1 })
+          .eq("id", existing.id)
+      ));
+    } else {
+      ({ error } = await withDbRetry(() =>
+        supabase.from("collection_entries").insert({
+          user_id: userData.user!.id,
+          card_id: c.id,
+          game,
+          rarity: c.rarity ?? null,
+          language: "EN",
+          quantity: 1,
+        })
+      ));
+    }
     if (error) return toast.error(error.message);
     toast.success(`Added ${c.name}`);
     const wasOwned = ownedCardIds.has(c.id);
@@ -336,14 +358,36 @@ export default function MasterSets() {
     if (!picked || !game) return;
     const { data: userData } = await supabase.auth.getUser();
     if (!userData.user) return;
-    const { error } = await supabase.from("collection_entries").insert({
-      user_id: userData.user.id,
-      card_id: picked.id,
-      game,
-      rarity: rarity || null,
-      language,
-      quantity,
-    });
+
+    const { data: existing } = await withDbRetry(() =>
+      supabase
+        .from("collection_entries")
+        .select("id, quantity")
+        .eq("user_id", userData.user!.id)
+        .eq("card_id", picked.id)
+        .maybeSingle()
+    );
+
+    let error;
+    if (existing) {
+      ({ error } = await withDbRetry(() =>
+        supabase
+          .from("collection_entries")
+          .update({ quantity: existing.quantity + quantity })
+          .eq("id", existing.id)
+      ));
+    } else {
+      ({ error } = await withDbRetry(() =>
+        supabase.from("collection_entries").insert({
+          user_id: userData.user!.id,
+          card_id: picked.id,
+          game,
+          rarity: rarity || null,
+          language,
+          quantity,
+        })
+      ));
+    }
     if (error) return toast.error(error.message);
     toast.success(`Added ${picked.name} ×${quantity}`);
     const savedId = picked.id;
