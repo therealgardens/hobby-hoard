@@ -10,6 +10,7 @@ import { cardImageCandidates, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 import { withDbRetry } from "@/lib/supabaseRetry";
 import { addWishlist, removeWishlistByCard, wishlistStatus } from "@/lib/wishlist";
+import { emitCollectionChanged } from "@/lib/collectionEvents";
 
 type CardRow = Tables<"cards">;
 
@@ -113,6 +114,7 @@ export function CardSearch({ game, onPick, pickLabel = "Add" }: Props) {
     if (error) return toast.error(error.message);
     toast.success(`Added ${c.name} ×${quantity}`);
     setOwnedIds((prev) => new Set(prev).add(c.id));
+    emitCollectionChanged({ game, cardId: c.id });
   };
 
   const toggleWanted = async (c: CardRow) => {
