@@ -137,30 +137,60 @@ export default function BinderDetail() {
   const place = async (card: Tables<"cards">) => {
     if (pickingPos === null || !binderId) return;
     const { data: u } = await supabase.auth.getUser();
-    if (!u.user) return;
+    if (!u.user) return toast.error("Not signed in");
+    const pos = pickingPos;
+    const wanted = isWanted;
     // upsert
-    const existing = slotMap.get(pickingPos);
+    const existing = slotMap.get(pos);
     if (existing) {
-      await supabase.from("binder_slots").update({ card_id: card.id, is_wanted: isWanted }).eq("id", existing.id);
+      const { error } = await withDbRetry(() =>
+        supabase.from("binder_slots").update({ card_id: card.id, is_wanted: wanted }).eq("id", existing.id),
+      );
+      if (error) return toast.error(error.message || "Could not update slot");
+      // Optimistic local update so the card appears immediately
+      setSlots((prev) =>
+        prev.map((s) => (s.id === existing.id ? { ...s, card_id: card.id, is_wanted: wanted, card } : s)),
+      );
     } else {
-      await supabase.from("binder_slots").insert({
-        binder_id: binderId, user_id: u.user.id, position: pickingPos, card_id: card.id, is_wanted: isWanted,
-      });
+      const { data: inserted, error } = await withDbRetry(() =>
+        supabase
+          .from("binder_slots")
+          .insert({
+            binder_id: binderId,
+            user_id: u.user.id,
+            position: pos,
+            card_id: card.id,
+            is_wanted: wanted,
+          })
+          .select()
+          .single(),
+      );
+      if (error) return toast.error(error.message || "Could not place card");
+      // Optimistic local update
+      if (inserted) {
+        setSlots((prev) => [...prev, { ...(inserted as Tables<"binder_slots">), card }]);
+      }
     }
-    if (isWanted) {
+    if (wanted) {
       try {
         await addWishlist(card, game!, { binder_id: binderId, quantity: 1 });
       } catch (error) {
-        return toast.error(error instanceof Error ? error.message : "Could not add to wishlist");
+        toast.error(error instanceof Error ? error.message : "Could not add to wishlist");
       }
     }
+    toast.success(`Placed ${card.name}`);
     setPickingPos(null);
+    setIsWanted(false);
+    // Re-sync from DB in the background to pick up server-side changes.
     load();
   };
 
   const clear = async (slotId: string) => {
-    await supabase.from("binder_slots").delete().eq("id", slotId);
-    load();
+    const { error } = await withDbRetry(() =>
+      supabase.from("binder_slots").delete().eq("id", slotId),
+    );
+    if (error) return toast.error(error.message || "Could not clear slot");
+    setSlots((prev) => prev.filter((s) => s.id !== slotId));
   };
 
   return (
