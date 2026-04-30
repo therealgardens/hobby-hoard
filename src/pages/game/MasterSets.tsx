@@ -79,19 +79,29 @@ export default function MasterSets() {
     if (!uid) return;
     const ownedCacheKey = `tcg.owned.${game}.${uid}.v3`;
 
-    const { data: ownedRows } = await withDbRetry(() =>
+    const { data: ownedRows, error: ownedErr } = await withDbRetry(() =>
       supabase
         .from("collection_entries")
         .select("card_id, language")
         .eq("user_id", uid)
         .eq("game", game),
     );
+    // If the DB call failed (e.g. transient recovery), keep the existing
+    // cached state instead of wiping My Master Sets to empty.
+    if (ownedErr) {
+      console.warn("refreshOwned: collection fetch failed", ownedErr);
+      return;
+    }
     const cardIds = Array.from(new Set((ownedRows ?? []).map((r: any) => r.card_id).filter(Boolean))) as string[];
     let cardsById = new Map<string, { set_id: string | null; set_name: string | null; code: string | null }>();
     if (cardIds.length) {
-      const { data: cards } = await withDbRetry(() =>
+      const { data: cards, error: cardsErr } = await withDbRetry(() =>
         supabase.from("cards").select("id, set_id, set_name, code").in("id", cardIds),
       );
+      if (cardsErr) {
+        console.warn("refreshOwned: cards fetch failed", cardsErr);
+        return;
+      }
       cardsById = new Map((cards ?? []).map((c: any) => [c.id, c]));
     }
     const counts = new Map<string, number>();
