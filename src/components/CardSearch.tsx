@@ -68,7 +68,6 @@ export function CardSearch({
     const id = ++reqIdRef.current;
     setLoading(true);
 
-    // Caso ownedOnly: cerca solo tra le carte possedute, niente edge function
     if (ownedOnly && ownedCardIds && ownedCardIds.size > 0) {
       const { data: local } = await supabase
         .from("cards")
@@ -86,7 +85,6 @@ export function CardSearch({
       return;
     }
 
-    // Prima prova il DB locale
     const { data: local } = await supabase
       .from("cards")
       .select("*")
@@ -97,7 +95,6 @@ export function CardSearch({
 
     const localFiltered = applyOwnedFilter(local ?? []);
 
-    // Se il DB locale ha già risultati sufficienti, non chiamiamo la edge function
     if (localFiltered.length >= 10) {
       setLoading(false);
       setResults(localFiltered);
@@ -105,7 +102,6 @@ export function CardSearch({
       return;
     }
 
-    // Altrimenti chiama la edge function per risultati più completi
     const { data, error } = await supabase.functions.invoke("card-search", {
       body: { game, query: term },
     });
@@ -199,7 +195,16 @@ export function CardSearch({
         return toast.error(error.message);
       }
       toast.success(`Added ${c.name} ×${quantity}`);
-      emitCollectionChanged({ game, cardId: c.id });
+      // ← Passa la carta nell'evento per aggiornamento ottimistico in MasterSets
+      emitCollectionChanged({
+        game,
+        cardId: c.id,
+        card: {
+          set_id: c.set_id ?? null,
+          set_name: c.set_name ?? null,
+          code: c.code ?? null,
+        },
+      });
     } finally {
       setBusy(c.id, false);
     }
