@@ -1,15 +1,23 @@
-export const COLLECTION_CHANGED_EVENT = "tcg:collection-changed";
+export interface CollectionChangedDetail {
+  game: string;
+  cardId: string;
+  card?: {
+    set_id: string | null;
+    set_name: string | null;
+    code: string | null;
+  };
+}
 
-export function emitCollectionChanged(detail?: { game?: string; cardId?: string }) {
-  if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent(COLLECTION_CHANGED_EVENT, { detail }));
+const COLLECTION_CHANGED = "tcg:collection-changed";
+
+export function emitCollectionChanged(detail: CollectionChangedDetail) {
+  window.dispatchEvent(new CustomEvent(COLLECTION_CHANGED, { detail }));
 }
 
 export function onCollectionChanged(
-  handler: (detail: { game?: string; cardId?: string } | undefined) => void,
-) {
-  if (typeof window === "undefined") return () => {};
-  const listener = (e: Event) => handler((e as CustomEvent).detail);
-  window.addEventListener(COLLECTION_CHANGED_EVENT, listener);
-  return () => window.removeEventListener(COLLECTION_CHANGED_EVENT, listener);
+  handler: (detail: CollectionChangedDetail) => void,
+): () => void {
+  const listener = (e: Event) => handler((e as CustomEvent<CollectionChangedDetail>).detail);
+  window.addEventListener(COLLECTION_CHANGED, listener);
+  return () => window.removeEventListener(COLLECTION_CHANGED, listener);
 }
