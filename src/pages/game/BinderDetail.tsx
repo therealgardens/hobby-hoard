@@ -334,7 +334,7 @@ export default function BinderDetail() {
             <Switch id="w" checked={isWanted} onCheckedChange={setIsWanted} />
             <Label htmlFor="w">Mark as wanted (transparent placeholder)</Label>
           </div>
-          {game && <CardSearch game={game} onPick={place} pickLabel="Place" />}
+          {game && <CardSearch game={game} onPick={place} pickLabel="Place" autoLoad={true} />}
         </DialogContent>
       </Dialog>
     </div>
