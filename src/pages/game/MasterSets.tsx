@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, Plus, Search, Trash2, Heart, LayoutGrid, List, Minus, Loader2 } from "lucide-react";
+import { ArrowLeft, Plus, Search, Trash2, Heart, LayoutGrid, List, Minus, Loader2, BookOpen } from "lucide-react";
 import { toast } from "sonner";
 import { cardImageCandidates, proxiedImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
@@ -35,8 +35,6 @@ const LANG_FLAG: Record<string, string> = {
 };
 const SETS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
-// ─── Cache in-memory a livello di modulo ───────────────────────────────────────
-// Sopravvive ai mount/unmount del componente: nessun flash quando si torna indietro.
 interface OwnedCache {
   counts: Map<string, number>;
   ids: Set<string>;
@@ -44,7 +42,6 @@ interface OwnedCache {
 }
 const _ownedCache = new Map<string, OwnedCache>();
 const _setsCache = new Map<string, SetInfo[]>();
-// ──────────────────────────────────────────────────────────────────────────────
 
 function extractSetId(s: string | null | undefined): string | null {
   if (!s) return null;
@@ -63,8 +60,8 @@ function setIdForCard(game: Game, c: { set_id: string | null; set_name: string |
 
 export default function MasterSets() {
   const { game } = useParams<{ game: Game }>();
+  const navigate = useNavigate();
 
-  // Leggi subito dalla cache in-memory (sincrono, zero flash)
   const cachedOwned = game ? _ownedCache.get(game) : undefined;
   const cachedSets = game ? _setsCache.get(game) : undefined;
 
@@ -89,7 +86,6 @@ export default function MasterSets() {
   const writeOwnedCache = (counts: Map<string, number>, ids: Set<string>, langs: Map<string, string>) => {
     if (!game) return;
     _ownedCache.set(game, { counts, ids, langs });
-    // Scrivi anche su sessionStorage come fallback per refresh di pagina
     try {
       supabase.auth.getUser().then(({ data }) => {
         const uid = data.user?.id;
@@ -112,7 +108,7 @@ export default function MasterSets() {
     const { data: ownedRows, error: ownedErr } = await withDbRetry(() =>
       supabase.from("collection_entries").select("card_id, language").eq("user_id", uid).eq("game", game),
     );
-    if (ownedErr) { console.warn("refreshOwned: collection fetch failed", ownedErr); return; }
+    if (ownedErr) { console.warn("refreshOwned failed", ownedErr); return; }
 
     const cardIds = Array.from(new Set((ownedRows ?? []).map((r: any) => r.card_id).filter(Boolean))) as string[];
     let cardsById = new Map<string, { set_id: string | null; set_name: string | null; code: string | null }>();
@@ -120,7 +116,7 @@ export default function MasterSets() {
       const { data: cards, error: cardsErr } = await withDbRetry(() =>
         supabase.from("cards").select("id, set_id, set_name, code").in("id", cardIds),
       );
-      if (cardsErr) { console.warn("refreshOwned: cards fetch failed", cardsErr); return; }
+      if (cardsErr) { console.warn("refreshOwned cards failed", cardsErr); return; }
       cardsById = new Map((cards ?? []).map((c: any) => [c.id, c]));
     }
 
@@ -153,12 +149,9 @@ export default function MasterSets() {
     if (!game) return;
     setActiveSet(null);
     setQuery("");
-
-    // Se non abbiamo cache, mostra skeleton
     if (!_setsCache.has(game)) setLoadingSets(true);
 
     (async () => {
-      // 1. Prova localStorage per i set
       const cacheKey = `tcg.sets.${game}.v1`;
       if (!_setsCache.has(game)) {
         try {
@@ -174,7 +167,6 @@ export default function MasterSets() {
         } catch (_) {}
       }
 
-      // 2. Fetch fresco dei set
       try {
         const res = await fetch(
           `https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/functions/v1/card-sets?game=${game}`,
@@ -191,11 +183,9 @@ export default function MasterSets() {
 
       setLoadingSets(false);
 
-      // 3. Dati owned: prima sessionStorage, poi DB
       const userRes = await supabase.auth.getUser();
       const uid = userRes.data.user?.id;
       if (uid && !_ownedCache.has(game)) {
-        // Prova sessionStorage solo se non abbiamo la cache in-memory
         try {
           const raw = sessionStorage.getItem(`tcg.owned.${game}.${uid}.v3`);
           if (raw) {
@@ -290,7 +280,6 @@ export default function MasterSets() {
         ));
       }
       if (error) {
-        // Rollback
         const rollbackIds = new Set(ownedCardIds);
         if (!wasOwned) rollbackIds.delete(c.id);
         setOwnedCardIds(rollbackIds);
@@ -420,6 +409,7 @@ export default function MasterSets() {
           ownedCardIds={ownedCardIds} ownedLangByCard={ownedLangByCard}
           wantedCardIds={wantedCardIds} onToggleWanted={toggleWanted}
           quickAddBusy={quickAddBusy}
+          onBinderCreated={(binderId) => navigate(`/${game}/binders/${binderId}`)}
         />
       ) : (
         <>
@@ -492,6 +482,8 @@ export default function MasterSets() {
   );
 }
 
+// ─── Componenti di supporto ───────────────────────────────────────────────────
+
 function SetGridSkeleton() {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -541,147 +533,4 @@ function SetGrid({ sets, ownedBySet, onOpen }: { sets: SetInfo[]; ownedBySet: Ma
       {sets.map((s) => (
         <Card key={s.id} className="p-4 cursor-pointer hover:shadow-card transition-shadow bg-gradient-card" onClick={() => onOpen(s)}>
           <div className="flex items-start gap-3">
-            <SetThumb s={s} />
-            <div className="flex-1 min-w-0">
-              <p className="font-semibold truncate">{s.name}</p>
-              <p className="text-xs text-muted-foreground truncate">{s.id}{s.releaseDate ? ` · ${s.releaseDate}` : ""}</p>
-            </div>
-          </div>
-        </Card>
-      ))}
-    </div>
-  );
-}
-
-function SetViewSkeleton() {
-  return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-      {Array.from({ length: 10 }).map((_, i) => (
-        <Card key={i} className="overflow-hidden bg-gradient-card">
-          <Skeleton className="w-full card-aspect" />
-          <div className="p-2 space-y-2"><Skeleton className="h-4 w-3/4" /><Skeleton className="h-3 w-1/2" /></div>
-        </Card>
-      ))}
-    </div>
-  );
-}
-
-function SetView({
-  game, set, onBack, onPickCard, onQuickAdd,
-  ownedCardIds, ownedLangByCard, wantedCardIds, onToggleWanted, quickAddBusy,
-}: {
-  game: Game; set: SetInfo; onBack: () => void;
-  onPickCard: (c: CardRow) => void; onQuickAdd: (c: CardRow) => void;
-  ownedCardIds: Set<string>; ownedLangByCard: Map<string, string>;
-  wantedCardIds: Set<string>; onToggleWanted: (c: CardRow) => void;
-  quickAddBusy: Set<string>;
-}) {
-  const [cards, setCards] = useState<CardRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<"grid" | "list">(() => {
-    if (typeof window === "undefined") return "grid";
-    return (localStorage.getItem("masterset.view") as "grid" | "list") ?? "grid";
-  });
-  useEffect(() => { try { localStorage.setItem("masterset.view", view); } catch (_) {} }, [view]);
-  useEffect(() => {
-    setLoading(true);
-    (async () => {
-      const { data, error } = await supabase.functions.invoke("card-search", { body: { game, setId: set.id } });
-      if (error) toast.error(error.message);
-      const remote = ((data?.cards as CardRow[]) ?? []);
-      const dashed = set.id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
-      const { data: local } = await supabase.from("cards").select("*").eq("game", game)
-        .or(game === "pokemon" ? `set_id.eq.${set.id}` : `set_name.ilike.%[${set.id}]%,set_name.ilike.%[${dashed}]%,code.ilike.${set.id}-%`)
-        .limit(500);
-      const map = new Map<string, CardRow>();
-      for (const c of [...(local ?? []), ...remote]) map.set(c.id, c);
-      setCards(Array.from(map.values()).sort((a, b) => (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })));
-      setLoading(false);
-    })();
-  }, [game, set.id]);
-
-  const ownedCount = cards.filter((c) => ownedCardIds.has(c.id)).length;
-
-  return (
-    <div>
-      <div className="flex items-center gap-3 mb-6">
-        <Button variant="ghost" size="sm" onClick={onBack}><ArrowLeft className="h-4 w-4 mr-1" /> Back</Button>
-        <div className="flex-1">
-          <h3 className="text-2xl font-display">{set.name}</h3>
-          <p className="text-xs text-muted-foreground">{set.id}{set.releaseDate ? ` · ${set.releaseDate}` : ""}</p>
-        </div>
-        <div className="flex items-center gap-1 rounded-md border bg-muted p-0.5">
-          <Button type="button" size="sm" variant={view === "grid" ? "default" : "ghost"} className="h-7 w-7 p-0" onClick={() => setView("grid")}><LayoutGrid className="h-4 w-4" /></Button>
-          <Button type="button" size="sm" variant={view === "list" ? "default" : "ghost"} className="h-7 w-7 p-0" onClick={() => setView("list")}><List className="h-4 w-4" /></Button>
-        </div>
-        <Badge variant="default" className="text-sm">{ownedCount}/{cards.length || set.total || "?"}</Badge>
-      </div>
-      {loading ? <SetViewSkeleton /> : cards.length === 0 ? (
-        <p className="text-muted-foreground text-center py-12">No cards available for this expansion yet.</p>
-      ) : view === "grid" ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          {cards.map((c) => {
-            const owned = ownedCardIds.has(c.id);
-            const wanted = wantedCardIds.has(c.id);
-            const lang = ownedLangByCard.get(c.id);
-            const busy = quickAddBusy.has(c.id);
-            return (
-              <Card key={c.id} className="overflow-hidden bg-gradient-card cursor-pointer hover:shadow-card transition-shadow group relative" onClick={() => onPickCard(c)}>
-                <button type="button" onClick={(e) => { e.stopPropagation(); onToggleWanted(c); }}
-                  className="absolute top-2 left-2 z-10 p-1.5 rounded-full bg-background/90 shadow hover:bg-background transition-colors"
-                  title={wanted ? "Remove from wishlist" : "Add to wishlist"}>
-                  <Heart className={`h-4 w-4 ${wanted ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
-                </button>
-                {owned && lang && <div className="absolute top-2 right-2 z-10 bg-background/90 rounded px-1.5 py-0.5 text-xs shadow">{LANG_FLAG[lang] ?? lang}</div>}
-                {!owned && (
-                  <Button size="sm" variant="secondary" disabled={busy}
-                    className="absolute bottom-12 right-2 z-10 h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                    onClick={(e) => { e.stopPropagation(); onQuickAdd(c); }}>
-                    {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-4 w-4" />}
-                  </Button>
-                )}
-                <CardImg card={c} alt={c.name} className={`w-full card-aspect object-cover transition-all ${owned ? "" : "opacity-60 grayscale"}`} />
-                <div className="p-2">
-                  <p className="text-sm font-semibold truncate">{c.name}</p>
-                  <p className="text-xs text-muted-foreground truncate">{c.code}{c.rarity ? ` · ${c.rarity}` : ""}</p>
-                </div>
-              </Card>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="flex flex-col gap-1.5">
-          {cards.map((c) => {
-            const owned = ownedCardIds.has(c.id);
-            const wanted = wantedCardIds.has(c.id);
-            const lang = ownedLangByCard.get(c.id);
-            const busy = quickAddBusy.has(c.id);
-            return (
-              <Card key={c.id} className={`flex items-center gap-3 px-3 py-2 bg-gradient-card cursor-pointer hover:shadow-card transition-shadow ${owned ? "" : "opacity-70"}`} onClick={() => onPickCard(c)}>
-                <div className="font-mono text-xs text-muted-foreground w-20 shrink-0 truncate">{c.code ?? "—"}</div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold truncate">{c.name}</p>
-                  {c.rarity && <p className="text-xs text-muted-foreground truncate">{c.rarity}</p>}
-                </div>
-                {owned && lang && <Badge variant="secondary" className="text-xs shrink-0">{LANG_FLAG[lang] ?? lang}</Badge>}
-                <div className="flex items-center gap-1 shrink-0">
-                  <Button type="button" size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={(e) => { e.stopPropagation(); onToggleWanted(c); }}>
-                    <Heart className={`h-4 w-4 ${wanted ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
-                  </Button>
-                  <Button type="button" size="sm" variant="ghost" className="h-8 w-8 p-0" disabled={busy} onClick={(e) => { e.stopPropagation(); onQuickAdd(c); }}>
-                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                  </Button>
-                  {owned && (
-                    <Button type="button" size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={(e) => { e.stopPropagation(); onPickCard(c); }}>
-                      <Minus className="h-4 w-4" />
-                    </Button>
-                  )}
-                </div>
-              </Card>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
+            
