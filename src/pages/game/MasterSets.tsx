@@ -208,19 +208,33 @@ export default function MasterSets() {
     })();
   }, [game]);
 
-  useEffect(() => {
-    if (!game) return;
-    const onVisible = () => { if (document.visibilityState === "visible") refreshOwned(); };
-    const offChange = onCollectionChanged((detail) => { if (!detail?.game || detail.game === game) refreshOwned(); });
-    window.addEventListener("focus", refreshOwned);
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      window.removeEventListener("focus", refreshOwned);
-      document.removeEventListener("visibilitychange", onVisible);
-      offChange();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [game]);
+  // ← SOSTITUISCI il secondo useEffect con questo
+useEffect(() => {
+  if (!game) return;
+
+  const refreshTimeout = { current: null as ReturnType<typeof setTimeout> | null };
+  const debouncedRefresh = () => {
+    if (refreshTimeout.current) clearTimeout(refreshTimeout.current);
+    refreshTimeout.current = setTimeout(() => refreshOwned(), 400);
+  };
+
+  const onVisible = () => {
+    if (document.visibilityState === "visible") debouncedRefresh();
+  };
+  const offChange = onCollectionChanged((detail) => {
+    if (!detail?.game || detail.game === game) debouncedRefresh();
+  });
+
+  window.addEventListener("focus", debouncedRefresh);
+  document.addEventListener("visibilitychange", onVisible);
+
+  return () => {
+    if (refreshTimeout.current) clearTimeout(refreshTimeout.current);
+    window.removeEventListener("focus", debouncedRefresh);
+    document.removeEventListener("visibilitychange", onVisible);
+    offChange();
+  };
+}, [game]);
 
   const visibleSets = useMemo(() => {
     const q = query.trim().toLowerCase();
