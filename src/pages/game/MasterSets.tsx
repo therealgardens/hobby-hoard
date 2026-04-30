@@ -35,6 +35,17 @@ const LANG_FLAG: Record<string, string> = {
 };
 const SETS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
+// ─── Cache in-memory a livello di modulo ───────────────────────────────────────
+// Sopravvive ai mount/unmount del componente: nessun flash quando si torna indietro.
+interface OwnedCache {
+  counts: Map<string, number>;
+  ids: Set<string>;
+  langs: Map<string, string>;
+}
+const _ownedCache = new Map<string, OwnedCache>();
+const _setsCache = new Map<string, SetInfo[]>();
+// ──────────────────────────────────────────────────────────────────────────────
+
 function extractSetId(s: string | null | undefined): string | null {
   if (!s) return null;
   const m = s.match(/\[([A-Z]{1,4}-?\d{1,3}[A-Z]?)\]/i);
@@ -52,13 +63,18 @@ function setIdForCard(game: Game, c: { set_id: string | null; set_name: string |
 
 export default function MasterSets() {
   const { game } = useParams<{ game: Game }>();
-  const [sets, setSets] = useState<SetInfo[]>([]);
-  const [ownedBySet, setOwnedBySet] = useState<Map<string, number>>(new Map());
-  const [loadingSets, setLoadingSets] = useState(true);
+
+  // Leggi subito dalla cache in-memory (sincrono, zero flash)
+  const cachedOwned = game ? _ownedCache.get(game) : undefined;
+  const cachedSets = game ? _setsCache.get(game) : undefined;
+
+  const [sets, setSets] = useState<SetInfo[]>(cachedSets ?? []);
+  const [ownedBySet, setOwnedBySet] = useState<Map<string, number>>(cachedOwned?.counts ?? new Map());
+  const [loadingSets, setLoadingSets] = useState(!cachedSets?.length);
   const [query, setQuery] = useState("");
   const [activeSet, setActiveSet] = useState<SetInfo | null>(null);
-  const [ownedCardIds, setOwnedCardIds] = useState<Set<string>>(new Set());
-  const [ownedLangByCard, setOwnedLangByCard] = useState<Map<string, string>>(new Map());
+  const [ownedCardIds, setOwnedCardIds] = useState<Set<string>>(cachedOwned?.ids ?? new Set());
+  const [ownedLangByCard, setOwnedLangByCard] = useState<Map<string, string>>(cachedOwned?.langs ?? new Map());
   const [wantedCardIds, setWantedCardIds] = useState<Set<string>>(new Set());
   const [wishlistBusy, setWishlistBusy] = useState<Set<string>>(new Set());
   const [quickAddBusy, setQuickAddBusy] = useState<Set<string>>(new Set());
@@ -70,16 +86,34 @@ export default function MasterSets() {
   const [quantity, setQuantity] = useState(1);
   const [savingCard, setSavingCard] = useState(false);
 
+  const writeOwnedCache = (counts: Map<string, number>, ids: Set<string>, langs: Map<string, string>) => {
+    if (!game) return;
+    _ownedCache.set(game, { counts, ids, langs });
+    // Scrivi anche su sessionStorage come fallback per refresh di pagina
+    try {
+      supabase.auth.getUser().then(({ data }) => {
+        const uid = data.user?.id;
+        if (!uid) return;
+        sessionStorage.setItem(`tcg.owned.${game}.${uid}.v3`, JSON.stringify({
+          counts: Array.from(counts.entries()),
+          ids: Array.from(ids),
+          langs: Array.from(langs.entries()),
+        }));
+      });
+    } catch (_) {}
+  };
+
   const refreshOwned = async () => {
     if (!game) return;
     const userRes = await supabase.auth.getUser();
     const uid = userRes.data.user?.id;
     if (!uid) return;
-    const ownedCacheKey = `tcg.owned.${game}.${uid}.v3`;
+
     const { data: ownedRows, error: ownedErr } = await withDbRetry(() =>
       supabase.from("collection_entries").select("card_id, language").eq("user_id", uid).eq("game", game),
     );
     if (ownedErr) { console.warn("refreshOwned: collection fetch failed", ownedErr); return; }
+
     const cardIds = Array.from(new Set((ownedRows ?? []).map((r: any) => r.card_id).filter(Boolean))) as string[];
     let cardsById = new Map<string, { set_id: string | null; set_name: string | null; code: string | null }>();
     if (cardIds.length) {
@@ -89,6 +123,7 @@ export default function MasterSets() {
       if (cardsErr) { console.warn("refreshOwned: cards fetch failed", cardsErr); return; }
       cardsById = new Map((cards ?? []).map((c: any) => [c.id, c]));
     }
+
     const counts = new Map<string, number>();
     const langs = new Map<string, string>();
     const ids = new Set<string>();
@@ -103,16 +138,12 @@ export default function MasterSets() {
       }
       if (row.language && !langs.has(row.card_id)) langs.set(row.card_id, row.language);
     }
+
     setOwnedBySet(counts);
     setOwnedCardIds(ids);
     setOwnedLangByCard(langs);
-    try {
-      sessionStorage.setItem(ownedCacheKey, JSON.stringify({
-        counts: Array.from(counts.entries()),
-        ids: Array.from(ids),
-        langs: Array.from(langs.entries()),
-      }));
-    } catch (_) {}
+    writeOwnedCache(counts, ids, langs);
+
     try {
       setWantedCardIds(new Set((await listWishlist(game)).map((item) => item.card_id)));
     } catch (_) {}
@@ -120,21 +151,30 @@ export default function MasterSets() {
 
   useEffect(() => {
     if (!game) return;
-    setLoadingSets(true);
     setActiveSet(null);
     setQuery("");
+
+    // Se non abbiamo cache, mostra skeleton
+    if (!_setsCache.has(game)) setLoadingSets(true);
+
     (async () => {
+      // 1. Prova localStorage per i set
       const cacheKey = `tcg.sets.${game}.v1`;
-      try {
-        const raw = localStorage.getItem(cacheKey);
-        if (raw) {
-          const parsed = JSON.parse(raw) as { ts: number; sets: SetInfo[] };
-          if (Date.now() - parsed.ts < SETS_CACHE_TTL_MS && Array.isArray(parsed.sets) && parsed.sets.length) {
-            setSets(parsed.sets);
-            setLoadingSets(false);
+      if (!_setsCache.has(game)) {
+        try {
+          const raw = localStorage.getItem(cacheKey);
+          if (raw) {
+            const parsed = JSON.parse(raw) as { ts: number; sets: SetInfo[] };
+            if (Date.now() - parsed.ts < SETS_CACHE_TTL_MS && Array.isArray(parsed.sets) && parsed.sets.length) {
+              _setsCache.set(game, parsed.sets);
+              setSets(parsed.sets);
+              setLoadingSets(false);
+            }
           }
-        }
-      } catch (_) {}
+        } catch (_) {}
+      }
+
+      // 2. Fetch fresco dei set
       try {
         const res = await fetch(
           `https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/functions/v1/card-sets?game=${game}`,
@@ -143,26 +183,35 @@ export default function MasterSets() {
         const json = await res.json();
         const fresh = (json.sets ?? []) as SetInfo[];
         if (fresh.length) {
+          _setsCache.set(game, fresh);
           setSets(fresh);
           try { localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), sets: fresh })); } catch (_) {}
         }
       } catch (e) { console.error(e); }
+
+      setLoadingSets(false);
+
+      // 3. Dati owned: prima sessionStorage, poi DB
       const userRes = await supabase.auth.getUser();
       const uid = userRes.data.user?.id;
-      if (uid) {
-        const ownedCacheKey = `tcg.owned.${game}.${uid}.v3`;
+      if (uid && !_ownedCache.has(game)) {
+        // Prova sessionStorage solo se non abbiamo la cache in-memory
         try {
-          const raw = sessionStorage.getItem(ownedCacheKey);
+          const raw = sessionStorage.getItem(`tcg.owned.${game}.${uid}.v3`);
           if (raw) {
             const parsed = JSON.parse(raw) as { counts: [string, number][]; ids: string[]; langs: [string, string][] };
-            setOwnedBySet(new Map(parsed.counts));
-            setOwnedCardIds(new Set(parsed.ids));
-            setOwnedLangByCard(new Map(parsed.langs));
+            const counts = new Map(parsed.counts);
+            const ids = new Set(parsed.ids);
+            const langs = new Map(parsed.langs);
+            _ownedCache.set(game, { counts, ids, langs });
+            setOwnedBySet(counts);
+            setOwnedCardIds(ids);
+            setOwnedLangByCard(langs);
           }
         } catch (_) {}
-        await refreshOwned();
       }
-      setLoadingSets(false);
+
+      if (uid) await refreshOwned();
     })();
   }, [game]);
 
@@ -203,25 +252,11 @@ export default function MasterSets() {
     setQuantity(1);
   };
 
-  const persistOwnedCache = async (counts: Map<string, number>, ids: Set<string>, langs: Map<string, string>) => {
-    const userRes = await supabase.auth.getUser();
-    const uid = userRes.data.user?.id;
-    if (!uid || !game) return;
-    try {
-      sessionStorage.setItem(`tcg.owned.${game}.${uid}.v3`, JSON.stringify({
-        counts: Array.from(counts.entries()),
-        ids: Array.from(ids),
-        langs: Array.from(langs.entries()),
-      }));
-    } catch (_) {}
-  };
-
   const quickAdd = async (c: CardRow) => {
     if (!game || quickAddBusy.has(c.id)) return;
     const { data: userData } = await supabase.auth.getUser();
     if (!userData.user) return;
 
-    // Aggiornamento ottimistico immediato
     setQuickAddBusy((prev) => new Set(prev).add(c.id));
     const wasOwned = ownedCardIds.has(c.id);
     const nextIds = new Set(ownedCardIds).add(c.id);
@@ -235,16 +270,12 @@ export default function MasterSets() {
     setOwnedCardIds(nextIds);
     setOwnedLangByCard(nextLangs);
     setOwnedBySet(nextCounts);
+    writeOwnedCache(nextCounts, nextIds, nextLangs);
 
     try {
-      // upsert diretto: se esiste incrementa, altrimenti inserisce
       const { data: existing } = await supabase
-        .from("collection_entries")
-        .select("id, quantity")
-        .eq("user_id", userData.user.id)
-        .eq("card_id", c.id)
-        .maybeSingle();
-
+        .from("collection_entries").select("id, quantity")
+        .eq("user_id", userData.user.id).eq("card_id", c.id).maybeSingle();
       let error;
       if (existing) {
         ({ error } = await withDbRetry(() =>
@@ -253,25 +284,22 @@ export default function MasterSets() {
       } else {
         ({ error } = await withDbRetry(() =>
           supabase.from("collection_entries").insert({
-            user_id: userData.user!.id,
-            card_id: c.id,
-            game,
-            rarity: c.rarity ?? null,
-            language: "EN",
-            quantity: 1,
+            user_id: userData.user!.id, card_id: c.id, game,
+            rarity: c.rarity ?? null, language: "EN", quantity: 1,
           })
         ));
       }
-
       if (error) {
         // Rollback
-        setOwnedCardIds(ownedCardIds);
+        const rollbackIds = new Set(ownedCardIds);
+        if (!wasOwned) rollbackIds.delete(c.id);
+        setOwnedCardIds(rollbackIds);
         setOwnedLangByCard(ownedLangByCard);
         setOwnedBySet(ownedBySet);
+        writeOwnedCache(ownedBySet, rollbackIds, ownedLangByCard);
         return toast.error(error.message);
       }
       toast.success(`Added ${c.name}`);
-      persistOwnedCache(nextCounts, nextIds, nextLangs);
       emitCollectionChanged({ game, cardId: c.id });
     } finally {
       setQuickAddBusy((prev) => { const n = new Set(prev); n.delete(c.id); return n; });
@@ -300,10 +328,8 @@ export default function MasterSets() {
     if (!picked || !game || savingCard) return;
     const { data: userData } = await supabase.auth.getUser();
     if (!userData.user) return;
-
     setSavingCard(true);
 
-    // Aggiornamento ottimistico
     const savedId = picked.id;
     const savedSetId = setIdForCard(game, picked);
     const wasOwned = ownedCardIds.has(savedId);
@@ -314,16 +340,13 @@ export default function MasterSets() {
     setOwnedCardIds(nextIds);
     setOwnedLangByCard(nextLangs);
     setOwnedBySet(nextCounts);
+    writeOwnedCache(nextCounts, nextIds, nextLangs);
     setPicked(null);
 
     try {
       const { data: existing } = await supabase
-        .from("collection_entries")
-        .select("id, quantity")
-        .eq("user_id", userData.user.id)
-        .eq("card_id", savedId)
-        .maybeSingle();
-
+        .from("collection_entries").select("id, quantity")
+        .eq("user_id", userData.user.id).eq("card_id", savedId).maybeSingle();
       let error;
       if (existing) {
         ({ error } = await withDbRetry(() =>
@@ -332,25 +355,21 @@ export default function MasterSets() {
       } else {
         ({ error } = await withDbRetry(() =>
           supabase.from("collection_entries").insert({
-            user_id: userData.user!.id,
-            card_id: savedId,
-            game,
-            rarity: rarity || null,
-            language,
-            quantity,
+            user_id: userData.user!.id, card_id: savedId, game,
+            rarity: rarity || null, language, quantity,
           })
         ));
       }
-
       if (error) {
-        // Rollback
-        setOwnedCardIds(ownedCardIds);
+        const rollbackIds = new Set(ownedCardIds);
+        if (!wasOwned) rollbackIds.delete(savedId);
+        setOwnedCardIds(rollbackIds);
         setOwnedLangByCard(ownedLangByCard);
         setOwnedBySet(ownedBySet);
+        writeOwnedCache(ownedBySet, rollbackIds, ownedLangByCard);
         return toast.error(error.message);
       }
       toast.success(`Added ${picked?.name ?? "card"} ×${quantity}`);
-      persistOwnedCache(nextCounts, nextIds, nextLangs);
       emitCollectionChanged({ game, cardId: savedId });
     } finally {
       setSavingCard(false);
@@ -382,7 +401,7 @@ export default function MasterSets() {
       const nextCounts = new Map(ownedBySet);
       if (removedSetId) nextCounts.set(removedSetId, Math.max(0, (nextCounts.get(removedSetId) ?? 0) - 1));
       setOwnedCardIds(nextIds); setOwnedLangByCard(nextLangs); setOwnedBySet(nextCounts);
-      persistOwnedCache(nextCounts, nextIds, nextLangs);
+      writeOwnedCache(nextCounts, nextIds, nextLangs);
     }
     emitCollectionChanged({ game, cardId: removedId });
   };
@@ -481,9 +500,7 @@ function SetGridSkeleton() {
           <div className="flex items-start gap-3">
             <Skeleton className="h-14 w-14 rounded" />
             <div className="flex-1 space-y-2"><Skeleton className="h-4 w-3/4" /><Skeleton className="h-3 w-1/2" /></div>
-            <Skeleton className="h-5 w-10" />
           </div>
-          <Skeleton className="mt-3 h-1.5 w-full" />
         </Card>
       ))}
     </div>
@@ -594,8 +611,8 @@ function SetView({
           <p className="text-xs text-muted-foreground">{set.id}{set.releaseDate ? ` · ${set.releaseDate}` : ""}</p>
         </div>
         <div className="flex items-center gap-1 rounded-md border bg-muted p-0.5">
-          <Button type="button" size="sm" variant={view === "grid" ? "default" : "ghost"} className="h-7 w-7 p-0" onClick={() => setView("grid")} title="Full image view"><LayoutGrid className="h-4 w-4" /></Button>
-          <Button type="button" size="sm" variant={view === "list" ? "default" : "ghost"} className="h-7 w-7 p-0" onClick={() => setView("list")} title="List view"><List className="h-4 w-4" /></Button>
+          <Button type="button" size="sm" variant={view === "grid" ? "default" : "ghost"} className="h-7 w-7 p-0" onClick={() => setView("grid")}><LayoutGrid className="h-4 w-4" /></Button>
+          <Button type="button" size="sm" variant={view === "list" ? "default" : "ghost"} className="h-7 w-7 p-0" onClick={() => setView("list")}><List className="h-4 w-4" /></Button>
         </div>
         <Badge variant="default" className="text-sm">{ownedCount}/{cards.length || set.total || "?"}</Badge>
       </div>
@@ -619,7 +636,7 @@ function SetView({
                 {!owned && (
                   <Button size="sm" variant="secondary" disabled={busy}
                     className="absolute bottom-12 right-2 z-10 h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                    onClick={(e) => { e.stopPropagation(); onQuickAdd(c); }} title="Quick add (+1)">
+                    onClick={(e) => { e.stopPropagation(); onQuickAdd(c); }}>
                     {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-4 w-4" />}
                   </Button>
                 )}
@@ -648,14 +665,14 @@ function SetView({
                 </div>
                 {owned && lang && <Badge variant="secondary" className="text-xs shrink-0">{LANG_FLAG[lang] ?? lang}</Badge>}
                 <div className="flex items-center gap-1 shrink-0">
-                  <Button type="button" size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={(e) => { e.stopPropagation(); onToggleWanted(c); }} title={wanted ? "Remove from wishlist" : "Add to wishlist"}>
+                  <Button type="button" size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={(e) => { e.stopPropagation(); onToggleWanted(c); }}>
                     <Heart className={`h-4 w-4 ${wanted ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
                   </Button>
-                  <Button type="button" size="sm" variant="ghost" className="h-8 w-8 p-0" disabled={busy} onClick={(e) => { e.stopPropagation(); onQuickAdd(c); }} title="Add one to collection">
+                  <Button type="button" size="sm" variant="ghost" className="h-8 w-8 p-0" disabled={busy} onClick={(e) => { e.stopPropagation(); onQuickAdd(c); }}>
                     {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                   </Button>
                   {owned && (
-                    <Button type="button" size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={(e) => { e.stopPropagation(); onPickCard(c); }} title="Adjust collection">
+                    <Button type="button" size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={(e) => { e.stopPropagation(); onPickCard(c); }}>
                       <Minus className="h-4 w-4" />
                     </Button>
                   )}
