@@ -28,20 +28,41 @@ export default function BinderDetail() {
   const [isWanted, setIsWanted] = useState(false);
   const [view, setView] = useState<"grid" | "list">("grid");
   const [pageIdx, setPageIdx] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = async () => {
     if (!binderId) return;
-    const { data: b } = await withDbRetry(() =>
+    setLoading(true);
+    setLoadError(null);
+    const { data: b, error: bErr } = await withDbRetry(() =>
       supabase.from("binders").select("*").eq("id", binderId).maybeSingle(),
     );
+    if (bErr) {
+      setLoading(false);
+      setLoadError(bErr.message || "Could not load binder");
+      return;
+    }
+    if (!b) {
+      setLoading(false);
+      setLoadError("Binder not found");
+      return;
+    }
     setBinder(b);
-    const { data: s } = await withDbRetry(() =>
+    const { data: s, error: sErr } = await withDbRetry(() =>
       supabase
         .from("binder_slots")
         .select("*")
         .eq("binder_id", binderId)
         .order("position"),
     );
+    if (sErr) {
+      // Don't block the page — show binder with empty slots
+      toast.error("Could not load slots — showing empty grid");
+      setSlots([]);
+      setLoading(false);
+      return;
+    }
     const slotRows = (s ?? []) as Tables<"binder_slots">[];
     const cardIds = Array.from(
       new Set(slotRows.map((row) => row.card_id).filter(Boolean) as string[]),
@@ -54,9 +75,21 @@ export default function BinderDetail() {
       cardsById = new Map((cards ?? []).map((c: any) => [c.id, c]));
     }
     setSlots(slotRows.map((row) => ({ ...row, card: row.card_id ? cardsById.get(row.card_id) ?? null : null })));
+    setLoading(false);
   };
   useEffect(() => { load(); }, [binderId]);
 
+  if (loadError && !binder) {
+    return (
+      <div className="space-y-3">
+        <Button variant="ghost" size="sm" onClick={() => nav(`/${game}/binders`)}>
+          <ArrowLeft className="h-4 w-4 mr-1" /> All binders
+        </Button>
+        <p className="text-destructive">{loadError}</p>
+        <Button onClick={load}>Retry</Button>
+      </div>
+    );
+  }
   if (!binder) return <div className="text-muted-foreground">Loading…</div>;
 
   const perPage = binder.cols * binder.rows;
