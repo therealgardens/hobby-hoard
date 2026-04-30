@@ -16,6 +16,7 @@ import { cardImageCandidates, proxiedImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 import { addWishlist, listWishlist, removeWishlistByCard } from "@/lib/wishlist";
 import { withDbRetry } from "@/lib/supabaseRetry";
+import { emitCollectionChanged, onCollectionChanged } from "@/lib/collectionEvents";
 
 type CardRow = Tables<"cards">;
 
@@ -186,18 +187,23 @@ export default function MasterSets() {
     })();
   }, [game]);
 
-  // Refresh owned/wanted when the tab regains focus, so My Master Sets reflects
-  // additions made elsewhere (Search, Binders, etc.) without a manual reload.
+  // Refresh owned/wanted when the tab regains focus or another component
+  // mutates the collection (e.g. CardSearch, Binders), so My Master Sets
+  // always reflects current data without a manual reload.
   useEffect(() => {
     if (!game) return;
     const onVisible = () => {
       if (document.visibilityState === "visible") refreshOwned();
     };
+    const offChange = onCollectionChanged((detail) => {
+      if (!detail?.game || detail.game === game) refreshOwned();
+    });
     window.addEventListener("focus", refreshOwned);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       window.removeEventListener("focus", refreshOwned);
       document.removeEventListener("visibilitychange", onVisible);
+      offChange();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game]);
