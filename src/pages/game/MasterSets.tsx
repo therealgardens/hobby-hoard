@@ -18,6 +18,7 @@ import { addWishlist, listWishlist, removeWishlistByCard } from "@/lib/wishlist"
 import { withDbRetry } from "@/lib/supabaseRetry";
 import { emitCollectionChanged, onCollectionChanged } from "@/lib/collectionEvents";
 import { CardSearch } from "@/components/CardSearch";
+import { useAuth } from "@/hooks/useAuth";
 
 type CardRow = Tables<"cards">;
 
@@ -62,6 +63,7 @@ function setIdForCard(game: Game, c: { set_id: string | null; set_name: string |
 export default function MasterSets() {
   const { game } = useParams<{ game: Game }>();
   const navigate = useNavigate();
+  const { user } = useAuth(); // ← fix bug 2
 
   const cachedOwned = game ? _ownedCache.get(game) : undefined;
   const cachedSets = game ? _setsCache.get(game) : undefined;
@@ -86,26 +88,21 @@ export default function MasterSets() {
   const [savingCard, setSavingCard] = useState(false);
 
   const writeOwnedCache = (counts: Map<string, number>, ids: Set<string>, langs: Map<string, string>) => {
-    if (!game) return;
+    if (!game || !user) return;
     _ownedCache.set(game, { counts, ids, langs });
     try {
-      supabase.auth.getUser().then(({ data }) => {
-        const uid = data.user?.id;
-        if (!uid) return;
-        sessionStorage.setItem(`tcg.owned.${game}.${uid}.v3`, JSON.stringify({
-          counts: Array.from(counts.entries()),
-          ids: Array.from(ids),
-          langs: Array.from(langs.entries()),
-        }));
-      });
+      sessionStorage.setItem(`tcg.owned.${game}.${user.id}.v3`, JSON.stringify({
+        counts: Array.from(counts.entries()),
+        ids: Array.from(ids),
+        langs: Array.from(langs.entries()),
+      }));
     } catch (_) {}
   };
 
+  // ← fix bug 2: usa user da useAuth invece di getUser() async
   const refreshOwned = async () => {
-    if (!game) return;
-    const userRes = await supabase.auth.getUser();
-    const uid = userRes.data.user?.id;
-    if (!uid) return;
+    if (!game || !user) return;
+    const uid = user.id;
 
     const { data: ownedRows, error: ownedErr } = await withDbRetry(() =>
       supabase.from("collection_entries").select("card_id, language").eq("user_id", uid).eq("game", game),
@@ -147,8 +144,9 @@ export default function MasterSets() {
     } catch (_) {}
   };
 
+  // ← fix bug 2: dipende da user?.id, legge sessionStorage solo quando user è pronto
   useEffect(() => {
-    if (!game) return;
+    if (!game || !user) return;
     setActiveSet(null);
     setQuery("");
     setSearchMode("sets");
@@ -186,9 +184,9 @@ export default function MasterSets() {
 
       setLoadingSets(false);
 
-      const userRes = await supabase.auth.getUser();
-      const uid = userRes.data.user?.id;
-      if (uid && !_ownedCache.has(game)) {
+      // ← fix bug 2: user.id è già disponibile qui, no await getUser()
+      const uid = user.id;
+      if (!_ownedCache.has(game)) {
         try {
           const raw = sessionStorage.getItem(`tcg.owned.${game}.${uid}.v3`);
           if (raw) {
@@ -204,12 +202,12 @@ export default function MasterSets() {
         } catch (_) {}
       }
 
-      if (uid) await refreshOwned();
+      await refreshOwned();
     })();
-  }, [game]);
+  }, [game, user?.id]); // ← dipende da user?.id
 
   useEffect(() => {
-    if (!game) return;
+    if (!game || !user) return;
 
     const refreshTimeout = { current: null as ReturnType<typeof setTimeout> | null };
     const debouncedRefresh = () => {
@@ -221,7 +219,6 @@ export default function MasterSets() {
       if (document.visibilityState === "visible") debouncedRefresh();
     };
 
-    // ✅ fix: azione utente esplicita → refresh IMMEDIATO (non debouncato)
     const offChange = onCollectionChanged((detail) => {
       if (!detail?.game || detail.game === game) refreshOwned();
     });
@@ -235,7 +232,7 @@ export default function MasterSets() {
       document.removeEventListener("visibilitychange", onVisible);
       offChange();
     };
-  }, [game]);
+  }, [game, user?.id]); // ← dipende da user?.id
 
   const visibleSets = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -261,9 +258,8 @@ export default function MasterSets() {
   };
 
   const quickAdd = async (c: CardRow) => {
-    if (!game || quickAddBusy.has(c.id)) return;
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
+    if (!game || !user || quickAddBusy.has(c.id)) return;
+    const uid = user.id;
 
     setQuickAddBusy((prev) => new Set(prev).add(c.id));
     const wasOwned = ownedCardIds.has(c.id);
@@ -283,7 +279,7 @@ export default function MasterSets() {
     try {
       const { data: existing } = await supabase
         .from("collection_entries").select("id, quantity")
-        .eq("user_id", userData.user.id).eq("card_id", c.id).maybeSingle();
+        .eq("user_id", uid).eq("card_id", c.id).maybeSingle();
       let error;
       if (existing) {
         ({ error } = await withDbRetry(() =>
@@ -292,7 +288,7 @@ export default function MasterSets() {
       } else {
         ({ error } = await withDbRetry(() =>
           supabase.from("collection_entries").insert({
-            user_id: userData.user!.id, card_id: c.id, game,
+            user_id: uid, card_id: c.id, game,
             rarity: c.rarity ?? null, language: "EN", quantity: 1,
           })
         ));
@@ -314,9 +310,7 @@ export default function MasterSets() {
   };
 
   const toggleWanted = async (c: CardRow) => {
-    if (!game || wishlistBusy.has(c.id)) return;
-    const { data: u } = await supabase.auth.getUser();
-    if (!u.user) return;
+    if (!game || !user || wishlistBusy.has(c.id)) return;
     setWishlistBusy((prev) => new Set(prev).add(c.id));
     const wasWanted = wantedCardIds.has(c.id);
     setWantedCardIds((prev) => { const n = new Set(prev); wasWanted ? n.delete(c.id) : n.add(c.id); return n; });
@@ -332,9 +326,8 @@ export default function MasterSets() {
   };
 
   const saveCard = async () => {
-    if (!picked || !game || savingCard) return;
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
+    if (!picked || !game || !user || savingCard) return;
+    const uid = user.id;
     setSavingCard(true);
 
     const savedId = picked.id;
@@ -353,7 +346,7 @@ export default function MasterSets() {
     try {
       const { data: existing } = await supabase
         .from("collection_entries").select("id, quantity")
-        .eq("user_id", userData.user.id).eq("card_id", savedId).maybeSingle();
+        .eq("user_id", uid).eq("card_id", savedId).maybeSingle();
       let error;
       if (existing) {
         ({ error } = await withDbRetry(() =>
@@ -362,7 +355,7 @@ export default function MasterSets() {
       } else {
         ({ error } = await withDbRetry(() =>
           supabase.from("collection_entries").insert({
-            user_id: userData.user!.id, card_id: savedId, game,
+            user_id: uid, card_id: savedId, game,
             rarity: rarity || null, language, quantity,
           })
         ));
@@ -384,12 +377,11 @@ export default function MasterSets() {
   };
 
   const removeOne = async () => {
-    if (!picked || !game) return;
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) return;
+    if (!picked || !game || !user) return;
+    const uid = user.id;
     const { data: rows } = await supabase
       .from("collection_entries").select("id")
-      .eq("user_id", userData.user.id).eq("card_id", picked.id)
+      .eq("user_id", uid).eq("card_id", picked.id)
       .order("created_at", { ascending: false }).limit(1);
     const target = rows?.[0]?.id;
     if (!target) { toast.info("No entry found to remove"); return; }
@@ -401,7 +393,7 @@ export default function MasterSets() {
     setPicked(null);
     const { data: remain } = await supabase
       .from("collection_entries").select("id")
-      .eq("user_id", userData.user.id).eq("card_id", removedId).limit(1);
+      .eq("user_id", uid).eq("card_id", removedId).limit(1);
     if (!remain || remain.length === 0) {
       const nextIds = new Set(ownedCardIds); nextIds.delete(removedId);
       const nextLangs = new Map(ownedLangByCard); nextLangs.delete(removedId);
@@ -633,42 +625,28 @@ function CreateBinderDialog({ open, onOpenChange, game, set, cards, ownedCardIds
     if (!userData.user) return toast.error("Not signed in");
     if (!name.trim() || creating) return;
     setCreating(true);
-
     try {
       const binderId = crypto.randomUUID();
       const { error: binderErr } = await withDbRetry(() =>
         supabase.from("binders").insert({
-          id: binderId,
-          user_id: userData.user!.id,
-          game,
-          name: name.trim(),
-          cols,
-          rows,
-          pages: pagesNeeded,
+          id: binderId, user_id: userData.user!.id, game,
+          name: name.trim(), cols, rows, pages: pagesNeeded,
         } as any)
       );
       if (binderErr) { toast.error(binderErr.message); return; }
-
       if (cardsToPlace.length > 0) {
         const slots = cardsToPlace.map((c, i) => ({
-          binder_id: binderId,
-          user_id: userData.user!.id,
-          position: i,
-          card_id: c.id,
-          is_wanted: !ownedCardIds.has(c.id),
+          binder_id: binderId, user_id: userData.user!.id,
+          position: i, card_id: c.id, is_wanted: !ownedCardIds.has(c.id),
         }));
         const BATCH = 50;
         for (let i = 0; i < slots.length; i += BATCH) {
           const { error: slotErr } = await withDbRetry(() =>
             supabase.from("binder_slots").insert(slots.slice(i, i + BATCH) as any)
           );
-          if (slotErr) {
-            toast.error(`Slots insert failed: ${slotErr.message}`);
-            break;
-          }
+          if (slotErr) { toast.error(`Slots insert failed: ${slotErr.message}`); break; }
         }
       }
-
       toast.success(`Binder "${name.trim()}" creato con ${cardsToPlace.length} carte su ${pagesNeeded} pagine!`);
       onOpenChange(false);
       onCreated(binderId);
@@ -680,38 +658,19 @@ function CreateBinderDialog({ open, onOpenChange, game, set, cards, ownedCardIds
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Crea binder da {set.name}</DialogTitle>
-        </DialogHeader>
+        <DialogHeader><DialogTitle>Crea binder da {set.name}</DialogTitle></DialogHeader>
         <div className="space-y-4">
-          <div>
-            <Label>Nome binder</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={set.name} />
-          </div>
+          <div><Label>Nome binder</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder={set.name} /></div>
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>Colonne</Label>
-              <Input type="number" min={2} max={6} value={cols} onChange={(e) => setCols(parseInt(e.target.value) || 4)} />
-            </div>
-            <div>
-              <Label>Righe</Label>
-              <Input type="number" min={2} max={6} value={rows} onChange={(e) => setRows(parseInt(e.target.value) || 3)} />
-            </div>
+            <div><Label>Colonne</Label><Input type="number" min={2} max={6} value={cols} onChange={(e) => setCols(parseInt(e.target.value) || 4)} /></div>
+            <div><Label>Righe</Label><Input type="number" min={2} max={6} value={rows} onChange={(e) => setRows(parseInt(e.target.value) || 3)} /></div>
           </div>
           <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/40">
-            <input
-              type="checkbox"
-              id="only-owned"
-              checked={onlyOwned}
-              onChange={(e) => setOnlyOwned(e.target.checked)}
-              className="h-4 w-4 accent-primary"
-            />
+            <input type="checkbox" id="only-owned" checked={onlyOwned} onChange={(e) => setOnlyOwned(e.target.checked)} className="h-4 w-4 accent-primary" />
             <label htmlFor="only-owned" className="text-sm cursor-pointer flex-1">
               Solo carte possedute
               <span className="block text-xs text-muted-foreground">
-                {onlyOwned
-                  ? `${cardsToPlace.length} carte possedute`
-                  : `${cards.length} carte totali (le non possedute saranno marcate come "wanted")`}
+                {onlyOwned ? `${cardsToPlace.length} carte possedute` : `${cards.length} carte totali (le non possedute saranno marcate come "wanted")`}
               </span>
             </label>
           </div>
@@ -722,22 +681,10 @@ function CreateBinderDialog({ open, onOpenChange, game, set, cards, ownedCardIds
               <p>💛 <strong>{cards.filter((c) => !ownedCardIds.has(c.id)).length}</strong> carte marcate come wanted</p>
             )}
           </div>
-          <Button
-            className="w-full"
-            onClick={create}
-            disabled={creating || !name.trim() || cardsToPlace.length === 0}
-          >
-            {creating ? (
-              <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Creazione in corso…</>
-            ) : (
-              <><BookOpen className="h-4 w-4 mr-2" /> Crea binder</>
-            )}
+          <Button className="w-full" onClick={create} disabled={creating || !name.trim() || cardsToPlace.length === 0}>
+            {creating ? <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Creazione in corso…</> : <><BookOpen className="h-4 w-4 mr-2" /> Crea binder</>}
           </Button>
-          {cardsToPlace.length === 0 && (
-            <p className="text-xs text-center text-muted-foreground">
-              Nessuna carta da inserire. Deseleziona "solo possedute" o aggiungi carte alla collezione prima.
-            </p>
-          )}
+          {cardsToPlace.length === 0 && <p className="text-xs text-center text-muted-foreground">Nessuna carta da inserire.</p>}
         </div>
       </DialogContent>
     </Dialog>
@@ -746,15 +693,13 @@ function CreateBinderDialog({ open, onOpenChange, game, set, cards, ownedCardIds
 
 function SetView({
   game, set, onBack, onPickCard, onQuickAdd,
-  ownedCardIds, ownedLangByCard, wantedCardIds, onToggleWanted, quickAddBusy,
-  onBinderCreated,
+  ownedCardIds, ownedLangByCard, wantedCardIds, onToggleWanted, quickAddBusy, onBinderCreated,
 }: {
   game: Game; set: SetInfo; onBack: () => void;
   onPickCard: (c: CardRow) => void; onQuickAdd: (c: CardRow) => void;
   ownedCardIds: Set<string>; ownedLangByCard: Map<string, string>;
   wantedCardIds: Set<string>; onToggleWanted: (c: CardRow) => void;
-  quickAddBusy: Set<string>;
-  onBinderCreated: (binderId: string) => void;
+  quickAddBusy: Set<string>; onBinderCreated: (binderId: string) => void;
 }) {
   const [cards, setCards] = useState<CardRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -806,15 +751,8 @@ function SetView({
       </div>
 
       {binderDialogOpen && (
-        <CreateBinderDialog
-          open={binderDialogOpen}
-          onOpenChange={setBinderDialogOpen}
-          game={game}
-          set={set}
-          cards={cards}
-          ownedCardIds={ownedCardIds}
-          onCreated={onBinderCreated}
-        />
+        <CreateBinderDialog open={binderDialogOpen} onOpenChange={setBinderDialogOpen}
+          game={game} set={set} cards={cards} ownedCardIds={ownedCardIds} onCreated={onBinderCreated} />
       )}
 
       {loading ? <SetViewSkeleton /> : cards.length === 0 ? (
