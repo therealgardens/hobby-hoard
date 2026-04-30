@@ -41,23 +41,13 @@ export default function Pokedex() {
       .eq("registered", true);
     setRegistered(new Set((data ?? []).map((d) => d.pokedex_number)));
 
-    const [{ data: ents }, { data: bslots }] = await Promise.all([
-      supabase
-        .from("collection_entries")
-        .select("card:cards(pokedex_number)")
-        .eq("game", "pokemon")
-        .eq("user_id", u.user.id),
-      supabase
-        .from("binder_slots")
-        .select("card:cards(pokedex_number, game)")
-        .eq("user_id", u.user.id),
-    ]);
+    const { data: ents } = await supabase
+      .from("collection_entries")
+      .select("card:cards(pokedex_number)")
+      .eq("game", "pokemon");
     const nums = new Set<number>();
     (ents ?? []).forEach((e: any) => {
       if (e.card?.pokedex_number) nums.add(e.card.pokedex_number);
-    });
-    (bslots ?? []).forEach((s: any) => {
-      if (s.card?.game === "pokemon" && s.card?.pokedex_number) nums.add(s.card.pokedex_number);
     });
     setAuto(nums);
   };
