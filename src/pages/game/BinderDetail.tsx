@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -22,7 +22,9 @@ type Slot = Tables<"binder_slots"> & { card: Tables<"cards"> | null };
 export default function BinderDetail() {
   const { game, binderId } = useParams<{ game: Game; binderId: string }>();
   const nav = useNavigate();
-  const [binder, setBinder] = useState<Binder | null>(null);
+  const location = useLocation();
+  const routeBinder = (location.state as { binder?: Binder } | null)?.binder ?? null;
+  const [binder, setBinder] = useState<Binder | null>(routeBinder);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [pickingPos, setPickingPos] = useState<number | null>(null);
   const [isWanted, setIsWanted] = useState(false);
@@ -33,7 +35,7 @@ export default function BinderDetail() {
 
   const load = async () => {
     if (!binderId) return;
-    setLoading(true);
+    setLoading(!binder);
     setLoadError(null);
     const { data: b, error: bErr } = await withDbRetry(() =>
       supabase.from("binders").select("*").eq("id", binderId).maybeSingle(),
@@ -45,7 +47,7 @@ export default function BinderDetail() {
     }
     if (!b) {
       setLoading(false);
-      setLoadError("Binder not found");
+      if (!binder) setLoadError("Binder not found");
       return;
     }
     setBinder(b);
@@ -77,7 +79,10 @@ export default function BinderDetail() {
     setSlots(slotRows.map((row) => ({ ...row, card: row.card_id ? cardsById.get(row.card_id) ?? null : null })));
     setLoading(false);
   };
-  useEffect(() => { load(); }, [binderId]);
+  useEffect(() => {
+    setBinder(routeBinder);
+    load();
+  }, [binderId]);
 
   if (loadError && !binder) {
     return (
