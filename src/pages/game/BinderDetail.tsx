@@ -93,9 +93,9 @@ export default function BinderDetail() {
     setLoading(false);
   };
   useEffect(() => {
-    setBinder(routeBinder);
+    setBinder((current) => routeBinder ?? cachedBinder ?? current);
     load();
-  }, [binderId]);
+  }, [binderId, game, user?.id]);
 
   if (loadError && !binder) {
     return (
