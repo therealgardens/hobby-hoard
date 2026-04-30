@@ -232,6 +232,26 @@ export default function MasterSets() {
     setQuantity(1);
   };
 
+  const persistOwnedCache = async (
+    counts: Map<string, number>,
+    ids: Set<string>,
+    langs: Map<string, string>,
+  ) => {
+    const userRes = await supabase.auth.getUser();
+    const uid = userRes.data.user?.id;
+    if (!uid || !game) return;
+    try {
+      sessionStorage.setItem(
+        `tcg.owned.${game}.${uid}.v3`,
+        JSON.stringify({
+          counts: Array.from(counts.entries()),
+          ids: Array.from(ids),
+          langs: Array.from(langs.entries()),
+        }),
+      );
+    } catch (_) {}
+  };
+
   const quickAdd = async (c: CardRow) => {
     if (!game) return;
     const { data: userData } = await supabase.auth.getUser();
@@ -247,16 +267,19 @@ export default function MasterSets() {
     if (error) return toast.error(error.message);
     toast.success(`Added ${c.name}`);
     const wasOwned = ownedCardIds.has(c.id);
-    setOwnedCardIds((prev) => new Set(prev).add(c.id));
-    setOwnedLangByCard((prev) => {
-      const n = new Map(prev);
-      if (!n.has(c.id)) n.set(c.id, "EN");
-      return n;
-    });
+    const nextIds = new Set(ownedCardIds).add(c.id);
+    const nextLangs = new Map(ownedLangByCard);
+    if (!nextLangs.has(c.id)) nextLangs.set(c.id, "EN");
+    const nextCounts = new Map(ownedBySet);
     if (!wasOwned) {
       const sid = setIdForCard(game, c);
-      if (sid) setOwnedBySet((prev) => new Map(prev).set(sid, (prev.get(sid) ?? 0) + 1));
+      if (sid) nextCounts.set(sid, (nextCounts.get(sid) ?? 0) + 1);
     }
+    setOwnedCardIds(nextIds);
+    setOwnedLangByCard(nextLangs);
+    setOwnedBySet(nextCounts);
+    persistOwnedCache(nextCounts, nextIds, nextLangs);
+    emitCollectionChanged({ game, cardId: c.id });
   };
 
   const toggleWanted = async (c: CardRow) => {
@@ -316,12 +339,19 @@ export default function MasterSets() {
     const savedId = picked.id;
     const savedSetId = setIdForCard(game, picked);
     const wasOwned = ownedCardIds.has(savedId);
+    const savedCard = picked;
     setPicked(null);
-    setOwnedCardIds((prev) => new Set(prev).add(savedId));
-    setOwnedLangByCard((prev) => new Map(prev).set(savedId, language));
+    const nextIds = new Set(ownedCardIds).add(savedId);
+    const nextLangs = new Map(ownedLangByCard).set(savedId, language);
+    const nextCounts = new Map(ownedBySet);
     if (!wasOwned && savedSetId) {
-      setOwnedBySet((prev) => new Map(prev).set(savedSetId, (prev.get(savedSetId) ?? 0) + 1));
+      nextCounts.set(savedSetId, (nextCounts.get(savedSetId) ?? 0) + 1);
     }
+    setOwnedCardIds(nextIds);
+    setOwnedLangByCard(nextLangs);
+    setOwnedBySet(nextCounts);
+    persistOwnedCache(nextCounts, nextIds, nextLangs);
+    emitCollectionChanged({ game, cardId: savedCard.id });
   };
 
   const removeOne = async () => {
@@ -355,27 +385,21 @@ export default function MasterSets() {
       .eq("card_id", removedId)
       .limit(1);
     if (!remain || remain.length === 0) {
-      setOwnedCardIds((prev) => {
-        const n = new Set(prev);
-        n.delete(removedId);
-        return n;
-      });
-      setOwnedLangByCard((prev) => {
-        const n = new Map(prev);
-        n.delete(removedId);
-        return n;
-      });
+      const nextIds = new Set(ownedCardIds);
+      nextIds.delete(removedId);
+      const nextLangs = new Map(ownedLangByCard);
+      nextLangs.delete(removedId);
+      const nextCounts = new Map(ownedBySet);
       if (removedSetId) {
-        setOwnedBySet((prev) => {
-          const n = new Map(prev);
-          n.set(removedSetId, Math.max(0, (n.get(removedSetId) ?? 0) - 1));
-          return n;
-        });
+        nextCounts.set(removedSetId, Math.max(0, (nextCounts.get(removedSetId) ?? 0) - 1));
       }
+      setOwnedCardIds(nextIds);
+      setOwnedLangByCard(nextLangs);
+      setOwnedBySet(nextCounts);
+      persistOwnedCache(nextCounts, nextIds, nextLangs);
     }
+    emitCollectionChanged({ game, cardId: removedId });
   };
-
-  if (!game) return null;
 
   return (
     <div>
