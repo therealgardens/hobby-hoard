@@ -19,8 +19,8 @@ export default function GameLayout() {
 
   const links = [
     { to: ``, label: "Home", icon: Library, end: true },
-    { to: `search`, label: "Search", icon: Search },
     { to: `master`, label: "Master Sets", icon: Layers },
+    { to: `search`, label: "Search", icon: Search },
     { to: `binders`, label: "Binders", icon: BookOpen },
     { to: `wanted`, label: "Wanted", icon: Heart },
     { to: `duplicates`, label: "Duplicates", icon: Copy },
