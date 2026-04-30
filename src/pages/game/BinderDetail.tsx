@@ -22,8 +22,6 @@ type Binder = Tables<"binders">;
 type Slot = Tables<"binder_slots"> & { card: Tables<"cards"> | null };
 type CardRow = Tables<"cards">;
 
-const _ownedCache = new Map<string, Set<string>>();
-const ownedCacheKey = (game: string, userId: string) => `${game}:${userId}`;
 const binderCacheKey = (game: string, userId: string) => `tcg.binders.${game}.${userId}.v1`;
 
 export default function BinderDetail() {
@@ -36,9 +34,7 @@ export default function BinderDetail() {
   const cachedBinder = useMemo(() => {
     if (!game || !user || !binderId) return null;
     try {
-      const rows = JSON.parse(
-        sessionStorage.getItem(binderCacheKey(game, user.id)) ?? "[]",
-      ) as Binder[];
+      const rows = JSON.parse(sessionStorage.getItem(binderCacheKey(game, user.id)) ?? "[]") as Binder[];
       return rows.find((row) => row.id === binderId) ?? null;
     } catch { return null; }
   }, [game, user?.id, binderId]);
@@ -59,16 +55,14 @@ export default function BinderDetail() {
     setLoadError(null);
 
     const { data: b, error: bErr } = await withDbRetry(() =>
-      supabase.from("binders").select("*")
-        .eq("id", binderId).eq("user_id", user.id).maybeSingle(),
+      supabase.from("binders").select("*").eq("id", binderId).eq("user_id", user.id).maybeSingle(),
     );
     if (bErr) { setLoading(false); setLoadError(bErr.message || "Could not load binder"); return; }
     if (!b) { setLoading(false); if (!binder) setLoadError("Binder not found"); return; }
     setBinder(b);
 
     const { data: s, error: sErr } = await withDbRetry(() =>
-      supabase.from("binder_slots").select("*")
-        .eq("binder_id", binderId).eq("user_id", user.id).order("position"),
+      supabase.from("binder_slots").select("*").eq("binder_id", binderId).eq("user_id", user.id).order("position"),
     );
     if (sErr) { toast.error("Could not load slots"); setSlots([]); setLoading(false); return; }
 
@@ -76,15 +70,10 @@ export default function BinderDetail() {
     const cardIds = Array.from(new Set(slotRows.map((r) => r.card_id).filter(Boolean) as string[]));
     let cardsById = new Map<string, Tables<"cards">>();
     if (cardIds.length) {
-      const { data: cards } = await withDbRetry(() =>
-        supabase.from("cards").select("*").in("id", cardIds),
-      );
+      const { data: cards } = await withDbRetry(() => supabase.from("cards").select("*").in("id", cardIds));
       cardsById = new Map((cards ?? []).map((c: any) => [c.id, c]));
     }
-    setSlots(slotRows.map((row) => ({
-      ...row,
-      card: row.card_id ? (cardsById.get(row.card_id) ?? null) : null,
-    })));
+    setSlots(slotRows.map((row) => ({ ...row, card: row.card_id ? (cardsById.get(row.card_id) ?? null) : null })));
     setLoading(false);
   }, [binderId, user?.id]);
 
@@ -145,6 +134,7 @@ export default function BinderDetail() {
     }
   };
 
+  // ← fix bug 3: check esplicito → insert/update invece di upsert con onConflict
   const place = async (card: CardRow) => {
     if (pickingPos === null || !binderId || !user) return;
     const pos = pickingPos;
@@ -165,39 +155,59 @@ export default function BinderDetail() {
     setPickingPos(null);
     setIsWanted(false);
 
-    // Fix: .maybeSingle() invece di .single() per evitare PGRST116
-    const { data: upserted, error } = await withDbRetry(() =>
-      supabase.from("binder_slots").upsert(
-        { binder_id: binderId, user_id: user.id, position: pos, card_id: card.id, is_wanted: wanted },
-        { onConflict: "binder_id,position" },
-      ).select().maybeSingle(),
-    );
-    if (error) {
+    try {
+      const { data: existing } = await supabase
+        .from("binder_slots")
+        .select("id")
+        .eq("binder_id", binderId)
+        .eq("position", pos)
+        .maybeSingle();
+
+      let savedSlot: Tables<"binder_slots"> | null = null;
+
+      if (existing) {
+        const { data, error } = await withDbRetry(() =>
+          supabase.from("binder_slots")
+            .update({ card_id: card.id, is_wanted: wanted })
+            .eq("id", existing.id)
+            .select()
+            .maybeSingle(),
+        );
+        if (error) throw error;
+        savedSlot = data;
+      } else {
+        const { data, error } = await withDbRetry(() =>
+          supabase.from("binder_slots")
+            .insert({ binder_id: binderId, user_id: user.id, position: pos, card_id: card.id, is_wanted: wanted })
+            .select()
+            .maybeSingle(),
+        );
+        if (error) throw error;
+        savedSlot = data;
+      }
+
+      if (savedSlot) {
+        setSlots((prev) => [
+          ...prev.filter((s) => s.position !== pos),
+          { ...(savedSlot as Tables<"binder_slots">), card },
+        ]);
+      }
+
+      if (wanted) {
+        try { await addWishlist(card, game!, { binder_id: binderId, quantity: 1 }); }
+        catch (err) { toast.error(err instanceof Error ? err.message : "Could not add to wishlist"); }
+      }
+      toast.success(`Placed ${card.name}`);
+    } catch (err) {
       setSlots((prev) => prev.filter((s) => s.id !== `optimistic-${pos}`));
-      return toast.error(error.message || "Could not place card");
+      toast.error(err instanceof Error ? err.message : "Could not place card");
     }
-    if (upserted) {
-      setSlots((prev) => [
-        ...prev.filter((s) => s.position !== pos),
-        { ...(upserted as Tables<"binder_slots">), card },
-      ]);
-    }
-    if (wanted) {
-      try { await addWishlist(card, game!, { binder_id: binderId, quantity: 1 }); }
-      catch (err) { toast.error(err instanceof Error ? err.message : "Could not add to wishlist"); }
-    }
-    toast.success(`Placed ${card.name}`);
   };
 
   const clear = async (slotId: string) => {
     setSlots((prev) => prev.filter((s) => s.id !== slotId));
-    const { error } = await withDbRetry(() =>
-      supabase.from("binder_slots").delete().eq("id", slotId),
-    );
-    if (error) {
-      toast.error(error.message || "Could not clear slot");
-      load();
-    }
+    const { error } = await withDbRetry(() => supabase.from("binder_slots").delete().eq("id", slotId));
+    if (error) { toast.error(error.message || "Could not clear slot"); load(); }
   };
 
   return (
@@ -218,20 +228,14 @@ export default function BinderDetail() {
             <Button variant="outline" size="icon" disabled={safePageIdx === 0} onClick={() => setPageIdx((i) => Math.max(0, i - 1))}>
               <ChevronLeft className="h-4 w-4" />
             </Button>
-            <span className="text-sm tabular-nums w-16 text-center">
-              Page {safePageIdx + 1}/{pages}
-            </span>
+            <span className="text-sm tabular-nums w-16 text-center">Page {safePageIdx + 1}/{pages}</span>
             <Button variant="outline" size="icon" disabled={safePageIdx >= pages - 1} onClick={() => setPageIdx((i) => Math.min(pages - 1, i + 1))}>
               <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
-          <Button variant="outline" size="sm" onClick={addPage}>
-            <Plus className="h-4 w-4 mr-1" /> Page
-          </Button>
+          <Button variant="outline" size="sm" onClick={addPage}><Plus className="h-4 w-4 mr-1" /> Page</Button>
           {pages > 1 && safePageIdx === pages - 1 && (
-            <Button variant="ghost" size="sm" onClick={() => setConfirmRemovePage(true)}>
-              <Trash2 className="h-4 w-4" />
-            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setConfirmRemovePage(true)}><Trash2 className="h-4 w-4" /></Button>
           )}
           <ToggleGroup type="single" value={view} onValueChange={(v) => v && setView(v as any)}>
             <ToggleGroupItem value="grid" aria-label="Grid view"><LayoutGrid className="h-4 w-4" /></ToggleGroupItem>
@@ -243,9 +247,7 @@ export default function BinderDetail() {
       {loading ? (
         <Card className="p-4 bg-gradient-card shadow-card max-w-3xl mx-auto">
           <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${binder.cols}, minmax(0, 1fr))` }}>
-            {Array.from({ length: perPage }).map((_, i) => (
-              <Skeleton key={i} className="w-full card-aspect rounded-lg" />
-            ))}
+            {Array.from({ length: perPage }).map((_, i) => <Skeleton key={i} className="w-full card-aspect rounded-lg" />)}
           </div>
         </Card>
       ) : view === "grid" ? (
@@ -255,32 +257,20 @@ export default function BinderDetail() {
               const pos = pageStart + i;
               const slot = slotMap.get(pos);
               return (
-                <div
-                  key={pos}
-                  onClick={() => !slot && setPickingPos(pos)}
+                <div key={pos} onClick={() => !slot && setPickingPos(pos)}
                   className={cn(
                     "card-aspect rounded-lg border-2 border-dashed border-border bg-[hsl(var(--binder-empty))] flex items-center justify-center text-muted-foreground text-xs relative overflow-hidden group",
                     !slot && "cursor-pointer hover:border-primary hover:bg-muted",
-                  )}
-                >
+                  )}>
                   {slot ? (() => {
                     const img = cardImage(slot.card?.game, slot.card?.code, slot.card?.image_small);
                     return (
                       <>
-                        {img ? (
-                          <img src={img} alt={slot.card?.name ?? ""} loading="lazy"
-                            onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                            className={cn("w-full h-full object-cover", slot.is_wanted && "opacity-40")} />
-                        ) : (
-                          <div className={cn("w-full h-full flex items-center justify-center p-1 text-center text-[11px] font-medium text-foreground bg-muted", slot.is_wanted && "opacity-40")}>
-                            <span className="line-clamp-3">{slot.card?.name ?? slot.card?.code ?? "Card"}</span>
-                          </div>
-                        )}
-                        {slot.is_wanted && (
-                          <span className="absolute top-1 left-1 text-[10px] bg-accent text-accent-foreground px-1.5 py-0.5 rounded-full">wanted</span>
-                        )}
-                        <button onClick={(e) => { e.stopPropagation(); clear(slot.id); }}
-                          className="absolute top-1 right-1 p-1 rounded-full bg-background/80 opacity-0 group-hover:opacity-100">
+                        {img
+                          ? <img src={img} alt={slot.card?.name ?? ""} loading="lazy" onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")} className={cn("w-full h-full object-cover", slot.is_wanted && "opacity-40")} />
+                          : <div className={cn("w-full h-full flex items-center justify-center p-1 text-center text-[11px] font-medium text-foreground bg-muted", slot.is_wanted && "opacity-40")}><span className="line-clamp-3">{slot.card?.name ?? slot.card?.code ?? "Card"}</span></div>}
+                        {slot.is_wanted && <span className="absolute top-1 left-1 text-[10px] bg-accent text-accent-foreground px-1.5 py-0.5 rounded-full">wanted</span>}
+                        <button onClick={(e) => { e.stopPropagation(); clear(slot.id); }} className="absolute top-1 right-1 p-1 rounded-full bg-background/80 opacity-0 group-hover:opacity-100">
                           <Trash2 className="h-3 w-3" />
                         </button>
                       </>
@@ -298,20 +288,15 @@ export default function BinderDetail() {
             const slot = slotMap.get(pos);
             const img = cardImage(slot?.card?.game, slot?.card?.code, slot?.card?.image_small);
             return (
-              <div key={pos} onClick={() => !slot && setPickingPos(pos)}
-                className={cn("flex items-center gap-3 p-2 px-4", !slot && "cursor-pointer hover:bg-muted")}>
+              <div key={pos} onClick={() => !slot && setPickingPos(pos)} className={cn("flex items-center gap-3 p-2 px-4", !slot && "cursor-pointer hover:bg-muted")}>
                 <span className="text-xs text-muted-foreground w-10 tabular-nums">#{pos + 1}</span>
                 <div className="w-10 h-14 rounded-md overflow-hidden bg-[hsl(var(--binder-empty))] flex items-center justify-center shrink-0">
                   {img
-                    ? <img src={img} alt={slot?.card?.name} loading="lazy"
-                        onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                        className={cn("w-full h-full object-cover", slot?.is_wanted && "opacity-40")} />
+                    ? <img src={img} alt={slot?.card?.name} loading="lazy" onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")} className={cn("w-full h-full object-cover", slot?.is_wanted && "opacity-40")} />
                     : <span className="text-muted-foreground text-xs">+</span>}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="font-medium truncate">
-                    {slot?.card?.name ?? <span className="text-muted-foreground italic">empty slot</span>}
-                  </div>
+                  <div className="font-medium truncate">{slot?.card?.name ?? <span className="text-muted-foreground italic">empty slot</span>}</div>
                   {slot?.card && (
                     <div className="text-xs text-muted-foreground truncate">
                       {slot.card.code}{slot.card.set_name ? ` · ${slot.card.set_name}` : ""}
@@ -319,25 +304,17 @@ export default function BinderDetail() {
                     </div>
                   )}
                 </div>
-                {slot && (
-                  <button onClick={(e) => { e.stopPropagation(); clear(slot.id); }}
-                    className="p-2 rounded-full hover:bg-background/80">
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                )}
+                {slot && <button onClick={(e) => { e.stopPropagation(); clear(slot.id); }} className="p-2 rounded-full hover:bg-background/80"><Trash2 className="h-4 w-4" /></button>}
               </div>
             );
           })}
         </Card>
       )}
 
-      {/* Dialog posizionamento carta — ricerca semplice e veloce */}
       <Dialog open={pickingPos !== null} onOpenChange={(o) => !o && setPickingPos(null)}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>
-              {isWanted ? "Qualsiasi carta" : "Cerca carta"} — slot {pickingPos !== null && pickingPos + 1}
-            </DialogTitle>
+            <DialogTitle>{isWanted ? "Qualsiasi carta" : "Cerca carta"} — slot {pickingPos !== null && pickingPos + 1}</DialogTitle>
           </DialogHeader>
           <div className="flex items-center gap-2 mb-3">
             <Switch id="w" checked={isWanted} onCheckedChange={setIsWanted} />
@@ -347,20 +324,13 @@ export default function BinderDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Dialog conferma rimozione pagina */}
       <Dialog open={confirmRemovePage} onOpenChange={setConfirmRemovePage}>
         <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Rimuovere pagina {pages}?</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Tutte le carte su questa pagina verranno eliminate. L'operazione non è reversibile.
-          </p>
+          <DialogHeader><DialogTitle>Rimuovere pagina {pages}?</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">Tutte le carte su questa pagina verranno eliminate. L'operazione non è reversibile.</p>
           <DialogFooter className="gap-2 sm:gap-2">
             <Button variant="outline" onClick={() => setConfirmRemovePage(false)}>Annulla</Button>
-            <Button variant="destructive" onClick={removePage}>
-              <Trash2 className="h-4 w-4 mr-2" /> Rimuovi pagina
-            </Button>
+            <Button variant="destructive" onClick={removePage}><Trash2 className="h-4 w-4 mr-2" /> Rimuovi pagina</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -368,7 +338,7 @@ export default function BinderDetail() {
   );
 }
 
-// ─── Ricerca semplice per binder — solo DB locale, niente edge function ───────
+// ─── Ricerca semplice per binder — solo DB locale ─────────────────────────────
 
 function BinderCardPicker({ game, onPick }: { game: Game; onPick: (card: CardRow) => void }) {
   const [q, setQ] = useState("");
@@ -381,11 +351,8 @@ function BinderCardPicker({ game, onPick }: { game: Game; onPick: (card: CardRow
     const t = setTimeout(async () => {
       setLoading(true);
       const { data } = await supabase
-        .from("cards")
-        .select("*")
-        .eq("game", game)
-        .or(`name.ilike.%${term}%,code.ilike.%${term}%`)
-        .limit(30);
+        .from("cards").select("*").eq("game", game)
+        .or(`name.ilike.%${term}%,code.ilike.%${term}%`).limit(30);
       setLoading(false);
       setResults(data ?? []);
     }, 300);
@@ -396,42 +363,20 @@ function BinderCardPicker({ game, onPick }: { game: Game; onPick: (card: CardRow
     <div className="space-y-3">
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          autoFocus
-          placeholder="Cerca per nome o codice…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          className="pl-9"
-        />
+        <Input autoFocus placeholder="Cerca per nome o codice…" value={q} onChange={(e) => setQ(e.target.value)} className="pl-9" />
       </div>
-      {loading && (
-        <div className="flex justify-center py-6">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-        </div>
-      )}
-      {!loading && q.trim().length < 2 && (
-        <p className="text-sm text-muted-foreground text-center py-6">
-          Digita almeno 2 caratteri per cercare.
-        </p>
-      )}
-      {!loading && q.trim().length >= 2 && results.length === 0 && (
-        <p className="text-sm text-muted-foreground text-center py-6">Nessuna carta trovata.</p>
-      )}
+      {loading && <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}
+      {!loading && q.trim().length < 2 && <p className="text-sm text-muted-foreground text-center py-6">Digita almeno 2 caratteri per cercare.</p>}
+      {!loading && q.trim().length >= 2 && results.length === 0 && <p className="text-sm text-muted-foreground text-center py-6">Nessuna carta trovata.</p>}
       <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
         {results.map((c) => {
           const img = cardImage(c.game, c.code, c.image_small);
           return (
             <button key={c.id} type="button" onClick={() => onPick(c)} className="text-left group">
               <Card className="overflow-hidden bg-gradient-card hover:shadow-card transition-shadow">
-                {img ? (
-                  <img src={img} alt={c.name} loading="lazy"
-                    onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                    className="w-full card-aspect object-cover" />
-                ) : (
-                  <div className="w-full card-aspect bg-muted flex items-center justify-center text-xs text-muted-foreground p-1 text-center">
-                    {c.name}
-                  </div>
-                )}
+                {img
+                  ? <img src={img} alt={c.name} loading="lazy" onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")} className="w-full card-aspect object-cover" />
+                  : <div className="w-full card-aspect bg-muted flex items-center justify-center text-xs text-muted-foreground p-1 text-center">{c.name}</div>}
                 <div className="p-1.5">
                   <p className="text-xs font-medium truncate">{c.name}</p>
                   <p className="text-[10px] text-muted-foreground truncate">{c.code}</p>
