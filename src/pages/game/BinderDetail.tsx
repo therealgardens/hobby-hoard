@@ -15,16 +15,29 @@ import { cardImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 import { addWishlist } from "@/lib/wishlist";
 import { withDbRetry } from "@/lib/supabaseRetry";
+import { useAuth } from "@/hooks/useAuth";
 
 type Binder = Tables<"binders">;
 type Slot = Tables<"binder_slots"> & { card: Tables<"cards"> | null };
 
+const binderCacheKey = (game: string, userId: string) => `tcg.binders.${game}.${userId}.v1`;
+
 export default function BinderDetail() {
   const { game, binderId } = useParams<{ game: Game; binderId: string }>();
   const nav = useNavigate();
+  const { user } = useAuth();
   const location = useLocation();
   const routeBinder = (location.state as { binder?: Binder } | null)?.binder ?? null;
-  const [binder, setBinder] = useState<Binder | null>(routeBinder);
+  const cachedBinder = (() => {
+    if (!game || !user || !binderId) return null;
+    try {
+      const rows = JSON.parse(sessionStorage.getItem(binderCacheKey(game, user.id)) ?? "[]") as Binder[];
+      return rows.find((row) => row.id === binderId) ?? null;
+    } catch {
+      return null;
+    }
+  })();
+  const [binder, setBinder] = useState<Binder | null>(routeBinder ?? cachedBinder);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [pickingPos, setPickingPos] = useState<number | null>(null);
   const [isWanted, setIsWanted] = useState(false);
