@@ -20,6 +20,9 @@ import { useAuth } from "@/hooks/useAuth";
 type Binder = Tables<"binders">;
 type Slot = Tables<"binder_slots"> & { card: Tables<"cards"> | null };
 
+// Cache in-memory condivisa per le carte possedute — stessa logica di MasterSets
+const _ownedCache = new Map<string, Set<string>>();
+
 const binderCacheKey = (game: string, userId: string) => `tcg.binders.${game}.${userId}.v1`;
 
 export default function BinderDetail() {
@@ -44,6 +47,28 @@ export default function BinderDetail() {
   const [pageIdx, setPageIdx] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Carte possedute per il filtro nel CardSearch
+  const [ownedCardIds, setOwnedCardIds] = useState<Set<string>>(
+    game ? (_ownedCache.get(game) ?? new Set()) : new Set()
+  );
+
+  // Carica le carte possedute (usato da CardSearch quando isWanted=false)
+  const loadOwned = async () => {
+    if (!game || !user) return;
+    if (_ownedCache.has(game) && _ownedCache.get(game)!.size > 0) {
+      setOwnedCardIds(_ownedCache.get(game)!);
+      return;
+    }
+    const { data, error } = await supabase
+      .from("collection_entries")
+      .select("card_id")
+      .eq("user_id", user.id)
+      .eq("game", game);
+    if (error) return;
+    const ids = new Set((data ?? []).map((r: any) => r.card_id).filter(Boolean) as string[]);
+    _ownedCache.set(game, ids);
+    setOwnedCardIds(ids);
+  };
 
   const load = async () => {
     if (!binderId) return;
@@ -73,6 +98,7 @@ export default function BinderDetail() {
   useEffect(() => {
     setBinder((current) => routeBinder ?? cachedBinder ?? current);
     load();
+    loadOwned();
   }, [binderId, game, user?.id]);
 
   if (loadError && !binder) {
@@ -96,13 +122,11 @@ export default function BinderDetail() {
 
   const addPage = async () => {
     if (!binderId) return;
-    // Aggiornamento ottimistico
     const newPages = pages + 1;
     setBinder((prev) => prev ? { ...prev, pages: newPages } as any : prev);
     setPageIdx(newPages - 1);
     const { error } = await supabase.from("binders").update({ pages: newPages } as any).eq("id", binderId);
     if (error) {
-      // Rollback
       setBinder((prev) => prev ? { ...prev, pages } as any : prev);
       setPageIdx(safePageIdx);
       toast.error(error.message);
@@ -114,7 +138,6 @@ export default function BinderDetail() {
     if (!confirm(`Remove page ${pages}? Cards on this page will be deleted.`)) return;
     const start = (pages - 1) * perPage;
     const end = pages * perPage - 1;
-    // Aggiornamento ottimistico
     const newPages = pages - 1;
     const newPageIdx = Math.max(0, safePageIdx - (safePageIdx === pages - 1 ? 1 : 0));
     setBinder((prev) => prev ? { ...prev, pages: newPages } as any : prev);
@@ -126,7 +149,7 @@ export default function BinderDetail() {
     ]);
     if (delErr || updErr) {
       toast.error((delErr ?? updErr)?.message ?? "Could not remove page");
-      load(); // reload solo in caso di errore
+      load();
     }
   };
 
@@ -135,7 +158,6 @@ export default function BinderDetail() {
     const pos = pickingPos;
     const wanted = isWanted;
 
-    // Aggiornamento ottimistico immediato
     const optimisticSlot: Slot = {
       id: `optimistic-${pos}`,
       binder_id: binderId,
@@ -157,11 +179,9 @@ export default function BinderDetail() {
       ).select().single(),
     );
     if (error) {
-      // Rollback
       setSlots((prev) => prev.filter((s) => s.id !== `optimistic-${pos}`));
       return toast.error(error.message || "Could not place card");
     }
-    // Sostituisci lo slot ottimistico con quello reale del DB
     if (upserted) {
       setSlots((prev) => [...prev.filter((s) => s.position !== pos), { ...(upserted as Tables<"binder_slots">), card }]);
     }
@@ -173,12 +193,11 @@ export default function BinderDetail() {
   };
 
   const clear = async (slotId: string) => {
-    // Aggiornamento ottimistico
     setSlots((prev) => prev.filter((s) => s.id !== slotId));
     const { error } = await withDbRetry(() => supabase.from("binder_slots").delete().eq("id", slotId));
     if (error) {
       toast.error(error.message || "Could not clear slot");
-      load(); // reload solo in caso di errore
+      load();
     }
   };
 
@@ -282,12 +301,25 @@ export default function BinderDetail() {
 
       <Dialog open={pickingPos !== null} onOpenChange={(o) => !o && setPickingPos(null)}>
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>Pick a card for slot {pickingPos !== null && pickingPos + 1}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>
+              {isWanted ? "Cerca qualsiasi carta" : "Cerca tra le tue carte"} — slot {pickingPos !== null && pickingPos + 1}
+            </DialogTitle>
+          </DialogHeader>
           <div className="flex items-center gap-2 mb-3">
             <Switch id="w" checked={isWanted} onCheckedChange={setIsWanted} />
-            <Label htmlFor="w">Mark as wanted (transparent placeholder)</Label>
+            <Label htmlFor="w">Mark as wanted (cerca qualsiasi carta, non solo possedute)</Label>
           </div>
-          {game && <CardSearch game={game} onPick={place} pickLabel="Place" autoLoad={true} />}
+          {game && (
+            <CardSearch
+              game={game}
+              onPick={place}
+              pickLabel="Place"
+              autoLoad={true}
+              ownedOnly={!isWanted}
+              ownedCardIds={isWanted ? undefined : ownedCardIds}
+            />
+          )}
         </DialogContent>
       </Dialog>
     </div>
