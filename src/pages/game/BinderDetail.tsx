@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,14 +15,29 @@ import { cardImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 import { addWishlist } from "@/lib/wishlist";
 import { withDbRetry } from "@/lib/supabaseRetry";
+import { useAuth } from "@/hooks/useAuth";
 
 type Binder = Tables<"binders">;
 type Slot = Tables<"binder_slots"> & { card: Tables<"cards"> | null };
 
+const binderCacheKey = (game: string, userId: string) => `tcg.binders.${game}.${userId}.v1`;
+
 export default function BinderDetail() {
   const { game, binderId } = useParams<{ game: Game; binderId: string }>();
   const nav = useNavigate();
-  const [binder, setBinder] = useState<Binder | null>(null);
+  const { user } = useAuth();
+  const location = useLocation();
+  const routeBinder = (location.state as { binder?: Binder } | null)?.binder ?? null;
+  const cachedBinder = (() => {
+    if (!game || !user || !binderId) return null;
+    try {
+      const rows = JSON.parse(sessionStorage.getItem(binderCacheKey(game, user.id)) ?? "[]") as Binder[];
+      return rows.find((row) => row.id === binderId) ?? null;
+    } catch {
+      return null;
+    }
+  })();
+  const [binder, setBinder] = useState<Binder | null>(routeBinder ?? cachedBinder);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [pickingPos, setPickingPos] = useState<number | null>(null);
   const [isWanted, setIsWanted] = useState(false);
@@ -33,7 +48,7 @@ export default function BinderDetail() {
 
   const load = async () => {
     if (!binderId) return;
-    setLoading(true);
+    setLoading(!binder);
     setLoadError(null);
     const { data: b, error: bErr } = await withDbRetry(() =>
       supabase.from("binders").select("*").eq("id", binderId).maybeSingle(),
@@ -45,7 +60,7 @@ export default function BinderDetail() {
     }
     if (!b) {
       setLoading(false);
-      setLoadError("Binder not found");
+      if (!binder) setLoadError("Binder not found");
       return;
     }
     setBinder(b);
@@ -77,7 +92,10 @@ export default function BinderDetail() {
     setSlots(slotRows.map((row) => ({ ...row, card: row.card_id ? cardsById.get(row.card_id) ?? null : null })));
     setLoading(false);
   };
-  useEffect(() => { load(); }, [binderId]);
+  useEffect(() => {
+    setBinder((current) => routeBinder ?? cachedBinder ?? current);
+    load();
+  }, [binderId, game, user?.id]);
 
   if (loadError && !binder) {
     return (
