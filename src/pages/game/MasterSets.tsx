@@ -17,6 +17,7 @@ import type { Tables } from "@/integrations/supabase/types";
 import { addWishlist, listWishlist, removeWishlistByCard } from "@/lib/wishlist";
 import { withDbRetry } from "@/lib/supabaseRetry";
 import { emitCollectionChanged, onCollectionChanged } from "@/lib/collectionEvents";
+import { CardSearch } from "@/components/CardSearch";
 
 type CardRow = Tables<"cards">;
 
@@ -69,6 +70,7 @@ export default function MasterSets() {
   const [ownedBySet, setOwnedBySet] = useState<Map<string, number>>(cachedOwned?.counts ?? new Map());
   const [loadingSets, setLoadingSets] = useState(!cachedSets?.length);
   const [query, setQuery] = useState("");
+  const [searchMode, setSearchMode] = useState<"sets" | "cards">("sets");
   const [activeSet, setActiveSet] = useState<SetInfo | null>(null);
   const [ownedCardIds, setOwnedCardIds] = useState<Set<string>>(cachedOwned?.ids ?? new Set());
   const [ownedLangByCard, setOwnedLangByCard] = useState<Map<string, string>>(cachedOwned?.langs ?? new Map());
@@ -149,6 +151,7 @@ export default function MasterSets() {
     if (!game) return;
     setActiveSet(null);
     setQuery("");
+    setSearchMode("sets");
     if (!_setsCache.has(game)) setLoadingSets(true);
 
     (async () => {
@@ -413,32 +416,64 @@ export default function MasterSets() {
         />
       ) : (
         <>
-          <div className="relative mb-6 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder={
-                game === "onepiece" ? "Search by name or code (e.g. Azure Sea Seven, OP14, ST21)"
-                : game === "yugioh" ? "Search by name or code (e.g. Legend of Blue Eyes, LOB, MRD)"
-                : "Search by name or code (e.g. Crown Zenith, sv1, swsh12)"
-              }
-              className="pl-9" value={query} onChange={(e) => setQuery(e.target.value)}
-            />
+          {/* Toggle Espansioni / Cerca carte */}
+          <div className="flex items-center gap-1 mb-6 rounded-lg border bg-muted p-1 w-fit">
+            <button
+              type="button"
+              onClick={() => setSearchMode("sets")}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                searchMode === "sets"
+                  ? "bg-background shadow text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Espansioni
+            </button>
+            <button
+              type="button"
+              onClick={() => setSearchMode("cards")}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                searchMode === "cards"
+                  ? "bg-background shadow text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Cerca carte
+            </button>
           </div>
-          <Tabs defaultValue="all">
-            <TabsList>
-              <TabsTrigger value="all">All Expansions ({visibleSets.length})</TabsTrigger>
-              <TabsTrigger value="mine">My Master Sets ({ownedSets.length})</TabsTrigger>
-            </TabsList>
-            <TabsContent value="all" className="mt-6">
-              {loadingSets && sets.length === 0 ? <SetGridSkeleton /> : <SetGrid sets={visibleSets} ownedBySet={ownedBySet} onOpen={setActiveSet} />}
-            </TabsContent>
-            <TabsContent value="mine" className="mt-6">
-              {loadingSets && sets.length === 0 ? <SetGridSkeleton />
-               : ownedSets.length === 0 ? (
-                <p className="text-muted-foreground text-center py-12">You don't own any cards yet. Open an expansion and start building.</p>
-               ) : <SetGrid sets={ownedSets} ownedBySet={ownedBySet} onOpen={setActiveSet} />}
-            </TabsContent>
-          </Tabs>
+
+          {searchMode === "sets" ? (
+            <>
+              <div className="relative mb-6 max-w-md">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder={
+                    game === "onepiece" ? "Search by name or code (e.g. Azure Sea Seven, OP14, ST21)"
+                    : game === "yugioh" ? "Search by name or code (e.g. Legend of Blue Eyes, LOB, MRD)"
+                    : "Search by name or code (e.g. Crown Zenith, sv1, swsh12)"
+                  }
+                  className="pl-9" value={query} onChange={(e) => setQuery(e.target.value)}
+                />
+              </div>
+              <Tabs defaultValue="all">
+                <TabsList>
+                  <TabsTrigger value="all">All Expansions ({visibleSets.length})</TabsTrigger>
+                  <TabsTrigger value="mine">My Master Sets ({ownedSets.length})</TabsTrigger>
+                </TabsList>
+                <TabsContent value="all" className="mt-6">
+                  {loadingSets && sets.length === 0 ? <SetGridSkeleton /> : <SetGrid sets={visibleSets} ownedBySet={ownedBySet} onOpen={setActiveSet} />}
+                </TabsContent>
+                <TabsContent value="mine" className="mt-6">
+                  {loadingSets && sets.length === 0 ? <SetGridSkeleton />
+                   : ownedSets.length === 0 ? (
+                    <p className="text-muted-foreground text-center py-12">You don't own any cards yet. Open an expansion and start building.</p>
+                   ) : <SetGrid sets={ownedSets} ownedBySet={ownedBySet} onOpen={setActiveSet} />}
+                </TabsContent>
+              </Tabs>
+            </>
+          ) : (
+            <CardSearch game={game} autoLoad={false} />
+          )}
         </>
       )}
 
@@ -533,4 +568,307 @@ function SetGrid({ sets, ownedBySet, onOpen }: { sets: SetInfo[]; ownedBySet: Ma
       {sets.map((s) => (
         <Card key={s.id} className="p-4 cursor-pointer hover:shadow-card transition-shadow bg-gradient-card" onClick={() => onOpen(s)}>
           <div className="flex items-start gap-3">
-            
+            <SetThumb s={s} />
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold truncate">{s.name}</p>
+              <p className="text-xs text-muted-foreground truncate">{s.id}{s.releaseDate ? ` · ${s.releaseDate}` : ""}</p>
+            </div>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+function SetViewSkeleton() {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+      {Array.from({ length: 10 }).map((_, i) => (
+        <Card key={i} className="overflow-hidden bg-gradient-card">
+          <Skeleton className="w-full card-aspect" />
+          <div className="p-2 space-y-2"><Skeleton className="h-4 w-3/4" /><Skeleton className="h-3 w-1/2" /></div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+interface CreateBinderDialogProps {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  game: Game;
+  set: SetInfo;
+  cards: CardRow[];
+  ownedCardIds: Set<string>;
+  onCreated: (binderId: string) => void;
+}
+
+function CreateBinderDialog({ open, onOpenChange, game, set, cards, ownedCardIds, onCreated }: CreateBinderDialogProps) {
+  const [name, setName] = useState(set.name);
+  const [cols, setCols] = useState(4);
+  const [rows, setRows] = useState(3);
+  const [onlyOwned, setOnlyOwned] = useState(false);
+  const [creating, setCreating] = useState(false);
+
+  const cardsToPlace = onlyOwned ? cards.filter((c) => ownedCardIds.has(c.id)) : cards;
+  const perPage = cols * rows;
+  const pagesNeeded = Math.max(1, Math.ceil(cardsToPlace.length / perPage));
+
+  const create = async () => {
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData.user) return toast.error("Not signed in");
+    if (!name.trim() || creating) return;
+    setCreating(true);
+
+    try {
+      const binderId = crypto.randomUUID();
+      const { error: binderErr } = await withDbRetry(() =>
+        supabase.from("binders").insert({
+          id: binderId,
+          user_id: userData.user!.id,
+          game,
+          name: name.trim(),
+          cols,
+          rows,
+          pages: pagesNeeded,
+        } as any)
+      );
+      if (binderErr) { toast.error(binderErr.message); return; }
+
+      if (cardsToPlace.length > 0) {
+        const slots = cardsToPlace.map((c, i) => ({
+          binder_id: binderId,
+          user_id: userData.user!.id,
+          position: i,
+          card_id: c.id,
+          is_wanted: !ownedCardIds.has(c.id),
+        }));
+        const BATCH = 50;
+        for (let i = 0; i < slots.length; i += BATCH) {
+          const { error: slotErr } = await withDbRetry(() =>
+            supabase.from("binder_slots").insert(slots.slice(i, i + BATCH) as any)
+          );
+          if (slotErr) {
+            toast.error(`Slots insert failed: ${slotErr.message}`);
+            break;
+          }
+        }
+      }
+
+      toast.success(`Binder "${name.trim()}" creato con ${cardsToPlace.length} carte su ${pagesNeeded} pagine!`);
+      onOpenChange(false);
+      onCreated(binderId);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Crea binder da {set.name}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div>
+            <Label>Nome binder</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={set.name} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Colonne</Label>
+              <Input type="number" min={2} max={6} value={cols} onChange={(e) => setCols(parseInt(e.target.value) || 4)} />
+            </div>
+            <div>
+              <Label>Righe</Label>
+              <Input type="number" min={2} max={6} value={rows} onChange={(e) => setRows(parseInt(e.target.value) || 3)} />
+            </div>
+          </div>
+          <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/40">
+            <input
+              type="checkbox"
+              id="only-owned"
+              checked={onlyOwned}
+              onChange={(e) => setOnlyOwned(e.target.checked)}
+              className="h-4 w-4 accent-primary"
+            />
+            <label htmlFor="only-owned" className="text-sm cursor-pointer flex-1">
+              Solo carte possedute
+              <span className="block text-xs text-muted-foreground">
+                {onlyOwned
+                  ? `${cardsToPlace.length} carte possedute`
+                  : `${cards.length} carte totali (le non possedute saranno marcate come "wanted")`}
+              </span>
+            </label>
+          </div>
+          <div className="text-sm text-muted-foreground bg-muted/40 rounded-lg p-3 space-y-1">
+            <p>📄 <strong>{pagesNeeded}</strong> pagine · <strong>{perPage}</strong> slot/pagina</p>
+            <p>🃏 <strong>{cardsToPlace.length}</strong> carte verranno inserite in ordine</p>
+            {!onlyOwned && cards.filter((c) => !ownedCardIds.has(c.id)).length > 0 && (
+              <p>💛 <strong>{cards.filter((c) => !ownedCardIds.has(c.id)).length}</strong> carte marcate come wanted</p>
+            )}
+          </div>
+          <Button
+            className="w-full"
+            onClick={create}
+            disabled={creating || !name.trim() || cardsToPlace.length === 0}
+          >
+            {creating ? (
+              <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Creazione in corso…</>
+            ) : (
+              <><BookOpen className="h-4 w-4 mr-2" /> Crea binder</>
+            )}
+          </Button>
+          {cardsToPlace.length === 0 && (
+            <p className="text-xs text-center text-muted-foreground">
+              Nessuna carta da inserire. Deseleziona "solo possedute" o aggiungi carte alla collezione prima.
+            </p>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function SetView({
+  game, set, onBack, onPickCard, onQuickAdd,
+  ownedCardIds, ownedLangByCard, wantedCardIds, onToggleWanted, quickAddBusy,
+  onBinderCreated,
+}: {
+  game: Game; set: SetInfo; onBack: () => void;
+  onPickCard: (c: CardRow) => void; onQuickAdd: (c: CardRow) => void;
+  ownedCardIds: Set<string>; ownedLangByCard: Map<string, string>;
+  wantedCardIds: Set<string>; onToggleWanted: (c: CardRow) => void;
+  quickAddBusy: Set<string>;
+  onBinderCreated: (binderId: string) => void;
+}) {
+  const [cards, setCards] = useState<CardRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<"grid" | "list">(() => {
+    if (typeof window === "undefined") return "grid";
+    return (localStorage.getItem("masterset.view") as "grid" | "list") ?? "grid";
+  });
+  const [binderDialogOpen, setBinderDialogOpen] = useState(false);
+
+  useEffect(() => { try { localStorage.setItem("masterset.view", view); } catch (_) {} }, [view]);
+
+  useEffect(() => {
+    setLoading(true);
+    (async () => {
+      const { data, error } = await supabase.functions.invoke("card-search", { body: { game, setId: set.id } });
+      if (error) toast.error(error.message);
+      const remote = ((data?.cards as CardRow[]) ?? []);
+      const dashed = set.id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
+      const { data: local } = await supabase.from("cards").select("*").eq("game", game)
+        .or(game === "pokemon" ? `set_id.eq.${set.id}` : `set_name.ilike.%[${set.id}]%,set_name.ilike.%[${dashed}]%,code.ilike.${set.id}-%`)
+        .limit(500);
+      const map = new Map<string, CardRow>();
+      for (const c of [...(local ?? []), ...remote]) map.set(c.id, c);
+      setCards(Array.from(map.values()).sort((a, b) => (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })));
+      setLoading(false);
+    })();
+  }, [game, set.id]);
+
+  const ownedCount = cards.filter((c) => ownedCardIds.has(c.id)).length;
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-6 flex-wrap">
+        <Button variant="ghost" size="sm" onClick={onBack}><ArrowLeft className="h-4 w-4 mr-1" /> Back</Button>
+        <div className="flex-1 min-w-0">
+          <h3 className="text-2xl font-display">{set.name}</h3>
+          <p className="text-xs text-muted-foreground">{set.id}{set.releaseDate ? ` · ${set.releaseDate}` : ""}</p>
+        </div>
+        {!loading && cards.length > 0 && (
+          <Button variant="outline" size="sm" onClick={() => setBinderDialogOpen(true)}>
+            <BookOpen className="h-4 w-4 mr-1" /> Crea binder
+          </Button>
+        )}
+        <div className="flex items-center gap-1 rounded-md border bg-muted p-0.5">
+          <Button type="button" size="sm" variant={view === "grid" ? "default" : "ghost"} className="h-7 w-7 p-0" onClick={() => setView("grid")}><LayoutGrid className="h-4 w-4" /></Button>
+          <Button type="button" size="sm" variant={view === "list" ? "default" : "ghost"} className="h-7 w-7 p-0" onClick={() => setView("list")}><List className="h-4 w-4" /></Button>
+        </div>
+        <Badge variant="default" className="text-sm">{ownedCount}/{cards.length || set.total || "?"}</Badge>
+      </div>
+
+      {binderDialogOpen && (
+        <CreateBinderDialog
+          open={binderDialogOpen}
+          onOpenChange={setBinderDialogOpen}
+          game={game}
+          set={set}
+          cards={cards}
+          ownedCardIds={ownedCardIds}
+          onCreated={onBinderCreated}
+        />
+      )}
+
+      {loading ? <SetViewSkeleton /> : cards.length === 0 ? (
+        <p className="text-muted-foreground text-center py-12">No cards available for this expansion yet.</p>
+      ) : view === "grid" ? (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+          {cards.map((c) => {
+            const owned = ownedCardIds.has(c.id);
+            const wanted = wantedCardIds.has(c.id);
+            const lang = ownedLangByCard.get(c.id);
+            const busy = quickAddBusy.has(c.id);
+            return (
+              <Card key={c.id} className="overflow-hidden bg-gradient-card cursor-pointer hover:shadow-card transition-shadow group relative" onClick={() => onPickCard(c)}>
+                <button type="button" onClick={(e) => { e.stopPropagation(); onToggleWanted(c); }}
+                  className="absolute top-2 left-2 z-10 p-1.5 rounded-full bg-background/90 shadow hover:bg-background transition-colors"
+                  title={wanted ? "Remove from wishlist" : "Add to wishlist"}>
+                  <Heart className={`h-4 w-4 ${wanted ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
+                </button>
+                {owned && lang && <div className="absolute top-2 right-2 z-10 bg-background/90 rounded px-1.5 py-0.5 text-xs shadow">{LANG_FLAG[lang] ?? lang}</div>}
+                {!owned && (
+                  <Button size="sm" variant="secondary" disabled={busy}
+                    className="absolute bottom-12 right-2 z-10 h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={(e) => { e.stopPropagation(); onQuickAdd(c); }}>
+                    {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  </Button>
+                )}
+                <CardImg card={c} alt={c.name} className={`w-full card-aspect object-cover transition-all ${owned ? "" : "opacity-60 grayscale"}`} />
+                <div className="p-2">
+                  <p className="text-sm font-semibold truncate">{c.name}</p>
+                  <p className="text-xs text-muted-foreground truncate">{c.code}{c.rarity ? ` · ${c.rarity}` : ""}</p>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {cards.map((c) => {
+            const owned = ownedCardIds.has(c.id);
+            const wanted = wantedCardIds.has(c.id);
+            const lang = ownedLangByCard.get(c.id);
+            const busy = quickAddBusy.has(c.id);
+            return (
+              <Card key={c.id} className={`flex items-center gap-3 px-3 py-2 bg-gradient-card cursor-pointer hover:shadow-card transition-shadow ${owned ? "" : "opacity-70"}`} onClick={() => onPickCard(c)}>
+                <div className="font-mono text-xs text-muted-foreground w-20 shrink-0 truncate">{c.code ?? "—"}</div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate">{c.name}</p>
+                  {c.rarity && <p className="text-xs text-muted-foreground truncate">{c.rarity}</p>}
+                </div>
+                {owned && lang && <Badge variant="secondary" className="text-xs shrink-0">{LANG_FLAG[lang] ?? lang}</Badge>}
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button type="button" size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={(e) => { e.stopPropagation(); onToggleWanted(c); }}>
+                    <Heart className={`h-4 w-4 ${wanted ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" className="h-8 w-8 p-0" disabled={busy} onClick={(e) => { e.stopPropagation(); onQuickAdd(c); }}>
+                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  </Button>
+                  {owned && (
+                    <Button type="button" size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={(e) => { e.stopPropagation(); onPickCard(c); }}>
+                      <Minus className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
