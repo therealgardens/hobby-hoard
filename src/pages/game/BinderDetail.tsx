@@ -33,10 +33,9 @@ export default function BinderDetail() {
     try {
       const rows = JSON.parse(sessionStorage.getItem(binderCacheKey(game, user.id)) ?? "[]") as Binder[];
       return rows.find((row) => row.id === binderId) ?? null;
-    } catch {
-      return null;
-    }
+    } catch { return null; }
   })();
+
   const [binder, setBinder] = useState<Binder | null>(routeBinder ?? cachedBinder);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [pickingPos, setPickingPos] = useState<number | null>(null);
@@ -53,46 +52,24 @@ export default function BinderDetail() {
     const { data: b, error: bErr } = await withDbRetry(() =>
       supabase.from("binders").select("*").eq("id", binderId).maybeSingle(),
     );
-    if (bErr) {
-      setLoading(false);
-      setLoadError(bErr.message || "Could not load binder");
-      return;
-    }
-    if (!b) {
-      setLoading(false);
-      if (!binder) setLoadError("Binder not found");
-      return;
-    }
+    if (bErr) { setLoading(false); setLoadError(bErr.message || "Could not load binder"); return; }
+    if (!b) { setLoading(false); if (!binder) setLoadError("Binder not found"); return; }
     setBinder(b);
     const { data: s, error: sErr } = await withDbRetry(() =>
-  supabase
-    .from("binder_slots")
-    .select("*")
-    .eq("binder_id", binderId)
-    .eq("user_id", b.user_id)   // filtra per utente — evita slot di altri utenti
-    .order("position"),
-);
-    if (sErr) {
-      // Don't block the page — show binder with empty slots
-      toast.error("Could not load slots — showing empty grid");
-      setSlots([]);
-      setLoading(false);
-      return;
-    }
-    const slotRows = (s ?? []) as Tables<"binder_slots">[];
-    const cardIds = Array.from(
-      new Set(slotRows.map((row) => row.card_id).filter(Boolean) as string[]),
+      supabase.from("binder_slots").select("*").eq("binder_id", binderId).eq("user_id", b.user_id).order("position"),
     );
+    if (sErr) { toast.error("Could not load slots — showing empty grid"); setSlots([]); setLoading(false); return; }
+    const slotRows = (s ?? []) as Tables<"binder_slots">[];
+    const cardIds = Array.from(new Set(slotRows.map((row) => row.card_id).filter(Boolean) as string[]));
     let cardsById = new Map<string, Tables<"cards">>();
     if (cardIds.length) {
-      const { data: cards } = await withDbRetry(() =>
-        supabase.from("cards").select("*").in("id", cardIds),
-      );
+      const { data: cards } = await withDbRetry(() => supabase.from("cards").select("*").in("id", cardIds));
       cardsById = new Map((cards ?? []).map((c: any) => [c.id, c]));
     }
     setSlots(slotRows.map((row) => ({ ...row, card: row.card_id ? cardsById.get(row.card_id) ?? null : null })));
     setLoading(false);
   };
+
   useEffect(() => {
     setBinder((current) => routeBinder ?? cachedBinder ?? current);
     load();
@@ -119,78 +96,90 @@ export default function BinderDetail() {
 
   const addPage = async () => {
     if (!binderId) return;
-    const { error } = await supabase.from("binders").update({ pages: pages + 1 } as any).eq("id", binderId);
-    if (error) return toast.error(error.message);
-    setPageIdx(pages); // jump to the newly added page
-    load();
+    // Aggiornamento ottimistico
+    const newPages = pages + 1;
+    setBinder((prev) => prev ? { ...prev, pages: newPages } as any : prev);
+    setPageIdx(newPages - 1);
+    const { error } = await supabase.from("binders").update({ pages: newPages } as any).eq("id", binderId);
+    if (error) {
+      // Rollback
+      setBinder((prev) => prev ? { ...prev, pages } as any : prev);
+      setPageIdx(safePageIdx);
+      toast.error(error.message);
+    }
   };
+
   const removePage = async () => {
     if (!binderId || pages <= 1) return;
     if (!confirm(`Remove page ${pages}? Cards on this page will be deleted.`)) return;
     const start = (pages - 1) * perPage;
     const end = pages * perPage - 1;
-    await supabase.from("binder_slots").delete().eq("binder_id", binderId).gte("position", start).lte("position", end);
-    await supabase.from("binders").update({ pages: pages - 1 } as any).eq("id", binderId);
-    setPageIdx(Math.max(0, safePageIdx - (safePageIdx === pages - 1 ? 1 : 0)));
-    load();
+    // Aggiornamento ottimistico
+    const newPages = pages - 1;
+    const newPageIdx = Math.max(0, safePageIdx - (safePageIdx === pages - 1 ? 1 : 0));
+    setBinder((prev) => prev ? { ...prev, pages: newPages } as any : prev);
+    setPageIdx(newPageIdx);
+    setSlots((prev) => prev.filter((s) => s.position < start || s.position > end));
+    const [{ error: delErr }, { error: updErr }] = await Promise.all([
+      supabase.from("binder_slots").delete().eq("binder_id", binderId).gte("position", start).lte("position", end),
+      supabase.from("binders").update({ pages: newPages } as any).eq("id", binderId),
+    ]);
+    if (delErr || updErr) {
+      toast.error((delErr ?? updErr)?.message ?? "Could not remove page");
+      load(); // reload solo in caso di errore
+    }
   };
 
   const place = async (card: Tables<"cards">) => {
-    if (pickingPos === null || !binderId) return;
-    if (!user) return toast.error("Not signed in");
+    if (pickingPos === null || !binderId || !user) return;
     const pos = pickingPos;
     const wanted = isWanted;
 
-    // Usa upsert direttamente sul DB invece di fidarsi della slotMap locale
-    // che potrebbe essere desincronizzata. onConflict su (binder_id, position).
-    const { data: upserted, error } = await withDbRetry(() =>
-      supabase
-        .from("binder_slots")
-        .upsert(
-          {
-            binder_id: binderId,
-            user_id: user.id,
-            position: pos,
-            card_id: card.id,
-            is_wanted: wanted,
-          },
-          { onConflict: "binder_id,position" },
-        )
-        .select()
-        .single(),
-    );
-
-    if (error) return toast.error(error.message || "Could not place card");
-
-    // Aggiorna la state locale con il risultato reale del DB
-    if (upserted) {
-      const newSlot = { ...(upserted as Tables<"binder_slots">), card };
-      setSlots((prev) => {
-        const filtered = prev.filter((s) => s.position !== pos);
-        return [...filtered, newSlot];
-      });
-    }
-
-    if (wanted) {
-      try {
-        await addWishlist(card, game!, { binder_id: binderId, quantity: 1 });
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : "Could not add to wishlist");
-      }
-    }
-
-    toast.success(`Placed ${card.name}`);
+    // Aggiornamento ottimistico immediato
+    const optimisticSlot: Slot = {
+      id: `optimistic-${pos}`,
+      binder_id: binderId,
+      user_id: user.id,
+      position: pos,
+      card_id: card.id,
+      is_wanted: wanted,
+      created_at: new Date().toISOString(),
+      card,
+    } as Slot;
+    setSlots((prev) => [...prev.filter((s) => s.position !== pos), optimisticSlot]);
     setPickingPos(null);
     setIsWanted(false);
-    load();
+
+    const { data: upserted, error } = await withDbRetry(() =>
+      supabase.from("binder_slots").upsert(
+        { binder_id: binderId, user_id: user.id, position: pos, card_id: card.id, is_wanted: wanted },
+        { onConflict: "binder_id,position" },
+      ).select().single(),
+    );
+    if (error) {
+      // Rollback
+      setSlots((prev) => prev.filter((s) => s.id !== `optimistic-${pos}`));
+      return toast.error(error.message || "Could not place card");
+    }
+    // Sostituisci lo slot ottimistico con quello reale del DB
+    if (upserted) {
+      setSlots((prev) => [...prev.filter((s) => s.position !== pos), { ...(upserted as Tables<"binder_slots">), card }]);
+    }
+    if (wanted) {
+      try { await addWishlist(card, game!, { binder_id: binderId, quantity: 1 }); }
+      catch (err) { toast.error(err instanceof Error ? err.message : "Could not add to wishlist"); }
+    }
+    toast.success(`Placed ${card.name}`);
   };
 
   const clear = async (slotId: string) => {
-    const { error } = await withDbRetry(() =>
-      supabase.from("binder_slots").delete().eq("id", slotId),
-    );
-    if (error) return toast.error(error.message || "Could not clear slot");
+    // Aggiornamento ottimistico
     setSlots((prev) => prev.filter((s) => s.id !== slotId));
+    const { error } = await withDbRetry(() => supabase.from("binder_slots").delete().eq("id", slotId));
+    if (error) {
+      toast.error(error.message || "Could not clear slot");
+      load(); // reload solo in caso di errore
+    }
   };
 
   return (
@@ -244,33 +233,19 @@ export default function BinderDetail() {
                     return (
                       <>
                         {img ? (
-                          <img
-                            src={img}
-                            alt={slot.card?.name ?? ""}
-                            onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                            className={cn("w-full h-full object-cover", slot.is_wanted && "opacity-40")}
-                          />
+                          <img src={img} alt={slot.card?.name ?? ""} onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")} className={cn("w-full h-full object-cover", slot.is_wanted && "opacity-40")} />
                         ) : (
                           <div className={cn("w-full h-full flex items-center justify-center p-1 text-center text-[11px] font-medium text-foreground bg-muted", slot.is_wanted && "opacity-40")}>
                             <span className="line-clamp-3">{slot.card?.name ?? slot.card?.code ?? "Card"}</span>
                           </div>
                         )}
-                        {slot.is_wanted && (
-                          <span className="absolute top-1 left-1 text-[10px] bg-accent text-accent-foreground px-1.5 py-0.5 rounded-full">
-                            wanted
-                          </span>
-                        )}
-                        <button
-                          onClick={(e) => { e.stopPropagation(); clear(slot.id); }}
-                          className="absolute top-1 right-1 p-1 rounded-full bg-background/80 opacity-0 group-hover:opacity-100"
-                        >
+                        {slot.is_wanted && <span className="absolute top-1 left-1 text-[10px] bg-accent text-accent-foreground px-1.5 py-0.5 rounded-full">wanted</span>}
+                        <button onClick={(e) => { e.stopPropagation(); clear(slot.id); }} className="absolute top-1 right-1 p-1 rounded-full bg-background/80 opacity-0 group-hover:opacity-100">
                           <Trash2 className="h-3 w-3" />
                         </button>
                       </>
                     );
-                  })() : (
-                    <span>+ {pos + 1}</span>
-                  )}
+                  })() : <span>+ {pos + 1}</span>}
                 </div>
               );
             })}
@@ -283,26 +258,11 @@ export default function BinderDetail() {
             const slot = slotMap.get(pos);
             const img = cardImage(slot?.card?.game, slot?.card?.code, slot?.card?.image_small);
             return (
-              <div
-                key={pos}
-                onClick={() => !slot && setPickingPos(pos)}
-                className={cn(
-                  "flex items-center gap-3 p-2 px-4",
-                  !slot && "cursor-pointer hover:bg-muted",
-                )}
-              >
+              <div key={pos} onClick={() => !slot && setPickingPos(pos)} className={cn("flex items-center gap-3 p-2 px-4", !slot && "cursor-pointer hover:bg-muted")}>
                 <span className="text-xs text-muted-foreground w-10 tabular-nums">#{pos + 1}</span>
                 <div className="w-10 h-14 rounded-md overflow-hidden bg-[hsl(var(--binder-empty))] flex items-center justify-center shrink-0">
-                  {img ? (
-                    <img
-                      src={img}
-                      alt={slot?.card?.name}
-                      onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                      className={cn("w-full h-full object-cover", slot?.is_wanted && "opacity-40")}
-                    />
-                  ) : (
-                    <span className="text-muted-foreground text-xs">+</span>
-                  )}
+                  {img ? <img src={img} alt={slot?.card?.name} onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")} className={cn("w-full h-full object-cover", slot?.is_wanted && "opacity-40")} />
+                       : <span className="text-muted-foreground text-xs">+</span>}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="font-medium truncate">{slot?.card?.name ?? <span className="text-muted-foreground italic">empty slot</span>}</div>
@@ -313,14 +273,7 @@ export default function BinderDetail() {
                     </div>
                   )}
                 </div>
-                {slot && (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); clear(slot.id); }}
-                    className="p-2 rounded-full hover:bg-background/80"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                )}
+                {slot && <button onClick={(e) => { e.stopPropagation(); clear(slot.id); }} className="p-2 rounded-full hover:bg-background/80"><Trash2 className="h-4 w-4" /></button>}
               </div>
             );
           })}
