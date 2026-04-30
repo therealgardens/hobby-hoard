@@ -71,6 +71,61 @@ export default function MasterSets() {
   const [language, setLanguage] = useState("EN");
   const [quantity, setQuantity] = useState(1);
 
+  const refreshOwned = async () => {
+    if (!game) return;
+    const userRes = await supabase.auth.getUser();
+    const uid = userRes.data.user?.id;
+    if (!uid) return;
+    const ownedCacheKey = `tcg.owned.${game}.${uid}.v3`;
+
+    const { data: ownedRows } = await withDbRetry(() =>
+      supabase
+        .from("collection_entries")
+        .select("card_id, language")
+        .eq("user_id", uid)
+        .eq("game", game),
+    );
+    const cardIds = Array.from(new Set((ownedRows ?? []).map((r: any) => r.card_id).filter(Boolean))) as string[];
+    let cardsById = new Map<string, { set_id: string | null; set_name: string | null; code: string | null }>();
+    if (cardIds.length) {
+      const { data: cards } = await withDbRetry(() =>
+        supabase.from("cards").select("id, set_id, set_name, code").in("id", cardIds),
+      );
+      cardsById = new Map((cards ?? []).map((c: any) => [c.id, c]));
+    }
+    const counts = new Map<string, number>();
+    const langs = new Map<string, string>();
+    const ids = new Set<string>();
+    for (const row of (ownedRows ?? []) as Array<{ card_id: string; language: string | null }>) {
+      if (!ids.has(row.card_id)) {
+        const cardMeta = cardsById.get(row.card_id);
+        if (cardMeta) {
+          const id = setIdForCard(game, cardMeta);
+          if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+        }
+        ids.add(row.card_id);
+      }
+      if (row.language && !langs.has(row.card_id)) langs.set(row.card_id, row.language);
+    }
+    setOwnedBySet(counts);
+    setOwnedCardIds(ids);
+    setOwnedLangByCard(langs);
+    try {
+      sessionStorage.setItem(
+        ownedCacheKey,
+        JSON.stringify({
+          counts: Array.from(counts.entries()),
+          ids: Array.from(ids),
+          langs: Array.from(langs.entries()),
+        }),
+      );
+    } catch (_) {}
+
+    try {
+      setWantedCardIds(new Set((await listWishlist(game)).map((item) => item.card_id)));
+    } catch (_) {}
+  };
+
   useEffect(() => {
     if (!game) return;
     setLoadingSets(true);
@@ -125,55 +180,26 @@ export default function MasterSets() {
           }
         } catch (_) {}
 
-        const { data: ownedRows } = await withDbRetry(() =>
-          supabase
-            .from("collection_entries")
-            .select("card_id, language")
-            .eq("user_id", uid)
-            .eq("game", game),
-        );
-        const cardIds = Array.from(new Set((ownedRows ?? []).map((r: any) => r.card_id).filter(Boolean))) as string[];
-        let cardsById = new Map<string, { set_id: string | null; set_name: string | null; code: string | null }>();
-        if (cardIds.length) {
-          const { data: cards } = await withDbRetry(() =>
-            supabase.from("cards").select("id, set_id, set_name, code").in("id", cardIds),
-          );
-          cardsById = new Map((cards ?? []).map((c: any) => [c.id, c]));
-        }
-        const counts = new Map<string, number>();
-        const langs = new Map<string, string>();
-        const ids = new Set<string>();
-        for (const row of (ownedRows ?? []) as Array<{ card_id: string; language: string | null }>) {
-          if (!ids.has(row.card_id)) {
-            const cardMeta = cardsById.get(row.card_id);
-            if (cardMeta) {
-              const id = setIdForCard(game, cardMeta);
-              if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
-            }
-            ids.add(row.card_id);
-          }
-          if (row.language && !langs.has(row.card_id)) langs.set(row.card_id, row.language);
-        }
-        setOwnedBySet(counts);
-        setOwnedCardIds(ids);
-        setOwnedLangByCard(langs);
-        try {
-          sessionStorage.setItem(
-            ownedCacheKey,
-            JSON.stringify({
-              counts: Array.from(counts.entries()),
-              ids: Array.from(ids),
-              langs: Array.from(langs.entries()),
-            }),
-          );
-        } catch (_) {}
-
-        try {
-          setWantedCardIds(new Set((await listWishlist(game)).map((item) => item.card_id)));
-        } catch (_) {}
+        await refreshOwned();
       }
       setLoadingSets(false);
     })();
+  }, [game]);
+
+  // Refresh owned/wanted when the tab regains focus, so My Master Sets reflects
+  // additions made elsewhere (Search, Binders, etc.) without a manual reload.
+  useEffect(() => {
+    if (!game) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refreshOwned();
+    };
+    window.addEventListener("focus", refreshOwned);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", refreshOwned);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game]);
 
   const visibleSets = useMemo(() => {

@@ -41,6 +41,20 @@ export default function Wanted() {
   };
   useEffect(() => { load(); }, [game, user?.id, loading]);
 
+  // Refresh on focus so wishlist additions from other pages show up.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    window.addEventListener("focus", load);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", load);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game, user?.id]);
+
   const add = async (card: Tables<"cards">) => {
     if (!user) return toast.error("Not signed in");
     if (!game) return;
