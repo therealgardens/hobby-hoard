@@ -18,7 +18,6 @@ interface Props {
   game: Game;
   onPick?: (card: CardRow) => void;
   pickLabel?: string;
-  /** Se false (default), non carica carte automaticamente in picker mode */
   autoLoad?: boolean;
 }
 
@@ -30,17 +29,21 @@ export function CardSearch({ game, onPick, pickLabel = "Add", autoLoad = false }
   const [qty, setQty] = useState<Record<string, number>>({});
   const [ownedIds, setOwnedIds] = useState<Set<string>>(new Set());
   const [wantedIds, setWantedIds] = useState<Set<string>>(new Set());
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const reqIdRef = useRef(0);
+
+  const setBusy = (id: string, busy: boolean) =>
+    setBusyIds((prev) => { const n = new Set(prev); busy ? n.add(id) : n.delete(id); return n; });
 
   const refreshStatus = async (cards: CardRow[]) => {
     if (!user || cards.length === 0) return;
-    // Guard against non-UUID ids (e.g. if an upstream proxy ever returns
-    // synthesized cards) — Postgres rejects the whole IN() with 22P02 otherwise.
     const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const ids = cards.map((c) => c.id).filter((id) => uuidRe.test(id));
     if (ids.length === 0) return;
     const [{ data: owned, error: ownedError }, wanted] = await Promise.all([
-      withDbRetry(() => supabase.from("collection_entries").select("card_id").eq("user_id", user.id).in("card_id", ids)),
+      withDbRetry(() =>
+        supabase.from("collection_entries").select("card_id").eq("user_id", user.id).in("card_id", ids)
+      ),
       wishlistStatus(ids).catch(() => null),
     ]);
     if (!ownedError) setOwnedIds(new Set((owned ?? []).map((r: any) => r.card_id)));
@@ -57,50 +60,32 @@ export function CardSearch({ game, onPick, pickLabel = "Add", autoLoad = false }
       .or(`name.ilike.%${term}%,code.ilike.%${term}%`)
       .limit(40);
     if (id !== reqIdRef.current) return;
-    if (local && local.length) {
-      setResults(local);
-      refreshStatus(local);
-    }
+    if (local && local.length) { setResults(local); refreshStatus(local); }
 
     const { data, error } = await supabase.functions.invoke("card-search", {
       body: { game, query: term },
     });
     if (id !== reqIdRef.current) return;
     setLoading(false);
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
+    if (error) { toast.error(error.message); return; }
     const cards = (data?.cards as CardRow[]) ?? [];
-    if (cards.length) {
-      setResults(cards);
-      refreshStatus(cards);
-    } else if (!local?.length) {
-      setResults([]);
-      toast.info("No cards found");
-    }
+    if (cards.length) { setResults(cards); refreshStatus(cards); }
+    else if (!local?.length) { setResults([]); toast.info("No cards found"); }
   };
 
   useEffect(() => {
     const term = q.trim();
     if (term.length < 2) {
-      // In picker mode, show some cards by default so the user has something to pick.
       if (onPick && autoLoad) {
-  (async () => {
-    setLoading(true);
-    const { data } = await supabase
-      .from("cards")
-      .select("*")
-      .eq("game", game)
-      .order("name", { ascending: true })
-      .limit(40);
-    setLoading(false);
-    if (data) {
-      setResults(data);
-      refreshStatus(data);
-    }
-  })();
-} else {
+        (async () => {
+          setLoading(true);
+          const { data } = await supabase
+            .from("cards").select("*").eq("game", game)
+            .order("name", { ascending: true }).limit(40);
+          setLoading(false);
+          if (data) { setResults(data); refreshStatus(data); }
+        })();
+      } else {
         setResults([]);
         setLoading(false);
       }
@@ -119,68 +104,86 @@ export function CardSearch({ game, onPick, pickLabel = "Add", autoLoad = false }
 
   const addToCollection = async (c: CardRow) => {
     if (!user) return toast.error("Not signed in");
+    if (busyIds.has(c.id)) return;
     const quantity = Math.max(1, qty[c.id] ?? 1);
 
-    // Prima controlla se esiste già una entry per questa carta
-    const { data: existing } = await supabase
-      .from("collection_entries")
-      .select("id, quantity")
-      .eq("user_id", user.id)
-      .eq("card_id", c.id)
-      .maybeSingle();
-
-    let error;
-    if (existing) {
-      // Carta già in collezione → incrementa la quantità
-      ({ error } = await withDbRetry(() =>
-        supabase
-          .from("collection_entries")
-          .update({ quantity: existing.quantity + quantity })
-          .eq("id", existing.id)
-      ));
-    } else {
-      // Carta nuova → inserisci
-      ({ error } = await withDbRetry(() =>
-        supabase.from("collection_entries").insert({
-          user_id: user.id,
-          card_id: c.id,
-          game,
-          rarity: c.rarity ?? null,
-          language: "EN",
-          quantity,
-        })
-      ));
-    }
-
-    if (error) return toast.error(error.message);
-    toast.success(`Added ${c.name} ×${quantity}`);
+    // Aggiornamento ottimistico — UI risponde subito
+    setBusy(c.id, true);
     setOwnedIds((prev) => new Set(prev).add(c.id));
-    emitCollectionChanged({ game, cardId: c.id });
+
+    try {
+      const { data: existing } = await supabase
+        .from("collection_entries")
+        .select("id, quantity")
+        .eq("user_id", user.id)
+        .eq("card_id", c.id)
+        .maybeSingle();
+
+      let error;
+      if (existing) {
+        ({ error } = await withDbRetry(() =>
+          supabase
+            .from("collection_entries")
+            .update({ quantity: existing.quantity + quantity })
+            .eq("id", existing.id)
+        ));
+      } else {
+        ({ error } = await withDbRetry(() =>
+          supabase.from("collection_entries").insert({
+            user_id: user.id,
+            card_id: c.id,
+            game,
+            rarity: c.rarity ?? null,
+            language: "EN",
+            quantity,
+          })
+        ));
+      }
+
+      if (error) {
+        // Rollback ottimistico se fallisce
+        setOwnedIds((prev) => { const n = new Set(prev); n.delete(c.id); return n; });
+        return toast.error(error.message);
+      }
+      toast.success(`Added ${c.name} ×${quantity}`);
+      emitCollectionChanged({ game, cardId: c.id });
+    } finally {
+      setBusy(c.id, false);
+    }
   };
 
   const toggleWanted = async (c: CardRow) => {
     if (authLoading) return toast.info("Signing you in…");
     if (!user) return toast.error("Not signed in");
-    if (wantedIds.has(c.id)) {
-      try {
+    if (busyIds.has(c.id)) return;
+
+    const wasWanted = wantedIds.has(c.id);
+    // Aggiornamento ottimistico
+    setBusy(c.id, true);
+    setWantedIds((prev) => {
+      const n = new Set(prev);
+      wasWanted ? n.delete(c.id) : n.add(c.id);
+      return n;
+    });
+
+    try {
+      if (wasWanted) {
         await removeWishlistByCard(c.id, game);
-      } catch (error) {
-        return toast.error(error instanceof Error ? error.message : "Could not remove from wishlist");
+        toast.success("Removed from wishlist");
+      } else {
+        await addWishlist(c, game);
+        toast.success("Added to wishlist");
       }
+    } catch (error) {
+      // Rollback ottimistico se fallisce
       setWantedIds((prev) => {
         const n = new Set(prev);
-        n.delete(c.id);
+        wasWanted ? n.add(c.id) : n.delete(c.id);
         return n;
       });
-      toast.success("Removed from wishlist");
-    } else {
-      try {
-        await addWishlist(c, game);
-      } catch (error) {
-        return toast.error(error instanceof Error ? error.message : "Could not add to wishlist");
-      }
-      setWantedIds((prev) => new Set(prev).add(c.id));
-      toast.success("Added to wishlist");
+      toast.error(error instanceof Error ? error.message : "Could not update wishlist");
+    } finally {
+      setBusy(c.id, false);
     }
   };
 
@@ -201,18 +204,18 @@ export function CardSearch({ game, onPick, pickLabel = "Add", autoLoad = false }
           {results.map((c) => {
             const isOwned = ownedIds.has(c.id);
             const isWanted = wantedIds.has(c.id);
+            const isBusy = busyIds.has(c.id);
             return (
               <Card key={c.id} className="overflow-hidden bg-gradient-card shadow-soft hover:shadow-card transition-shadow relative">
                 {!onPick && (
                   <button
                     type="button"
                     onClick={() => toggleWanted(c)}
-                    className="absolute top-2 left-2 z-10 p-1.5 rounded-full bg-background/90 shadow hover:bg-background transition-colors"
+                    disabled={isBusy}
+                    className="absolute top-2 left-2 z-10 p-1.5 rounded-full bg-background/90 shadow hover:bg-background transition-colors disabled:opacity-50"
                     title={isWanted ? "Remove from wishlist" : "Add to wishlist"}
                   >
-                    <Heart
-                      className={`h-4 w-4 ${isWanted ? "fill-red-500 text-red-500" : "text-muted-foreground"}`}
-                    />
+                    <Heart className={`h-4 w-4 ${isWanted ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
                   </button>
                 )}
                 <CardImg card={c} />
@@ -242,10 +245,16 @@ export function CardSearch({ game, onPick, pickLabel = "Add", autoLoad = false }
                         variant={isOwned ? "outline" : "secondary"}
                         className="flex-1 h-8"
                         onClick={() => addToCollection(c)}
+                        disabled={isBusy}
                         title={isOwned ? "Already in collection — add more" : "Add to collection"}
                       >
-                        {isOwned ? <Check className="h-3 w-3 mr-1" /> : <Plus className="h-3 w-3 mr-1" />}
-                        {isOwned ? "Owned" : "Add"}
+                        {isBusy ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : isOwned ? (
+                          <><Check className="h-3 w-3 mr-1" /> Owned</>
+                        ) : (
+                          <><Plus className="h-3 w-3 mr-1" /> Add</>
+                        )}
                       </Button>
                     </div>
                   )}
@@ -263,7 +272,6 @@ function CardImg({ card }: { card: CardRow }) {
   const candidates = cardImageCandidates(card.game, card.code, card.image_small ?? card.image_large);
   const [idx, setIdx] = useState(0);
   const src = candidates[idx];
-
   if (!src) {
     return (
       <div className="w-full card-aspect bg-muted flex items-center justify-center text-muted-foreground text-xs">
@@ -271,7 +279,6 @@ function CardImg({ card }: { card: CardRow }) {
       </div>
     );
   }
-
   return (
     <img
       src={src}
