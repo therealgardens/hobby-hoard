@@ -127,7 +127,7 @@ export default function Binders() {
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {binders.map(b => (
-            <Link key={b.id} to={b.id}>
+            <Link key={b.id} to={b.id} state={{ binder: b }}>
               <Card className="p-6 bg-gradient-card hover:shadow-pop transition-all hover:-translate-y-1 cursor-pointer">
                 <BookOpen className="h-6 w-6 text-primary mb-2" />
                 <h3 className="text-2xl font-display">{b.name}</h3>
