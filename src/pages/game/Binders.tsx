@@ -11,45 +11,82 @@ import { toast } from "sonner";
 import type { Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
 import { withDbRetry } from "@/lib/supabaseRetry";
+import { useAuth } from "@/hooks/useAuth";
 
 type Binder = Tables<"binders">;
 
+const cacheKey = (game: string, userId: string) => `tcg.binders.${game}.${userId}.v1`;
+
+const sortBinders = (rows: Binder[]) =>
+  [...rows].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
 export default function Binders() {
   const { game } = useParams<{ game: Game }>();
+  const { user } = useAuth();
   const [binders, setBinders] = useState<Binder[]>([]);
   const [name, setName] = useState("");
   const [cols, setCols] = useState(3);
   const [rows, setRows] = useState(3);
   const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
 
   const load = async () => {
-    if (!game) return;
+    if (!game || !user) return;
+    setLoading(true);
+    const key = cacheKey(game, user.id);
+    const cached = sessionStorage.getItem(key);
+    if (cached) {
+      try {
+        setBinders(JSON.parse(cached));
+        setLoading(false);
+      } catch {
+        sessionStorage.removeItem(key);
+      }
+    }
     const { data, error } = await withDbRetry(() =>
-      supabase.from("binders").select("*").eq("game", game).order("created_at"),
+      supabase.from("binders").select("*").eq("user_id", user.id).eq("game", game).order("created_at"),
     );
-    if (error) return toast.error(error.message);
-    setBinders(data ?? []);
+    setLoading(false);
+    if (error) {
+      if (!cached) toast.error(error.message);
+      return;
+    }
+    const rows = (data ?? []) as Binder[];
+    setBinders(rows);
+    sessionStorage.setItem(key, JSON.stringify(rows));
   };
-  useEffect(() => { load(); }, [game]);
+  useEffect(() => { load(); }, [game, user?.id]);
 
   const create = async () => {
-    if (!game || !name.trim()) return;
-    const { data: u } = await supabase.auth.getUser();
-    if (!u.user) return;
-    const { data, error } = await withDbRetry(() =>
+    if (!game || !user || !name.trim() || creating) return;
+    setCreating(true);
+    const now = new Date().toISOString();
+    const next = {
+      id: crypto.randomUUID(),
+      user_id: user.id,
+      game,
+      name: name.trim(),
+      cols,
+      rows,
+      pages: 1,
+      created_at: now,
+    } satisfies Binder;
+    const { error } = await withDbRetry(() =>
       supabase
         .from("binders")
-        .insert({ user_id: u.user!.id, game, name: name.trim(), cols, rows })
-        .select()
-        .single(),
+        .insert(next),
     );
+    setCreating(false);
     if (error) return toast.error(error.message);
-    // Optimistically append so the new binder shows even if the reload fails
-    if (data) setBinders((prev) => [...prev, data as Binder]);
+    setBinders((prev) => {
+      const merged = sortBinders([...prev.filter((b) => b.id !== next.id), next]);
+      sessionStorage.setItem(cacheKey(game, user.id), JSON.stringify(merged));
+      return merged;
+    });
     setName("");
     setOpen(false);
     toast.success("Binder created");
-    load();
   };
 
   return (
