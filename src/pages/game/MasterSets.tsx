@@ -220,7 +220,10 @@ export default function MasterSets() {
     };
 
     const offChange = onCollectionChanged((detail) => {
-      if (!detail?.game || detail.game === game) refreshOwned();
+      if (!detail?.game || detail.game === game) {
+       // Piccolo delay per attendere che la carta sia persistita nel DB locale
+       setTimeout(() => refreshOwned(), 600);
+      }
     });
 
     window.addEventListener("focus", debouncedRefresh);
