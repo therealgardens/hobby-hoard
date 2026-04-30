@@ -1,8 +1,9 @@
+import { useEffect } from "react";
 import { NavLink, Outlet, useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { GAME_LABEL, type Game, setActiveGame } from "@/lib/game";
-import { ArrowLeft, BookOpen, Library, Heart, Layers, Copy, Swords, ListChecks, Search, Settings } from "lucide-react";
+import { BookOpen, Library, Heart, Layers, Copy, Swords, ListChecks, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 
@@ -11,25 +12,28 @@ export default function GameLayout() {
   const nav = useNavigate();
   const { signOut } = useAuth();
   const { t } = useTranslation();
+
+  useEffect(() => {
+    if (game) setActiveGame(game);
+  }, [game]);
+
   if (!game || (game !== "pokemon" && game !== "onepiece" && game !== "yugioh")) {
     nav("/");
     return null;
   }
-  setActiveGame(game);
 
   const links = [
-    { to: ``, label: "Home", icon: Library, end: true },
-    { to: `search`, label: "Search", icon: Search },
-    { to: `master`, label: "Master Sets", icon: Layers },
-    { to: `binders`, label: "Binders", icon: BookOpen },
-    { to: `wanted`, label: "Wanted", icon: Heart },
+    { to: ``,        label: "Home",        icon: Library,    end: true },
+    { to: `master`,  label: "Master Sets", icon: Layers },
+    { to: `binders`, label: "Binders",     icon: BookOpen },
+    { to: `wanted`,  label: "Wanted",      icon: Heart },
     { to: `duplicates`, label: "Duplicates", icon: Copy },
     ...(game === "pokemon" ? [{ to: `pokedex`, label: "Pokédex", icon: ListChecks }] : []),
     ...(game === "onepiece" || game === "yugioh" ? [{ to: `decks`, label: "Decks", icon: Swords }] : []),
   ];
 
   const accent =
-    game === "pokemon" ? "bg-gradient-pokemon"
+    game === "pokemon"  ? "bg-gradient-pokemon"
     : game === "onepiece" ? "bg-gradient-onepiece"
     : "bg-gradient-yugioh";
 
