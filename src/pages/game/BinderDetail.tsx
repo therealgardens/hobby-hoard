@@ -134,87 +134,85 @@ export default function BinderDetail() {
     }
   };
 
-  // ─── PLACE — DELETE + INSERT, nessun conflitto possibile ─────────────────
+  // ─── PLACE — single batched upsert on (binder_id, position) ──────────────
   const place = async (card: CardRow) => {
     if (pickingPos === null || !binderId || !user) return;
     const pos = pickingPos;
     const wanted = isWanted;
+    const prevSlot = slotMap.get(pos) ?? null;
 
-    // Aggiornamento ottimistico immediato
-    const optimisticId = `optimistic-${pos}-${Date.now()}`;
-    setSlots((prev) => [
-      ...prev.filter((s) => s.position !== pos),
-      {
-        id: optimisticId,
+    // Lightweight optimistic update: replace the one slot in place
+    setSlots((prev) => {
+      const next = prev.filter((s) => s.position !== pos);
+      next.push({
+        id: prevSlot?.id ?? `tmp-${pos}`,
         binder_id: binderId,
         user_id: user.id,
         position: pos,
         card_id: card.id,
         is_wanted: wanted,
-        created_at: new Date().toISOString(),
+        ...(prevSlot ? {} : {}),
         card,
-      } as Slot,
-    ]);
+      } as Slot);
+      return next;
+    });
     setPickingPos(null);
     setIsWanted(false);
 
-    try {
-      // 1. Elimina qualsiasi slot in quella posizione (no-op silenzioso se non esiste)
-      const { error: delErr } = await supabase
+    const { data: upserted, error } = await withDbRetry(() =>
+      supabase
         .from("binder_slots")
-        .delete()
-        .eq("binder_id", binderId)
-        .eq("position", pos);
-      if (delErr) throw new Error(`Delete failed: ${delErr.message}`);
-
-      // 2. Inserisce — nessun conflitto possibile perché abbiamo appena eliminato
-      const { data: inserted, error: insErr } = await withDbRetry(() =>
-        supabase
-          .from("binder_slots")
-          .insert({
+        .upsert(
+          {
             binder_id: binderId,
             user_id: user.id,
             position: pos,
             card_id: card.id,
             is_wanted: wanted,
-          })
-          .select()
-          .maybeSingle(),
-      );
-      if (insErr) throw new Error(`Insert failed: ${insErr.message}`);
+          },
+          { onConflict: "binder_id,position" },
+        )
+        .select()
+        .maybeSingle(),
+    );
 
-      // 3. Sostituisce lo slot ottimistico con quello reale del DB
-      if (inserted) {
-        setSlots((prev) => [
-          ...prev.filter((s) => s.id !== optimisticId && s.position !== pos),
-          { ...inserted, card },
-        ]);
-      }
-
-      // 4. Wishlist se richiesto
-      if (wanted) {
-        try {
-          await addWishlist(card, game!, { binder_id: binderId, quantity: 1 });
-        } catch (wErr) {
-          toast.error(wErr instanceof Error ? wErr.message : "Could not add to wishlist");
-        }
-      }
-
-      toast.success(`Placed ${card.name}`);
-    } catch (err) {
-      console.error("[BinderDetail] place error:", err);
-      // Rollback ottimistico
-      setSlots((prev) => prev.filter((s) => s.id !== optimisticId));
-      toast.error(err instanceof Error ? err.message : "Could not place card");
+    if (error) {
+      console.error("[BinderDetail] place error:", error);
+      toast.error(error.message || "Could not place card");
+      // Refetch only on actual DB failure
+      load();
+      return;
     }
+
+    // Reconcile real id from DB (no array churn)
+    if (upserted) {
+      setSlots((prev) =>
+        prev.map((s) => (s.position === pos ? { ...upserted, card } : s)),
+      );
+    }
+
+    if (wanted) {
+      try {
+        await addWishlist(card, game!, { binder_id: binderId, quantity: 1 });
+      } catch (wErr) {
+        toast.error(wErr instanceof Error ? wErr.message : "Could not add to wishlist");
+      }
+    }
+
+    toast.success(`Placed ${card.name}`);
   };
 
   const clear = async (slotId: string) => {
+    const removed = slots.find((s) => s.id === slotId) ?? null;
     setSlots((prev) => prev.filter((s) => s.id !== slotId));
     const { error } = await withDbRetry(() =>
       supabase.from("binder_slots").delete().eq("id", slotId),
     );
-    if (error) { toast.error(error.message || "Could not clear slot"); load(); }
+    if (error) {
+      toast.error(error.message || "Could not clear slot");
+      // Restore the removed slot locally instead of full refetch
+      if (removed) setSlots((prev) => [...prev, removed]);
+    }
   };
 
   return (
