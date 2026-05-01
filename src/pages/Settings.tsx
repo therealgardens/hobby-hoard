@@ -13,7 +13,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Trash2, Sun, Moon, Monitor } from "lucide-react";
+import { ArrowLeft, Trash2, Sun, Moon, Monitor, RefreshCw } from "lucide-react";
 
 export default function Settings() {
   const { t, i18n } = useTranslation();
