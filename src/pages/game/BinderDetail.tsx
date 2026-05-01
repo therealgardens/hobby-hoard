@@ -151,7 +151,7 @@ export default function BinderDetail() {
         position: pos,
         card_id: card.id,
         is_wanted: wanted,
-        created_at: prevSlot?.created_at ?? new Date().toISOString(),
+        ...(prevSlot ? {} : {}),
         card,
       } as Slot);
       return next;
