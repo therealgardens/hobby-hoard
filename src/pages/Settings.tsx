@@ -103,7 +103,19 @@ export default function Settings() {
           </Select>
         </Card>
 
-        {/* Data import/export is now per-game on each game's home page. */}
+        {/* Card database sync */}
+        <Card className="p-6">
+          <h2 className="text-2xl font-display mb-2">Card database</h2>
+          <p className="text-muted-foreground text-sm mb-4">
+            The full card catalog is refreshed automatically every day at 3:00 UTC.
+            You can also trigger a manual sync below — it can take a few minutes.
+          </p>
+          <Button onClick={runCardSync} disabled={syncing}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
+            {syncing ? "Syncing…" : "Sync card catalog now"}
+          </Button>
+        </Card>
+
 
         {/* Danger zone */}
         <Card className="p-6 border-destructive/30">
