@@ -13,7 +13,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Trash2, Sun, Moon, Monitor } from "lucide-react";
+import { ArrowLeft, Trash2, Sun, Moon, Monitor, RefreshCw } from "lucide-react";
 
 export default function Settings() {
   const { t, i18n } = useTranslation();
@@ -21,6 +21,25 @@ export default function Settings() {
   const { signOut } = useAuth();
   const nav = useNavigate();
   const [busy, setBusy] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  const runCardSync = async () => {
+    setSyncing(true);
+    try {
+      toast.info("Syncing card catalog… this may take a few minutes");
+      const { data, error } = await supabase.functions.invoke("sync-cards");
+      if (error) throw error;
+      const summary = data?.summary ?? {};
+      const total = data?.total ?? 0;
+      toast.success(
+        `Sync complete — ${total} cards processed (Pokémon: ${summary.pokemon ?? 0}, One Piece: ${summary.onepiece ?? 0}, Yu-Gi-Oh!: ${summary.yugioh ?? 0})`,
+      );
+    } catch (e: any) {
+      toast.error(e.message ?? "Sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const deleteAccount = async () => {
     setBusy(true);
@@ -84,7 +103,19 @@ export default function Settings() {
           </Select>
         </Card>
 
-        {/* Data import/export is now per-game on each game's home page. */}
+        {/* Card database sync */}
+        <Card className="p-6">
+          <h2 className="text-2xl font-display mb-2">Card database</h2>
+          <p className="text-muted-foreground text-sm mb-4">
+            The full card catalog is refreshed automatically every day at 3:00 UTC.
+            You can also trigger a manual sync below — it can take a few minutes.
+          </p>
+          <Button onClick={runCardSync} disabled={syncing}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
+            {syncing ? "Syncing…" : "Sync card catalog now"}
+          </Button>
+        </Card>
+
 
         {/* Danger zone */}
         <Card className="p-6 border-destructive/30">
