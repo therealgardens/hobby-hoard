@@ -21,6 +21,25 @@ export default function Settings() {
   const { signOut } = useAuth();
   const nav = useNavigate();
   const [busy, setBusy] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  const runCardSync = async () => {
+    setSyncing(true);
+    try {
+      toast.info("Syncing card catalog… this may take a few minutes");
+      const { data, error } = await supabase.functions.invoke("sync-cards");
+      if (error) throw error;
+      const summary = data?.summary ?? {};
+      const total = data?.total ?? 0;
+      toast.success(
+        `Sync complete — ${total} cards processed (Pokémon: ${summary.pokemon ?? 0}, One Piece: ${summary.onepiece ?? 0}, Yu-Gi-Oh!: ${summary.yugioh ?? 0})`,
+      );
+    } catch (e: any) {
+      toast.error(e.message ?? "Sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const deleteAccount = async () => {
     setBusy(true);
