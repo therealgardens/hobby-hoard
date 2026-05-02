@@ -183,6 +183,45 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // Authorization: allow either the service role key (used by sync-scheduler /
+    // pg_cron) or an authenticated user with the 'admin' role (manual trigger
+    // from the Settings page). Reject everyone else — this endpoint is
+    // expensive and bypasses RLS via the service role.
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const isServiceCall = authHeader === `Bearer ${SERVICE_KEY}`;
+    if (!isServiceCall) {
+      if (!authHeader.startsWith("Bearer ")) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+        global: { headers: { Authorization: authHeader } },
+      });
+      const token = authHeader.replace("Bearer ", "");
+      const { data: claims, error: authError } = await userClient.auth.getClaims(token);
+      if (authError || !claims?.claims?.sub) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const { data: isAdmin, error: roleError } = await admin.rpc("has_role", {
+        _user_id: claims.claims.sub,
+        _role: "admin",
+      });
+      if (roleError || !isAdmin) {
+        return new Response(
+          JSON.stringify({ error: "Forbidden: admin role required" }),
+          {
+            status: 403,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          },
+        );
+      }
+    }
+
     const startedAt = Date.now();
     let games: Game[] = ["pokemon", "onepiece", "yugioh"];
     try {
