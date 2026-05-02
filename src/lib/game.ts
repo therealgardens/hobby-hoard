@@ -23,11 +23,28 @@ export const GAME_LABEL: Record<Game, string> = {
 
 // Wraps an external image URL through our edge proxy so the browser can
 // load it (some CDNs send Cross-Origin-Resource-Policy: same-site).
+// The proxy requires authentication, so we append the current session's
+// access token as a query parameter (plain <img> tags cannot send headers).
+import { supabase } from "@/integrations/supabase/client";
+
+let cachedAccessToken: string | null = null;
+
+// Initialize and keep the cached token in sync with the auth state.
+supabase.auth.getSession().then(({ data }) => {
+  cachedAccessToken = data.session?.access_token ?? null;
+});
+supabase.auth.onAuthStateChange((_event, session) => {
+  cachedAccessToken = session?.access_token ?? null;
+});
+
 export function proxiedImage(url?: string | null): string | undefined {
   if (!url) return undefined;
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
   if (!projectId) return url;
-  return `https://${projectId}.supabase.co/functions/v1/image-proxy?url=${encodeURIComponent(url)}`;
+  const base = `https://${projectId}.supabase.co/functions/v1/image-proxy?url=${encodeURIComponent(url)}`;
+  return cachedAccessToken
+    ? `${base}&access_token=${encodeURIComponent(cachedAccessToken)}`
+    : base;
 }
 
 // Resolve a card image URL. For One Piece cards, falls back to the official
