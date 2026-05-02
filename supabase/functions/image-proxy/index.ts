@@ -26,14 +26,18 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   // Require an authenticated caller to prevent open-proxy abuse.
-  const authHeader = req.headers.get("Authorization") ?? "";
-  if (!authHeader.startsWith("Bearer ")) {
+  // Accept the JWT either via Authorization header (fetch) or as ?access_token=
+  // query parameter, since plain <img src> tags cannot send custom headers.
+  const reqUrl = new URL(req.url);
+  const headerAuth = req.headers.get("Authorization") ?? "";
+  const queryToken = reqUrl.searchParams.get("access_token") ?? "";
+  const token = headerAuth.startsWith("Bearer ")
+    ? headerAuth.slice("Bearer ".length)
+    : queryToken;
+  if (!token) {
     return new Response("Unauthorized", { status: 401, headers: corsHeaders });
   }
-  const token = authHeader.slice("Bearer ".length);
-  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    global: { headers: { Authorization: authHeader } },
-  });
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
   if (claimsError || !claimsData?.claims) {
     return new Response("Unauthorized", { status: 401, headers: corsHeaders });
