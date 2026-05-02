@@ -423,6 +423,27 @@ export type Database = {
         }
         Relationships: []
       }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
       wanted_cards: {
         Row: {
           binder_id: string | null
@@ -481,6 +502,13 @@ export type Database = {
     Functions: {
       are_friends: { Args: { _a: string; _b: string }; Returns: boolean }
       cancel_trade: { Args: { _message_id: string }; Returns: undefined }
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
       is_blocked: { Args: { _a: string; _b: string }; Returns: boolean }
       mark_message_read: { Args: { _message_id: string }; Returns: undefined }
       mark_thread_read: { Args: { _friend_id: string }; Returns: undefined }
@@ -499,7 +527,7 @@ export type Database = {
       }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "user"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -626,6 +654,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "user"],
+    },
   },
 } as const
