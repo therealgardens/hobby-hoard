@@ -16,6 +16,16 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
+
+  // Only allow callers that present the service role key (e.g. pg_cron via pg_net).
+  const callerAuth = req.headers.get("Authorization") ?? "";
+  if (callerAuth !== `Bearer ${SERVICE_KEY}`) {
+    return new Response(
+      JSON.stringify({ error: "Forbidden" }),
+      { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
   try {
     const url = `${SUPABASE_URL}/functions/v1/sync-cards`;
     const res = await fetch(url, {

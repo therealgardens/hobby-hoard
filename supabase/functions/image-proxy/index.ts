@@ -1,5 +1,7 @@
 // Proxies card images so the browser can load them despite
 // Cross-Origin-Resource-Policy: same-site on the source CDN.
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.95.0";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -17,8 +19,26 @@ const ALLOWED_HOSTS = new Set([
   "storage.googleapis.com",
 ]);
 
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  // Require an authenticated caller to prevent open-proxy abuse.
+  const authHeader = req.headers.get("Authorization") ?? "";
+  if (!authHeader.startsWith("Bearer ")) {
+    return new Response("Unauthorized", { status: 401, headers: corsHeaders });
+  }
+  const token = authHeader.slice("Bearer ".length);
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: authHeader } },
+  });
+  const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
+  if (claimsError || !claimsData?.claims) {
+    return new Response("Unauthorized", { status: 401, headers: corsHeaders });
+  }
+
   try {
     const u = new URL(req.url);
     const target = u.searchParams.get("url");
@@ -31,7 +51,6 @@ Deno.serve(async (req) => {
     }
     const upstream = await fetch(t.toString(), {
       headers: {
-        // Some CDNs require a referer matching their own domain
         "Referer": `${t.protocol}//${t.hostname}/`,
         "User-Agent": "Mozilla/5.0",
       },
