@@ -349,11 +349,12 @@ export default function Decks() {
               const ok = a.have >= a.needed;
               const owned = a.have > 0;
               const imgSrc = cardImage(currentGame, a.code, a.imageSmall);
+              const label = a.name ?? a.code ?? a.queryName ?? "Unknown";
               return (
-                <div key={a.code} className="relative rounded-lg overflow-hidden bg-muted shadow-soft">
+                <div key={a.key} className="relative rounded-lg overflow-hidden bg-muted shadow-soft">
                   <img
                     src={imgSrc}
-                    alt={a.name ?? a.code}
+                    alt={label}
                     loading="lazy"
                     onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = "0"; }}
                     className={`w-full card-aspect object-cover ${owned ? "" : "opacity-40 grayscale"}`}
@@ -366,8 +367,8 @@ export default function Decks() {
                     {a.have}/{a.needed}
                   </div>
                   <div className="p-2 bg-card space-y-1">
-                    <p className="text-xs font-semibold truncate">{a.name ?? a.code}</p>
-                    <p className="text-[10px] text-muted-foreground font-mono">{a.code}</p>
+                    <p className="text-xs font-semibold truncate">{label}</p>
+                    <p className="text-[10px] text-muted-foreground font-mono">{a.code ?? ""}</p>
                     <div className="flex items-center justify-between gap-1 pt-1">
                       <Button
                         size="icon"
