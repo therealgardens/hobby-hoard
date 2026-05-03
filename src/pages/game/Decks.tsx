@@ -123,7 +123,9 @@ export default function Decks() {
         copies: p.copies,
       })),
     );
-    setName(""); setRaw(""); setOpen(false); load();
+    setName(""); setRaw(""); setOpen(false);
+    await load();
+    if (deck) analyze(deck);
     toast.success(`Imported ${parsed.length} entries`);
   };
 
