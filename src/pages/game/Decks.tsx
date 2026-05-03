@@ -81,7 +81,19 @@ export default function Decks() {
   const [name, setName] = useState("");
   const [raw, setRaw] = useState("");
   const [active, setActive] = useState<Deck | null>(null);
-  const [analysis, setAnalysis] = useState<{ code: string; needed: number; have: number; cardId?: string; name?: string; imageSmall?: string }[]>([]);
+  type AnalysisRow = {
+    key: string;
+    code: string | null;
+    queryName: string | null;
+    needed: number;
+    have: number;
+    cardId?: string;
+    name?: string;
+    imageSmall?: string;
+  };
+  const [analysis, setAnalysis] = useState<AnalysisRow[]>([]);
+  const [toDelete, setToDelete] = useState<Deck | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = async () => {
     const { data, error } = await withDbRetry(() =>
