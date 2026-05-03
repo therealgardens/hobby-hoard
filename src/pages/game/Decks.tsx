@@ -21,33 +21,55 @@ type Deck = Tables<"decks">;
 
 // Card code patterns:
 //   One Piece: OP01-001, ST15-002 (and variants like _p1)
-//   Yu-Gi-Oh!: LOB-005, MRD-EN001, BLAR-EN045
-const CODE_RE = /([A-Z]{2,4}-(?:[A-Z]{2,3})?\d{2,4})/i;
+//   Yu-Gi-Oh!: LOB-005, MRD-EN001, BLAR-EN045, or 8-digit passcode like 46986414
+const OP_CODE_RE = /\b([A-Z]{2,4}-(?:[A-Z]{2,3})?\d{2,4}[A-Za-z0-9_]*)\b/i;
+const YGO_CODE_RE = /\b([A-Z]{2,5}-(?:[A-Z]{2,3})?\d{2,4}|\d{8})\b/i;
 
-function parseDeckList(raw: string): { code: string; copies: number }[] {
-  const out: { code: string; copies: number }[] = [];
-  for (const line of raw.split("\n")) {
-    const t = line.trim();
-    if (!t) continue;
-    const codeMatch = t.match(CODE_RE);
-    if (!codeMatch) continue;
-    const code = codeMatch[1].toUpperCase();
-    let copies = 1;
-    const before = t.slice(0, codeMatch.index ?? 0);
-    const after = t.slice((codeMatch.index ?? 0) + codeMatch[1].length);
-    const mBefore = before.match(/(\d+)\s*[xX]?\s*$/) || before.match(/^\s*(\d+)\b/);
-    const mAfter = after.match(/^\s*[xX]?\s*(\d+)/);
-    if (mBefore) copies = parseInt(mBefore[1], 10);
-    else if (mAfter) copies = parseInt(mAfter[1], 10);
-    if (!copies || copies < 1) copies = 1;
-    out.push({ code, copies });
+// Section headers like "Leader", "Character (26)", "Event (24)", "Main Deck", "Side Deck",
+// "Extra Deck", "Stage", "Don!!", "Spell", "Trap", "Monster".
+const SECTION_RE = /^(leader|characters?|events?|stages?|don!?!?|main\s*deck|side\s*deck|extra\s*deck|monsters?|spells?|traps?|extra|side)\b/i;
+
+type ParsedEntry = { code: string | null; name: string | null; copies: number };
+
+function parseDeckList(raw: string, game: Game): ParsedEntry[] {
+  const codeRe = game === "yugioh" ? YGO_CODE_RE : OP_CODE_RE;
+  const out: ParsedEntry[] = [];
+  for (const lineRaw of raw.split("\n")) {
+    const line = lineRaw.trim();
+    if (!line) continue;
+    const t = line.replace(/^[-•*]\s*/, "");
+
+    // Quantity at start: "4 ", "4x ", "x4 "
+    const qtyMatch = t.match(/^(?:x\s*)?(\d+)\s*[xX]?\s+/);
+    const hasLeadingQty = !!qtyMatch;
+    const copies = qtyMatch ? Math.max(1, parseInt(qtyMatch[1], 10)) : 1;
+    const rest = (qtyMatch ? t.slice(qtyMatch[0].length) : t).trim();
+
+    const codeMatch = rest.match(codeRe);
+    const code = codeMatch ? codeMatch[1].toUpperCase() : null;
+
+    let name: string | null = null;
+    if (code) {
+      const idx = rest.toUpperCase().indexOf(code);
+      const before = rest.slice(0, idx).replace(/[\(\[]\s*$/, "").trim();
+      const after = rest.slice(idx + code.length).replace(/^\s*[\)\]]/, "").trim();
+      name = [before, after].filter(Boolean).join(" ").trim() || null;
+    } else {
+      name = rest || null;
+    }
+
+    // Skip section headers
+    if (!hasLeadingQty && !code && name && SECTION_RE.test(name)) continue;
+    if (!hasLeadingQty && !code && (!name || name.length < 2)) continue;
+    if (!code && !name) continue;
+    out.push({ code, name, copies });
   }
   return out;
 }
 
 const PLACEHOLDERS: Record<string, string> = {
   onepiece: "Leader\n1 Lucy (OP15-002)\n\nCharacter (26)\n4 Viola (OP15-040)\n4 Leo (OP15-052)",
-  yugioh: "Main Deck\n3 Dark Magician (LOB-005)\n3 Pot of Greed (LOB-119)\n2 Mirror Force (MRD-138)",
+  yugioh: "Main Deck\n3 Dark Magician (LOB-005)\n3 Pot of Greed\n2 46986414",
 };
 
 export default function Decks() {
