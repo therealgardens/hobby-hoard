@@ -115,18 +115,20 @@ export default function Settings() {
           </Select>
         </Card>
 
-        {/* Card database sync */}
-        <Card className="p-6">
-          <h2 className="text-2xl font-display mb-2">Card database</h2>
-          <p className="text-muted-foreground text-sm mb-4">
-            The full card catalog is refreshed automatically every day at 3:00 UTC.
-            You can also trigger a manual sync below — it can take a few minutes.
-          </p>
-          <Button onClick={runCardSync} disabled={syncing}>
-            <RefreshCw className={`h-4 w-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
-            {syncing ? "Syncing…" : "Sync card catalog now"}
-          </Button>
-        </Card>
+        {/* Card database sync — admins only */}
+        {isAdmin && (
+          <Card className="p-6">
+            <h2 className="text-2xl font-display mb-2">Card database</h2>
+            <p className="text-muted-foreground text-sm mb-4">
+              The full card catalog is refreshed automatically every day at 3:00 UTC.
+              You can also trigger a manual sync below — it can take a few minutes.
+            </p>
+            <Button onClick={runCardSync} disabled={syncing}>
+              <RefreshCw className={`h-4 w-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
+              {syncing ? "Syncing…" : "Sync card catalog now"}
+            </Button>
+          </Card>
+        )}
 
 
         {/* Danger zone */}
