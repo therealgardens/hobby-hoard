@@ -18,10 +18,22 @@ import { ArrowLeft, Trash2, Sun, Moon, Monitor, RefreshCw } from "lucide-react";
 export default function Settings() {
   const { t, i18n } = useTranslation();
   const { theme, setTheme } = useTheme();
-  const { signOut } = useAuth();
+  const { signOut, user } = useAuth();
   const nav = useNavigate();
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    if (!user) { setIsAdmin(false); return; }
+    supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", user.id)
+      .eq("role", "admin")
+      .maybeSingle()
+      .then(({ data }) => setIsAdmin(!!data));
+  }, [user]);
 
   const runCardSync = async () => {
     setSyncing(true);
