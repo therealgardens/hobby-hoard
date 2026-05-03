@@ -199,7 +199,7 @@ export default function Decks() {
 
     setAnalysis(dcards.map(d => {
       const dn = (d as any).name as string | null;
-      const c = d.code ? cardByCode.get(d.code?.toUpperCase()) : ... : (dn ? cardByName.get(dn.toLowerCase()) : undefined);
+      const c = d.code ? cardByCode.get(d.code?.toUpperCase()) : (dn ? cardByName.get(dn.toLowerCase()) : undefined);
       return {
         key: d.id,
         code: d.code,
