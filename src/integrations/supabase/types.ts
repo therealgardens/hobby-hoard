@@ -246,24 +246,27 @@ export type Database = {
       }
       deck_cards: {
         Row: {
-          code: string
+          code: string | null
           copies: number
           deck_id: string
           id: string
+          name: string | null
           user_id: string
         }
         Insert: {
-          code: string
+          code?: string | null
           copies?: number
           deck_id: string
           id?: string
+          name?: string | null
           user_id: string
         }
         Update: {
-          code?: string
+          code?: string | null
           copies?: number
           deck_id?: string
           id?: string
+          name?: string | null
           user_id?: string
         }
         Relationships: [
