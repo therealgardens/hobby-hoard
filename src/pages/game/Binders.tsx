@@ -128,6 +128,31 @@ export default function Binders() {
     toast.success("Binder created");
   };
 
+  const [toDelete, setToDelete] = useState<Binder | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const confirmDelete = async () => {
+    if (!toDelete || !user) return;
+    setDeleting(true);
+    const target = toDelete;
+    const prev = binders;
+    const optimistic = binders.filter(b => b.id !== target.id);
+    setBinders(optimistic);
+    writeCaches(optimistic);
+
+    // Delete child slots first (no FK cascade), then the binder
+    await supabase.from("binder_slots").delete().eq("binder_id", target.id).eq("user_id", user.id);
+    const { error } = await supabase.from("binders").delete().eq("id", target.id).eq("user_id", user.id);
+    setDeleting(false);
+    setToDelete(null);
+    if (error) {
+      setBinders(prev);
+      writeCaches(prev);
+      return toast.error(error.message);
+    }
+    toast.success("Binder deleted");
+  };
+
   // Mostra skeleton solo se sta davvero caricando E non abbiamo nulla da mostrare
   const showSkeleton = loading && binders.length === 0 && !authLoading;
 
