@@ -160,14 +160,14 @@ export default function Decks() {
 
     if (codes.length) {
       const { data: cards } = await supabase.from("cards").select("*").eq("game", currentGame).in("code", codes);
-      cardByCode = new Map((cards ?? []).map(c => [c.code as string, c]));
-      const missing = codes.filter(c => !cardByCode.has(c));
+      cardByCode = new Map((cards ?? []).map(c => [c.code?.toUpperCase() as string, c]));
+      const missing = codes.filter(c => !cardByCode.has(c?.toUpperCase()));
       if (missing.length) {
         await Promise.all(missing.map(code =>
           supabase.functions.invoke("card-search", { body: { game: currentGame, query: code } })
         ));
         const { data: refreshed } = await supabase.from("cards").select("*").eq("game", currentGame).in("code", codes);
-        cardByCode = new Map((refreshed ?? []).map(c => [c.code as string, c]));
+        cardByCode = new Map((refreshed ?? []).map(c => [c.code?.toUpperCase() as string, c]));
       }
     }
 
@@ -199,7 +199,7 @@ export default function Decks() {
 
     setAnalysis(dcards.map(d => {
       const dn = (d as any).name as string | null;
-      const c = d.code ? cardByCode.get(d.code) : (dn ? cardByName.get(dn.toLowerCase()) : undefined);
+      const c = d.code ? cardByCode.get(d.code?.toUpperCase()) : ... : (dn ? cardByName.get(dn.toLowerCase()) : undefined);
       return {
         key: d.id,
         code: d.code,
