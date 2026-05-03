@@ -106,7 +106,7 @@ export default function Decks() {
 
   const create = async () => {
     if (!name.trim() || !raw.trim()) return;
-    const parsed = parseDeckList(raw);
+    const parsed = parseDeckList(raw, currentGame);
     if (!parsed.length) return toast.error("Couldn't parse any cards");
     const { data: u } = await supabase.auth.getUser();
     if (!u.user) return;
@@ -115,57 +115,123 @@ export default function Decks() {
     }).select().single();
     if (error || !deck) return toast.error(error?.message ?? "Failed");
     await supabase.from("deck_cards").insert(
-      parsed.map(p => ({ deck_id: deck.id, user_id: u.user!.id, code: p.code, copies: p.copies })),
+      parsed.map(p => ({
+        deck_id: deck.id,
+        user_id: u.user!.id,
+        code: p.code,
+        name: p.name,
+        copies: p.copies,
+      })),
     );
     setName(""); setRaw(""); setOpen(false); load();
     toast.success(`Imported ${parsed.length} entries`);
   };
 
+  const confirmDelete = async () => {
+    if (!toDelete) return;
+    setDeleting(true);
+    const id = toDelete.id;
+    await supabase.from("deck_cards").delete().eq("deck_id", id);
+    const { error } = await supabase.from("decks").delete().eq("id", id);
+    setDeleting(false);
+    setToDelete(null);
+    if (error) return toast.error(error.message);
+    setDecks(prev => prev.filter(d => d.id !== id));
+    toast.success("Deck deleted");
+  };
+
   const analyze = async (deck: Deck) => {
     setActive(deck);
     setAnalysis([]);
-    const { data: dcards } = await supabase.from("deck_cards").select("*").eq("deck_id", deck.id);
+    const { data: dcards } = await supabase
+      .from("deck_cards")
+      .select("id, code, name, copies")
+      .eq("deck_id", deck.id);
     if (!dcards) return;
-    const codes = dcards.map(d => d.code);
-    let { data: cards } = await supabase.from("cards").select("*").eq("game", currentGame).in("code", codes);
-    let cardByCode = new Map((cards ?? []).map(c => [c.code, c]));
 
-    const missing = codes.filter(c => !cardByCode.has(c));
-    if (missing.length) {
-      await Promise.all(missing.map(code =>
-        supabase.functions.invoke("card-search", { body: { game: currentGame, query: code } })
-      ));
-      const { data: refreshed } = await supabase.from("cards").select("*").eq("game", currentGame).in("code", codes);
-      cards = refreshed ?? cards;
-      cardByCode = new Map((cards ?? []).map(c => [c.code, c]));
+    const codes = Array.from(new Set(dcards.map(d => d.code).filter((c): c is string => !!c)));
+    const names = Array.from(new Set(dcards.map(d => (d as any).name).filter((n): n is string => !!n)));
+
+    // Fetch by code
+    let cardByCode = new Map<string, any>();
+    let cardByName = new Map<string, any>();
+
+    if (codes.length) {
+      const { data: cards } = await supabase.from("cards").select("*").eq("game", currentGame).in("code", codes);
+      cardByCode = new Map((cards ?? []).map(c => [c.code as string, c]));
+      const missing = codes.filter(c => !cardByCode.has(c));
+      if (missing.length) {
+        await Promise.all(missing.map(code =>
+          supabase.functions.invoke("card-search", { body: { game: currentGame, query: code } })
+        ));
+        const { data: refreshed } = await supabase.from("cards").select("*").eq("game", currentGame).in("code", codes);
+        cardByCode = new Map((refreshed ?? []).map(c => [c.code as string, c]));
+      }
     }
 
-    const cardIds = (cards ?? []).map(c => c.id);
-    const { data: entries } = await supabase.from("collection_entries").select("card_id,quantity").in("card_id", cardIds);
+    // For name-only entries, search by exact name (case-insensitive)
+    const nameOnlyEntries = dcards.filter(d => !d.code && (d as any).name);
+    for (const e of nameOnlyEntries) {
+      const n = ((e as any).name as string).trim();
+      const key = n.toLowerCase();
+      if (cardByName.has(key)) continue;
+      let { data: hit } = await supabase
+        .from("cards").select("*").eq("game", currentGame).ilike("name", n).limit(1).maybeSingle();
+      if (!hit) {
+        await supabase.functions.invoke("card-search", { body: { game: currentGame, query: n } });
+        const { data: refreshed } = await supabase
+          .from("cards").select("*").eq("game", currentGame).ilike("name", n).limit(1).maybeSingle();
+        hit = refreshed ?? null;
+      }
+      if (hit) cardByName.set(key, hit);
+    }
+
+    const allCards = [...cardByCode.values(), ...cardByName.values()];
+    const cardIds = Array.from(new Set(allCards.map(c => c.id)));
     const haveByCard = new Map<string, number>();
-    (entries ?? []).forEach(e => haveByCard.set(e.card_id, (haveByCard.get(e.card_id) ?? 0) + (e.quantity ?? 0)));
+    if (cardIds.length) {
+      const { data: entries } = await supabase
+        .from("collection_entries").select("card_id,quantity").in("card_id", cardIds);
+      (entries ?? []).forEach(e => haveByCard.set(e.card_id, (haveByCard.get(e.card_id) ?? 0) + (e.quantity ?? 0)));
+    }
 
     setAnalysis(dcards.map(d => {
-      const c = cardByCode.get(d.code);
+      const dn = (d as any).name as string | null;
+      const c = d.code ? cardByCode.get(d.code) : (dn ? cardByName.get(dn.toLowerCase()) : undefined);
       return {
+        key: d.id,
         code: d.code,
+        queryName: dn,
         needed: d.copies,
         have: c ? (haveByCard.get(c.id) ?? 0) : 0,
         cardId: c?.id,
-        name: c?.name,
+        name: c?.name ?? dn ?? d.code ?? "Unknown",
         imageSmall: c?.image_small ?? undefined,
       };
     }));
   };
 
-  const ensureCardId = async (code: string): Promise<string | null> => {
-    const { data: existing } = await supabase
-      .from("cards").select("id").eq("game", currentGame).eq("code", code).maybeSingle();
-    if (existing?.id) return existing.id;
-    await supabase.functions.invoke("card-search", { body: { game: currentGame, query: code } });
-    const { data: refreshed } = await supabase
-      .from("cards").select("id").eq("game", currentGame).eq("code", code).maybeSingle();
-    return refreshed?.id ?? null;
+  const ensureCardId = async (a: AnalysisRow): Promise<string | null> => {
+    if (a.cardId) return a.cardId;
+    if (a.code) {
+      const { data: existing } = await supabase
+        .from("cards").select("id").eq("game", currentGame).eq("code", a.code).maybeSingle();
+      if (existing?.id) return existing.id;
+      await supabase.functions.invoke("card-search", { body: { game: currentGame, query: a.code } });
+      const { data: refreshed } = await supabase
+        .from("cards").select("id").eq("game", currentGame).eq("code", a.code).maybeSingle();
+      return refreshed?.id ?? null;
+    }
+    if (a.queryName) {
+      const { data: existing } = await supabase
+        .from("cards").select("id").eq("game", currentGame).ilike("name", a.queryName).limit(1).maybeSingle();
+      if (existing?.id) return existing.id;
+      await supabase.functions.invoke("card-search", { body: { game: currentGame, query: a.queryName } });
+      const { data: refreshed } = await supabase
+        .from("cards").select("id").eq("game", currentGame).ilike("name", a.queryName).limit(1).maybeSingle();
+      return refreshed?.id ?? null;
+    }
+    return null;
   };
 
   const addOne = async (a: typeof analysis[number]) => {
