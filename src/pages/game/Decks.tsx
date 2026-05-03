@@ -304,14 +304,42 @@ export default function Decks() {
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {decks.map(d => (
-            <Card key={d.id} className="p-5 bg-gradient-card cursor-pointer hover:shadow-pop transition-all" onClick={() => analyze(d)}>
-              <Swords className="h-5 w-5 text-primary mb-2" />
-              <h3 className="text-2xl font-display">{d.name}</h3>
-              <p className="text-xs text-muted-foreground">Tap to check what you need</p>
-            </Card>
+            <div key={d.id} className="relative group">
+              <Card className="p-5 bg-gradient-card cursor-pointer hover:shadow-pop transition-all" onClick={() => analyze(d)}>
+                <Swords className="h-5 w-5 text-primary mb-2" />
+                <h3 className="text-2xl font-display pr-8">{d.name}</h3>
+                <p className="text-xs text-muted-foreground">Tap to check what you need</p>
+              </Card>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="absolute top-2 right-2 h-8 w-8 opacity-70 hover:opacity-100 hover:bg-destructive/10 hover:text-destructive"
+                onClick={(e) => { e.stopPropagation(); setToDelete(d); }}
+                aria-label="Delete deck"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
           ))}
         </div>
       )}
+
+      <AlertDialog open={!!toDelete} onOpenChange={(o) => !o && setToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete deck?</AlertDialogTitle>
+            <AlertDialogDescription>
+              "{toDelete?.name}" and its imported card list will be permanently deleted. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} disabled={deleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              {deleting ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={!!active} onOpenChange={(o) => !o && setActive(null)}>
         <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
