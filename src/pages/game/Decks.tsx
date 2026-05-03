@@ -234,25 +234,25 @@ export default function Decks() {
     return null;
   };
 
-  const addOne = async (a: typeof analysis[number]) => {
+  const addOne = async (a: AnalysisRow) => {
     const { data: u } = await supabase.auth.getUser();
     if (!u.user) return;
-    const cardId = a.cardId ?? await ensureCardId(a.code);
-    if (!cardId) return toast.error(`Card ${a.code} not found in catalog`);
+    const cardId = await ensureCardId(a);
+    if (!cardId) return toast.error(`Card ${a.name ?? a.code ?? a.queryName} not found in catalog`);
     const { error } = await supabase.from("collection_entries").insert({
       user_id: u.user.id, card_id: cardId, game: currentGame,
       rarity: null, language: "EN", quantity: 1,
     });
     if (error) return toast.error(error.message);
-    setAnalysis(prev => prev.map(p => p.code === a.code ? { ...p, have: p.have + 1, cardId } : p));
+    setAnalysis(prev => prev.map(p => p.key === a.key ? { ...p, have: p.have + 1, cardId } : p));
     toast.success(`Added ${a.name ?? a.code}`);
   };
 
-  const removeOne = async (a: typeof analysis[number]) => {
+  const removeOne = async (a: AnalysisRow) => {
     if (a.have <= 0) return;
     const { data: u } = await supabase.auth.getUser();
     if (!u.user) return;
-    const cardId = a.cardId ?? await ensureCardId(a.code);
+    const cardId = await ensureCardId(a);
     if (!cardId) return;
     const { data: rows } = await supabase
       .from("collection_entries")
@@ -265,7 +265,7 @@ export default function Decks() {
     if (!target) return;
     const { error } = await supabase.from("collection_entries").delete().eq("id", target);
     if (error) return toast.error(error.message);
-    setAnalysis(prev => prev.map(p => p.code === a.code ? { ...p, have: Math.max(0, p.have - 1), cardId } : p));
+    setAnalysis(prev => prev.map(p => p.key === a.key ? { ...p, have: Math.max(0, p.have - 1), cardId } : p));
   };
 
   return (
