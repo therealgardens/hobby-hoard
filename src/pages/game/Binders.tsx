@@ -6,7 +6,11 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, BookOpen } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Plus, BookOpen, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import type { Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
@@ -124,6 +128,31 @@ export default function Binders() {
     toast.success("Binder created");
   };
 
+  const [toDelete, setToDelete] = useState<Binder | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const confirmDelete = async () => {
+    if (!toDelete || !user) return;
+    setDeleting(true);
+    const target = toDelete;
+    const prev = binders;
+    const optimistic = binders.filter(b => b.id !== target.id);
+    setBinders(optimistic);
+    writeCaches(optimistic);
+
+    // Delete child slots first (no FK cascade), then the binder
+    await supabase.from("binder_slots").delete().eq("binder_id", target.id).eq("user_id", user.id);
+    const { error } = await supabase.from("binders").delete().eq("id", target.id).eq("user_id", user.id);
+    setDeleting(false);
+    setToDelete(null);
+    if (error) {
+      setBinders(prev);
+      writeCaches(prev);
+      return toast.error(error.message);
+    }
+    toast.success("Binder deleted");
+  };
+
   // Mostra skeleton solo se sta davvero caricando E non abbiamo nulla da mostrare
   const showSkeleton = loading && binders.length === 0 && !authLoading;
 
@@ -181,16 +210,44 @@ export default function Binders() {
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {binders.map(b => (
-            <Link key={b.id} to={b.id} state={{ binder: b }}>
-              <Card className="p-6 bg-gradient-card hover:shadow-pop transition-all hover:-translate-y-1 cursor-pointer">
-                <BookOpen className="h-6 w-6 text-primary mb-2" />
-                <h3 className="text-2xl font-display">{b.name}</h3>
-                <p className="text-sm text-muted-foreground">{b.cols}×{b.rows} grid · {(b as any).pages ?? 1} page{((b as any).pages ?? 1) > 1 ? "s" : ""} · {b.cols * b.rows} slots/page</p>
-              </Card>
-            </Link>
+            <div key={b.id} className="relative group">
+              <Link to={b.id} state={{ binder: b }}>
+                <Card className="p-6 bg-gradient-card hover:shadow-pop transition-all hover:-translate-y-1 cursor-pointer">
+                  <BookOpen className="h-6 w-6 text-primary mb-2" />
+                  <h3 className="text-2xl font-display pr-8">{b.name}</h3>
+                  <p className="text-sm text-muted-foreground">{b.cols}×{b.rows} grid · {(b as any).pages ?? 1} page{((b as any).pages ?? 1) > 1 ? "s" : ""} · {b.cols * b.rows} slots/page</p>
+                </Card>
+              </Link>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="absolute top-2 right-2 h-8 w-8 opacity-70 hover:opacity-100 hover:bg-destructive/10 hover:text-destructive"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setToDelete(b); }}
+                aria-label="Delete binder"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
           ))}
         </div>
       )}
+
+      <AlertDialog open={!!toDelete} onOpenChange={(o) => !o && setToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete binder?</AlertDialogTitle>
+            <AlertDialogDescription>
+              "{toDelete?.name}" and all its slot assignments will be permanently deleted. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} disabled={deleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              {deleting ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
