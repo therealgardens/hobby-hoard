@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useTheme } from "@/components/ThemeProvider";
 import { useNavigate } from "react-router-dom";
@@ -18,10 +18,22 @@ import { ArrowLeft, Trash2, Sun, Moon, Monitor, RefreshCw } from "lucide-react";
 export default function Settings() {
   const { t, i18n } = useTranslation();
   const { theme, setTheme } = useTheme();
-  const { signOut } = useAuth();
+  const { signOut, user } = useAuth();
   const nav = useNavigate();
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    if (!user) { setIsAdmin(false); return; }
+    supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", user.id)
+      .eq("role", "admin")
+      .maybeSingle()
+      .then(({ data }) => setIsAdmin(!!data));
+  }, [user]);
 
   const runCardSync = async () => {
     setSyncing(true);
@@ -103,18 +115,20 @@ export default function Settings() {
           </Select>
         </Card>
 
-        {/* Card database sync */}
-        <Card className="p-6">
-          <h2 className="text-2xl font-display mb-2">Card database</h2>
-          <p className="text-muted-foreground text-sm mb-4">
-            The full card catalog is refreshed automatically every day at 3:00 UTC.
-            You can also trigger a manual sync below — it can take a few minutes.
-          </p>
-          <Button onClick={runCardSync} disabled={syncing}>
-            <RefreshCw className={`h-4 w-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
-            {syncing ? "Syncing…" : "Sync card catalog now"}
-          </Button>
-        </Card>
+        {/* Card database sync — admins only */}
+        {isAdmin && (
+          <Card className="p-6">
+            <h2 className="text-2xl font-display mb-2">Card database</h2>
+            <p className="text-muted-foreground text-sm mb-4">
+              The full card catalog is refreshed automatically every day at 3:00 UTC.
+              You can also trigger a manual sync below — it can take a few minutes.
+            </p>
+            <Button onClick={runCardSync} disabled={syncing}>
+              <RefreshCw className={`h-4 w-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
+              {syncing ? "Syncing…" : "Sync card catalog now"}
+            </Button>
+          </Card>
+        )}
 
 
         {/* Danger zone */}
