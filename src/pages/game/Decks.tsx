@@ -159,14 +159,14 @@ export default function Decks() {
     let cardByName = new Map<string, any>();
 
     if (codes.length) {
-      const { data: cards } = await supabase.from("cards").select("*").eq("game", currentGame).in("code", codes);
+      const { data: cards } = await supabase.from("cards").select("*").eq("game", currentGame).in("code", [...codes, ...codes.map(c => c.toLowerCase())]);
       cardByCode = new Map((cards ?? []).map(c => [c.code?.toUpperCase() as string, c]));
       const missing = codes.filter(c => !cardByCode.has(c?.toUpperCase()));
       if (missing.length) {
         await Promise.all(missing.map(code =>
           supabase.functions.invoke("card-search", { body: { game: currentGame, query: code } })
         ));
-        const { data: refreshed } = await supabase.from("cards").select("*").eq("game", currentGame).in("code", codes);
+        const { data: refreshed } = await supabase.from("cards").select("*").eq("game", currentGame).in("code", [...codes, ...codes.map(c => c.toLowerCase())]);
         cardByCode = new Map((refreshed ?? []).map(c => [c.code?.toUpperCase() as string, c]));
       }
     }
