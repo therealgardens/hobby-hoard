@@ -183,12 +183,9 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Authorization: allow either the service role key (used by sync-scheduler /
-    // pg_cron) or an authenticated user with the 'admin' role (manual trigger
-    // from the Settings page). Reject everyone else — this endpoint is
-    // expensive and bypasses RLS via the service role.
     const authHeader = req.headers.get("Authorization") ?? "";
     const isServiceCall = authHeader === `Bearer ${SERVICE_KEY}`;
+    let triggeredBy: string | null = null;
     if (!isServiceCall) {
       if (!authHeader.startsWith("Bearer ")) {
         return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -207,17 +204,15 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
+      triggeredBy = claims.claims.sub as string;
       const { data: isAdmin, error: roleError } = await admin.rpc("has_role", {
-        _user_id: claims.claims.sub,
+        _user_id: triggeredBy,
         _role: "admin",
       });
       if (roleError || !isAdmin) {
         return new Response(
           JSON.stringify({ error: "Forbidden: admin role required" }),
-          {
-            status: 403,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          },
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
     }
@@ -236,9 +231,19 @@ Deno.serve(async (req) => {
       }
     } catch {/* ignore */}
 
+    // Create a job row up-front so the client can poll for progress.
+    const { data: job, error: jobError } = await admin
+      .from("sync_jobs")
+      .insert({ status: "running", games, triggered_by: triggeredBy })
+      .select("id")
+      .single();
+    if (jobError) console.error("[sync-cards] failed to create job row", jobError);
+    const jobId = job?.id ?? null;
+
     const runSync = async () => {
       const startedAt = Date.now();
       const summary: Record<string, number> = {};
+      let lastError: string | null = null;
       for (const g of games) {
         try {
           console.log(`[sync-cards] starting ${g}`);
@@ -246,33 +251,40 @@ Deno.serve(async (req) => {
           else if (g === "onepiece") summary.onepiece = await syncOnePiece();
           else if (g === "yugioh") summary.yugioh = await syncYugioh();
           console.log(`[sync-cards] ${g} done: ${summary[g]} rows`);
+          if (jobId) await admin.from("sync_jobs").update({ summary }).eq("id", jobId);
         } catch (e) {
           console.error("[sync-cards] error", g, e);
           summary[g] = -1;
+          lastError = e instanceof Error ? e.message : String(e);
         }
       }
       const elapsedMs = Date.now() - startedAt;
       const total = Object.values(summary).reduce((a, b) => a + Math.max(0, b), 0);
-      console.log(`[sync-cards] complete in ${elapsedMs}ms, total=${total}`, summary);
-      return { ok: true, elapsedMs, total, summary };
+      const status = lastError ? "failed" : "succeeded";
+      console.log(`[sync-cards] ${status} in ${elapsedMs}ms, total=${total}`, summary);
+      if (jobId) {
+        await admin.from("sync_jobs").update({
+          status, summary, total, error: lastError, finished_at: new Date().toISOString(),
+        }).eq("id", jobId);
+      }
+      return { ok: !lastError, elapsedMs, total, summary, error: lastError };
     };
 
     if (waitForResult) {
       const result = await runSync();
-      return new Response(JSON.stringify(result), {
+      return new Response(JSON.stringify({ ...result, jobId }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Run in background so the HTTP request returns immediately, avoiding
-    // edge-function wall-clock / CPU timeouts on the ~50k-row catalog.
     // @ts-ignore - EdgeRuntime is provided by Supabase edge runtime.
     EdgeRuntime.waitUntil(runSync());
     return new Response(
       JSON.stringify({
         ok: true,
         accepted: true,
-        message: "Sync started in the background. It usually finishes within 1–3 minutes.",
+        jobId,
+        message: "Sync started in the background. It usually finishes within 1-3 minutes.",
         games,
       }),
       { status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" } },
