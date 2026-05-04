@@ -69,16 +69,31 @@ export default function Settings() {
   }, [isAdmin]);
 
   const stopPolling = () => {
-    if (pollRef.current) {
-      window.clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  };
+  if (pollRef.current) {
+    window.clearInterval(pollRef.current);
+    pollRef.current = null;
+  }
+  if (timeoutRef.current) {           // ← aggiungi queste 3 righe
+    window.clearTimeout(timeoutRef.current);
+    timeoutRef.current = null;
+  }
+};
 
-  const startPolling = (jobId: string) => {
+  const timeoutRef = useRef<number | null>(null); // aggiungi questo vicino a pollRef (riga ~37)
+
+const startPolling = (jobId: string) => {
+  stopPolling();
+  setSyncing(true);
+
+  // Timeout di sicurezza: dopo 5 minuti forza lo stop
+  if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
+  timeoutRef.current = window.setTimeout(() => {
     stopPolling();
-    setSyncing(true);
-    pollRef.current = window.setInterval(async () => {
+    setSyncing(false);
+    toast.error("Sync timed out after 5 minutes. Please try again.");
+  }, 5 * 60 * 1000);
+
+  pollRef.current = window.setInterval(async () => {
       const { data, error } = await supabase
         .from("sync_jobs").select("*").eq("id", jobId).maybeSingle();
       if (error || !data) return;
