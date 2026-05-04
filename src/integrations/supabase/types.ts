@@ -426,6 +426,42 @@ export type Database = {
         }
         Relationships: []
       }
+      sync_jobs: {
+        Row: {
+          error: string | null
+          finished_at: string | null
+          games: string[]
+          id: string
+          started_at: string
+          status: string
+          summary: Json
+          total: number
+          triggered_by: string | null
+        }
+        Insert: {
+          error?: string | null
+          finished_at?: string | null
+          games?: string[]
+          id?: string
+          started_at?: string
+          status?: string
+          summary?: Json
+          total?: number
+          triggered_by?: string | null
+        }
+        Update: {
+          error?: string | null
+          finished_at?: string | null
+          games?: string[]
+          id?: string
+          started_at?: string
+          status?: string
+          summary?: Json
+          total?: number
+          triggered_by?: string | null
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useTheme } from "@/components/ThemeProvider";
 import { useNavigate } from "react-router-dom";
@@ -13,7 +13,17 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { ArrowLeft, Trash2, Sun, Moon, Monitor, RefreshCw } from "lucide-react";
+import { ArrowLeft, Trash2, Sun, Moon, Monitor, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react";
+
+type SyncJob = {
+  id: string;
+  status: "running" | "succeeded" | "failed";
+  summary: Record<string, number>;
+  total: number;
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+};
 
 export default function Settings() {
   const { t, i18n } = useTranslation();
@@ -23,6 +33,8 @@ export default function Settings() {
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [job, setJob] = useState<SyncJob | null>(null);
+  const pollRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!user) { setIsAdmin(false); return; }
@@ -35,23 +47,80 @@ export default function Settings() {
       .then(({ data }) => setIsAdmin(!!data));
   }, [user]);
 
+  // On mount (admin only) load the most recent job so we can resume polling
+  // if a sync was kicked off in another tab / earlier session.
+  useEffect(() => {
+    if (!isAdmin) return;
+    (async () => {
+      const { data } = await supabase
+        .from("sync_jobs")
+        .select("*")
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (data) {
+        const j = data as unknown as SyncJob;
+        setJob(j);
+        if (j.status === "running") startPolling(j.id);
+      }
+    })();
+    return () => stopPolling();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
+
+  const stopPolling = () => {
+    if (pollRef.current) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
+
+  const startPolling = (jobId: string) => {
+    stopPolling();
+    setSyncing(true);
+    pollRef.current = window.setInterval(async () => {
+      const { data, error } = await supabase
+        .from("sync_jobs").select("*").eq("id", jobId).maybeSingle();
+      if (error || !data) return;
+      const j = data as unknown as SyncJob;
+      setJob(j);
+      if (j.status !== "running") {
+        stopPolling();
+        setSyncing(false);
+        if (j.status === "succeeded") {
+          const s = j.summary ?? {};
+          toast.success(
+            `Sync complete — ${j.total} cards (Pokémon: ${s.pokemon ?? 0}, One Piece: ${s.onepiece ?? 0}, Yu-Gi-Oh!: ${s.yugioh ?? 0})`,
+          );
+        } else {
+          toast.error(`Sync failed: ${j.error ?? "unknown error"}`);
+        }
+      }
+    }, 3000);
+  };
+
   const runCardSync = async () => {
     setSyncing(true);
+    setJob(null);
     try {
       const { data, error } = await supabase.functions.invoke("sync-cards");
       if (error) throw error;
-      if (data?.accepted) {
-        toast.success("Sync started in the background — it usually finishes within 1–3 minutes.");
+      const jobId = data?.jobId as string | undefined;
+      if (jobId) {
+        toast.info("Sync started — polling for progress…");
+        startPolling(jobId);
+      } else if (data?.accepted) {
+        toast.success("Sync started in the background.");
+        setSyncing(false);
       } else {
-        const summary = data?.summary ?? {};
-        const total = data?.total ?? 0;
+        const s = data?.summary ?? {};
         toast.success(
-          `Sync complete — ${total} cards (Pokémon: ${summary.pokemon ?? 0}, One Piece: ${summary.onepiece ?? 0}, Yu-Gi-Oh!: ${summary.yugioh ?? 0})`,
+          `Sync complete — ${data?.total ?? 0} cards (Pokémon: ${s.pokemon ?? 0}, One Piece: ${s.onepiece ?? 0}, Yu-Gi-Oh!: ${s.yugioh ?? 0})`,
         );
+        setSyncing(false);
       }
     } catch (e: any) {
       toast.error(e.message ?? "Sync failed");
-    } finally {
       setSyncing(false);
     }
   };
@@ -69,6 +138,41 @@ export default function Settings() {
     } finally {
       setBusy(false);
     }
+  };
+
+  const renderJobStatus = () => {
+    if (!job) return null;
+    const s = job.summary ?? {};
+    const elapsed = job.finished_at
+      ? Math.round((new Date(job.finished_at).getTime() - new Date(job.started_at).getTime()) / 1000)
+      : Math.round((Date.now() - new Date(job.started_at).getTime()) / 1000);
+    return (
+      <div className="mt-4 rounded-md border bg-muted/30 p-3 space-y-2 text-sm">
+        <div className="flex items-center gap-2 font-medium">
+          {job.status === "running" && <><RefreshCw className="h-4 w-4 animate-spin text-primary" /> Sync in progress…</>}
+          {job.status === "succeeded" && <><CheckCircle2 className="h-4 w-4 text-green-600" /> Last sync succeeded</>}
+          {job.status === "failed" && <><AlertCircle className="h-4 w-4 text-destructive" /> Last sync failed</>}
+          <span className="ml-auto text-xs text-muted-foreground tabular-nums">{elapsed}s</span>
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-xs">
+          {(["pokemon", "onepiece", "yugioh"] as const).map((g) => (
+            <div key={g} className="rounded bg-background px-2 py-1.5 border">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                {g === "pokemon" ? "Pokémon" : g === "onepiece" ? "One Piece" : "Yu-Gi-Oh!"}
+              </div>
+              <div className="font-mono">
+                {s[g] === undefined
+                  ? (job.status === "running" ? "…" : "—")
+                  : s[g] === -1
+                    ? "error"
+                    : s[g].toLocaleString()}
+              </div>
+            </div>
+          ))}
+        </div>
+        {job.error && <p className="text-xs text-destructive">{job.error}</p>}
+      </div>
+    );
   };
 
   return (
@@ -124,12 +228,13 @@ export default function Settings() {
             <h2 className="text-2xl font-display mb-2">Card database</h2>
             <p className="text-muted-foreground text-sm mb-4">
               The full card catalog is refreshed automatically every day at 3:00 UTC.
-              Manual syncs run in the background and usually finish within a few minutes.
+              Manual syncs run in the background and usually finish within 1–3 minutes.
             </p>
             <Button onClick={runCardSync} disabled={syncing}>
               <RefreshCw className={`h-4 w-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
-              {syncing ? "Starting…" : "Sync card catalog now"}
+              {syncing ? "Syncing…" : "Sync card catalog now"}
             </Button>
+            {renderJobStatus()}
           </Card>
         )}
 
