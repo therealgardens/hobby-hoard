@@ -35,6 +35,7 @@ export default function Settings() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [job, setJob] = useState<SyncJob | null>(null);
   const pollRef = useRef<number | null>(null);
+  const timeoutRef = useRef<number | null>(null); // ← aggiungi questa
 
   useEffect(() => {
     if (!user) { setIsAdmin(false); return; }
@@ -68,12 +69,12 @@ export default function Settings() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
 
-  const stopPolling = () => {
+ const stopPolling = () => {
   if (pollRef.current) {
     window.clearInterval(pollRef.current);
     pollRef.current = null;
   }
-  if (timeoutRef.current) {           // ← aggiungi queste 3 righe
+  if (timeoutRef.current) {
     window.clearTimeout(timeoutRef.current);
     timeoutRef.current = null;
   }
@@ -84,6 +85,15 @@ export default function Settings() {
 const startPolling = (jobId: string) => {
   stopPolling();
   setSyncing(true);
+
+  timeoutRef.current = window.setTimeout(() => {
+    stopPolling();
+    setSyncing(false);
+    toast.error("Sync timed out after 5 minutes. Please try again.");
+  }, 5 * 60 * 1000);
+
+  pollRef.current = window.setInterval(async () => {
+  // ... resto invariato
 
   // Timeout di sicurezza: dopo 5 minuti forza lo stop
   if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
