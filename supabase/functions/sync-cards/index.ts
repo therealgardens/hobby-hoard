@@ -222,8 +222,8 @@ Deno.serve(async (req) => {
       }
     }
 
-    const startedAt = Date.now();
     let games: Game[] = ["pokemon", "onepiece", "yugioh"];
+    let waitForResult = false;
     try {
       if (req.method === "POST") {
         const body = await req.json().catch(() => ({}));
@@ -232,26 +232,50 @@ Deno.serve(async (req) => {
             ["pokemon", "onepiece", "yugioh"].includes(g),
           ) as Game[];
         }
+        if (body?.wait === true) waitForResult = true;
       }
     } catch {/* ignore */}
 
-    const summary: Record<string, number> = {};
-    for (const g of games) {
-      try {
-        if (g === "pokemon") summary.pokemon = await syncPokemon();
-        else if (g === "onepiece") summary.onepiece = await syncOnePiece();
-        else if (g === "yugioh") summary.yugioh = await syncYugioh();
-      } catch (e) {
-        console.error("sync error", g, e);
-        summary[g] = -1;
+    const runSync = async () => {
+      const startedAt = Date.now();
+      const summary: Record<string, number> = {};
+      for (const g of games) {
+        try {
+          console.log(`[sync-cards] starting ${g}`);
+          if (g === "pokemon") summary.pokemon = await syncPokemon();
+          else if (g === "onepiece") summary.onepiece = await syncOnePiece();
+          else if (g === "yugioh") summary.yugioh = await syncYugioh();
+          console.log(`[sync-cards] ${g} done: ${summary[g]} rows`);
+        } catch (e) {
+          console.error("[sync-cards] error", g, e);
+          summary[g] = -1;
+        }
       }
+      const elapsedMs = Date.now() - startedAt;
+      const total = Object.values(summary).reduce((a, b) => a + Math.max(0, b), 0);
+      console.log(`[sync-cards] complete in ${elapsedMs}ms, total=${total}`, summary);
+      return { ok: true, elapsedMs, total, summary };
+    };
+
+    if (waitForResult) {
+      const result = await runSync();
+      return new Response(JSON.stringify(result), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
-    const elapsedMs = Date.now() - startedAt;
-    const total = Object.values(summary).reduce((a, b) => a + Math.max(0, b), 0);
+    // Run in background so the HTTP request returns immediately, avoiding
+    // edge-function wall-clock / CPU timeouts on the ~50k-row catalog.
+    // @ts-ignore - EdgeRuntime is provided by Supabase edge runtime.
+    EdgeRuntime.waitUntil(runSync());
     return new Response(
-      JSON.stringify({ ok: true, elapsedMs, total, summary }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      JSON.stringify({
+        ok: true,
+        accepted: true,
+        message: "Sync started in the background. It usually finishes within 1–3 minutes.",
+        games,
+      }),
+      { status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (e) {
     console.error("sync-cards fatal", e);
