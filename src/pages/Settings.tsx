@@ -38,14 +38,17 @@ export default function Settings() {
   const runCardSync = async () => {
     setSyncing(true);
     try {
-      toast.info("Syncing card catalog… this may take a few minutes");
       const { data, error } = await supabase.functions.invoke("sync-cards");
       if (error) throw error;
-      const summary = data?.summary ?? {};
-      const total = data?.total ?? 0;
-      toast.success(
-        `Sync complete — ${total} cards processed (Pokémon: ${summary.pokemon ?? 0}, One Piece: ${summary.onepiece ?? 0}, Yu-Gi-Oh!: ${summary.yugioh ?? 0})`,
-      );
+      if (data?.accepted) {
+        toast.success("Sync started in the background — it usually finishes within 1–3 minutes.");
+      } else {
+        const summary = data?.summary ?? {};
+        const total = data?.total ?? 0;
+        toast.success(
+          `Sync complete — ${total} cards (Pokémon: ${summary.pokemon ?? 0}, One Piece: ${summary.onepiece ?? 0}, Yu-Gi-Oh!: ${summary.yugioh ?? 0})`,
+        );
+      }
     } catch (e: any) {
       toast.error(e.message ?? "Sync failed");
     } finally {
@@ -121,11 +124,11 @@ export default function Settings() {
             <h2 className="text-2xl font-display mb-2">Card database</h2>
             <p className="text-muted-foreground text-sm mb-4">
               The full card catalog is refreshed automatically every day at 3:00 UTC.
-              You can also trigger a manual sync below — it can take a few minutes.
+              Manual syncs run in the background and usually finish within a few minutes.
             </p>
             <Button onClick={runCardSync} disabled={syncing}>
               <RefreshCw className={`h-4 w-4 mr-2 ${syncing ? "animate-spin" : ""}`} />
-              {syncing ? "Syncing…" : "Sync card catalog now"}
+              {syncing ? "Starting…" : "Sync card catalog now"}
             </Button>
           </Card>
         )}
