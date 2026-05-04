@@ -59,8 +59,9 @@ export default function Settings() {
         .limit(1)
         .maybeSingle();
       if (data) {
-        setJob(data as SyncJob);
-        if (data.status === "running") startPolling(data.id);
+        const j = data as unknown as SyncJob;
+        setJob(j);
+        if (j.status === "running") startPolling(j.id);
       }
     })();
     return () => stopPolling();
@@ -81,17 +82,18 @@ export default function Settings() {
       const { data, error } = await supabase
         .from("sync_jobs").select("*").eq("id", jobId).maybeSingle();
       if (error || !data) return;
-      setJob(data as SyncJob);
-      if (data.status !== "running") {
+      const j = data as unknown as SyncJob;
+      setJob(j);
+      if (j.status !== "running") {
         stopPolling();
         setSyncing(false);
-        if (data.status === "succeeded") {
-          const s = data.summary ?? {};
+        if (j.status === "succeeded") {
+          const s = j.summary ?? {};
           toast.success(
-            `Sync complete — ${data.total} cards (Pokémon: ${s.pokemon ?? 0}, One Piece: ${s.onepiece ?? 0}, Yu-Gi-Oh!: ${s.yugioh ?? 0})`,
+            `Sync complete — ${j.total} cards (Pokémon: ${s.pokemon ?? 0}, One Piece: ${s.onepiece ?? 0}, Yu-Gi-Oh!: ${s.yugioh ?? 0})`,
           );
         } else {
-          toast.error(`Sync failed: ${data.error ?? "unknown error"}`);
+          toast.error(`Sync failed: ${j.error ?? "unknown error"}`);
         }
       }
     }, 3000);
