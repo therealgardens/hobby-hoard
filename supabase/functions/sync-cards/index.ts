@@ -276,8 +276,7 @@ Deno.serve(async (req) => {
         games,
       }),
       { status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );</parameter>
-</invoke>
+    );
   } catch (e) {
     console.error("sync-cards fatal", e);
     return new Response(
