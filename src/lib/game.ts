@@ -6,14 +6,8 @@ export function getActiveGame(): Game | null {
   const v = localStorage.getItem(KEY);
   return v === "pokemon" || v === "onepiece" || v === "yugioh" ? v : null;
 }
-
-export function setActiveGame(g: Game) {
-  localStorage.setItem(KEY, g);
-}
-
-export function clearActiveGame() {
-  localStorage.removeItem(KEY);
-}
+export function setActiveGame(g: Game) { localStorage.setItem(KEY, g); }
+export function clearActiveGame() { localStorage.removeItem(KEY); }
 
 export const GAME_LABEL: Record<Game, string> = {
   pokemon: "Pokémon",
@@ -24,7 +18,6 @@ export const GAME_LABEL: Record<Game, string> = {
 import { supabase } from "@/integrations/supabase/client";
 
 let cachedAccessToken: string | null = null;
-
 supabase.auth.getSession().then(({ data }) => {
   cachedAccessToken = data.session?.access_token ?? null;
 });
@@ -32,11 +25,12 @@ supabase.auth.onAuthStateChange((_event, session) => {
   cachedAccessToken = session?.access_token ?? null;
 });
 
-// Hosts con CORS permissivo — carica direttamente senza proxy
+// Hosts con CORS permissivo o CDN pubblico — carica direttamente senza proxy
 const DIRECT_HOSTS = [
   "optcgapi.com",
   "images.ygoprodeck.com",
   "cdn.ygoprodeck.com",
+  "en.onepiece-cardgame.com",
 ];
 
 export function proxiedImage(url?: string | null): string | undefined {
