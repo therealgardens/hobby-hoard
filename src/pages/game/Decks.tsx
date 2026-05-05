@@ -20,7 +20,7 @@ type Deck = Tables<"decks">;
 function parseDeckList(raw: string): { copies: number; code: string }[] {
   const results: { copies: number; code: string }[] = [];
   const CODE_RE = /\b([A-Z]{2,5}-(?:[A-Z]{0,3})?\d{2,4}[A-Za-z0-9_]*)\b/i;
-  for (const line of raw.split("\n")) {
+  for (const line of raw.split(/\r?\n/)) {
     const t = line.trim();
     if (!t) continue;
     const codeMatch = t.match(CODE_RE);
