@@ -205,14 +205,16 @@ export default function Decks() {
   const ensureCardId = async (a: AnalysisRow): Promise<string | null> => {
     if (a.cardId) return a.cardId;
     if (a.code) {
-      const { data: existing } = await supabase
-        .from("cards").select("id").eq("game", currentGame).eq("code", a.code).maybeSingle();
-      if (existing?.id) return existing.id;
+      const { data: e1 } = await supabase
+        .from("cards").select("id").eq("game", currentGame)
+        .ilike("code", a.code).maybeSingle();
+      if (e1?.id) return e1.id;
     }
     if (a.queryName) {
-      const { data: existing } = await supabase
-        .from("cards").select("id").eq("game", currentGame).ilike("name", a.queryName).limit(1).maybeSingle();
-      if (existing?.id) return existing.id;
+      const { data: e2 } = await supabase
+        .from("cards").select("id").eq("game", currentGame)
+        .ilike("name", a.queryName).limit(1).maybeSingle();
+      if (e2?.id) return e2.id;
     }
     return null;
   };
@@ -238,12 +240,9 @@ export default function Decks() {
     const cardId = await ensureCardId(a);
     if (!cardId) return;
     const { data: rows } = await supabase
-      .from("collection_entries")
-      .select("id")
-      .eq("user_id", u.user.id)
-      .eq("card_id", cardId)
-      .order("created_at", { ascending: false })
-      .limit(1);
+      .from("collection_entries").select("id")
+      .eq("user_id", u.user.id).eq("card_id", cardId)
+      .order("created_at", { ascending: false }).limit(1);
     const target = rows?.[0]?.id;
     if (!target) return;
     const { error } = await supabase.from("collection_entries").delete().eq("id", target);
