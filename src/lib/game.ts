@@ -32,8 +32,12 @@ supabase.auth.onAuthStateChange((_event, session) => {
   cachedAccessToken = session?.access_token ?? null;
 });
 
-// Hosts che hanno CORS permissivo — carica direttamente, senza proxy.
-const DIRECT_HOSTS = ["optcgapi.com", "images.ygoprodeck.com", "cdn.ygoprodeck.com"];
+// Hosts con CORS permissivo — carica direttamente senza proxy
+const DIRECT_HOSTS = [
+  "optcgapi.com",
+  "images.ygoprodeck.com",
+  "cdn.ygoprodeck.com",
+];
 
 export function proxiedImage(url?: string | null): string | undefined {
   if (!url) return undefined;
@@ -44,7 +48,9 @@ export function proxiedImage(url?: string | null): string | undefined {
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
   if (!projectId) return url;
   const base = `https://${projectId}.supabase.co/functions/v1/image-proxy?url=${encodeURIComponent(url)}`;
-  return cachedAccessToken ? `${base}&access_token=${encodeURIComponent(cachedAccessToken)}` : base;
+  return cachedAccessToken
+    ? `${base}&access_token=${encodeURIComponent(cachedAccessToken)}`
+    : base;
 }
 
 export function cardImage(
@@ -70,7 +76,5 @@ export function cardImageCandidates(
     urls.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${code}.png`);
     urls.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${code.replace(/_p\d+$/i, "")}.png`);
   }
-  return Array.from(new Set(urls))
-    .map((url) => proxiedImage(url))
-    .filter(Boolean) as string[];
+  return Array.from(new Set(urls)).map((url) => proxiedImage(url)).filter(Boolean) as string[];
 }
