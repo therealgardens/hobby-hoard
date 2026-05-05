@@ -37,8 +37,20 @@ supabase.auth.onAuthStateChange((_event, session) => {
   cachedAccessToken = session?.access_token ?? null;
 });
 
+// Hosts that block hotlinking via Cross-Origin-Resource-Policy and must
+// be routed through our authenticated image-proxy edge function.
+const HOSTS_REQUIRING_PROXY = new Set([
+  "en.onepiece-cardgame.com",
+  "asia-en.onepiece-cardgame.com",
+  "assets.pokemon.com",
+  "storage.googleapis.com",
+]);
+
 export function proxiedImage(url?: string | null): string | undefined {
   if (!url) return undefined;
+  let host = "";
+  try { host = new URL(url).hostname; } catch { return url; }
+  if (!HOSTS_REQUIRING_PROXY.has(host)) return url;
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
   if (!projectId) return url;
   const base = `https://${projectId}.supabase.co/functions/v1/image-proxy?url=${encodeURIComponent(url)}`;
