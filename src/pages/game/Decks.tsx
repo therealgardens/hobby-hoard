@@ -8,8 +8,14 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Plus, Swords, Check, X, Minus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -19,15 +25,10 @@ import { withDbRetry } from "@/lib/supabaseRetry";
 
 type Deck = Tables<"decks">;
 
-// Card code patterns:
-//   One Piece: OP01-001, ST15-002 (and variants like _p1)
-//   Yu-Gi-Oh!: LOB-005, MRD-EN001, BLAR-EN045, or 8-digit passcode like 46986414
 const OP_CODE_RE = /\b([A-Z]{2,4}-(?:[A-Z]{2,3})?\d{2,4}[A-Za-z0-9_]*)\b/i;
 const YGO_CODE_RE = /\b([A-Z]{2,5}-(?:[A-Z]{2,3})?\d{2,4}|\d{8})\b/i;
-
-// Section headers like "Leader", "Character (26)", "Event (24)", "Main Deck", "Side Deck",
-// "Extra Deck", "Stage", "Don!!", "Spell", "Trap", "Monster".
-const SECTION_RE = /^(leader|characters?|events?|stages?|don!?!?|main\s*deck|side\s*deck|extra\s*deck|monsters?|spells?|traps?|extra|side)\b/i;
+const SECTION_RE =
+  /^(leader|characters?|events?|stages?|don!?!?|main\s*deck|side\s*deck|extra\s*deck|monsters?|spells?|traps?|extra|side)\b/i;
 
 type ParsedEntry = { code: string | null; name: string | null; copies: number };
 
@@ -38,27 +39,27 @@ function parseDeckList(raw: string, game: Game): ParsedEntry[] {
     const line = lineRaw.trim();
     if (!line) continue;
     const t = line.replace(/^[-•*]\s*/, "");
-
-    // Quantity at start: "4 ", "4x ", "x4 "
     const qtyMatch = t.match(/^(?:x\s*)?(\d+)\s*[xX]?\s+/);
     const hasLeadingQty = !!qtyMatch;
     const copies = qtyMatch ? Math.max(1, parseInt(qtyMatch[1], 10)) : 1;
     const rest = (qtyMatch ? t.slice(qtyMatch[0].length) : t).trim();
-
     const codeMatch = rest.match(codeRe);
     const code = codeMatch ? codeMatch[1].toUpperCase() : null;
-
     let name: string | null = null;
     if (code) {
       const idx = rest.toUpperCase().indexOf(code);
-      const before = rest.slice(0, idx).replace(/[\(\[]\s*$/, "").trim();
-      const after = rest.slice(idx + code.length).replace(/^\s*[\)\]]/, "").trim();
+      const before = rest
+        .slice(0, idx)
+        .replace(/[\(\[]\s*$/, "")
+        .trim();
+      const after = rest
+        .slice(idx + code.length)
+        .replace(/^\s*[\)\]]/, "")
+        .trim();
       name = [before, after].filter(Boolean).join(" ").trim() || null;
     } else {
       name = rest || null;
     }
-
-    // Skip section headers
     if (!hasLeadingQty && !code && name && SECTION_RE.test(name)) continue;
     if (!hasLeadingQty && !code && (!name || name.length < 2)) continue;
     if (!code && !name) continue;
@@ -74,7 +75,7 @@ const PLACEHOLDERS: Record<string, string> = {
 
 export default function Decks() {
   const { game } = useParams<{ game: Game }>();
-  const currentGame: Game = (game === "yugioh" ? "yugioh" : "onepiece");
+  const currentGame: Game = game === "yugioh" ? "yugioh" : "onepiece";
 
   const [decks, setDecks] = useState<Deck[]>([]);
   const [open, setOpen] = useState(false);
@@ -102,7 +103,9 @@ export default function Decks() {
     if (error) return toast.error(error.message);
     setDecks(data ?? []);
   };
-  useEffect(() => { load(); }, [currentGame]);
+  useEffect(() => {
+    load();
+  }, [currentGame]);
 
   const create = async () => {
     if (!name.trim() || !raw.trim()) return;
@@ -110,12 +113,19 @@ export default function Decks() {
     if (!parsed.length) return toast.error("Couldn't parse any cards");
     const { data: u } = await supabase.auth.getUser();
     if (!u.user) return;
-    const { data: deck, error } = await supabase.from("decks").insert({
-      user_id: u.user.id, name: name.trim(), raw_list: raw, game: currentGame,
-    }).select().single();
+    const { data: deck, error } = await supabase
+      .from("decks")
+      .insert({
+        user_id: u.user.id,
+        name: name.trim(),
+        raw_list: raw,
+        game: currentGame,
+      })
+      .select()
+      .single();
     if (error || !deck) return toast.error(error?.message ?? "Failed");
     await supabase.from("deck_cards").insert(
-      parsed.map(p => ({
+      parsed.map((p) => ({
         deck_id: deck.id,
         user_id: u.user!.id,
         code: p.code,
@@ -123,7 +133,9 @@ export default function Decks() {
         copies: p.copies,
       })),
     );
-    setName(""); setRaw(""); setOpen(false);
+    setName("");
+    setRaw("");
+    setOpen(false);
     await load();
     if (deck) analyze(deck);
     toast.success(`Imported ${parsed.length} entries`);
@@ -138,100 +150,97 @@ export default function Decks() {
     setDeleting(false);
     setToDelete(null);
     if (error) return toast.error(error.message);
-    setDecks(prev => prev.filter(d => d.id !== id));
+    setDecks((prev) => prev.filter((d) => d.id !== id));
     toast.success("Deck deleted");
   };
 
   const analyze = async (deck: Deck) => {
     setActive(deck);
     setAnalysis([]);
-    const { data: dcards } = await supabase
-      .from("deck_cards")
-      .select("id, code, name, copies")
-      .eq("deck_id", deck.id);
+
+    const { data: dcards } = await supabase.from("deck_cards").select("id, code, name, copies").eq("deck_id", deck.id);
     if (!dcards) return;
 
-    const codes = Array.from(new Set(dcards.map(d => d.code).filter((c): c is string => !!c)));
-    const names = Array.from(new Set(dcards.map(d => (d as any).name).filter((n): n is string => !!n)));
+    const codes = Array.from(new Set(dcards.map((d) => d.code).filter((c): c is string => !!c)));
+    const nameOnlyEntries = dcards.filter((d) => !d.code && (d as any).name);
+    const names = Array.from(new Set(nameOnlyEntries.map((d) => ((d as any).name as string).trim())));
 
-    // Fetch by code
-    let cardByCode = new Map<string, any>();
-    let cardByName = new Map<string, any>();
-
+    // Single batch query by code
+    const cardByCode = new Map<string, any>();
     if (codes.length) {
-      const { data: cards } = await supabase.from("cards").select("*").eq("game", currentGame).in("code", [...codes, ...codes.map(c => c.toLowerCase())]);
-      cardByCode = new Map((cards ?? []).map(c => [c.code?.toUpperCase() as string, c]));
-      const missing = codes.filter(c => !cardByCode.has(c?.toUpperCase()));
-      if (missing.length) {
-        await Promise.all(missing.map(code =>
-          supabase.functions.invoke("card-search", { body: { game: currentGame, query: code } })
-        ));
-        const { data: refreshed } = await supabase.from("cards").select("*").eq("game", currentGame).in("code", [...codes, ...codes.map(c => c.toLowerCase())]);
-        cardByCode = new Map((refreshed ?? []).map(c => [c.code?.toUpperCase() as string, c]));
+      const { data: cards } = await supabase
+        .from("cards")
+        .select("id, code, name, image_small, image_large")
+        .eq("game", currentGame)
+        .in("code", [...codes, ...codes.map((c) => c.toLowerCase())]);
+      for (const c of cards ?? []) {
+        cardByCode.set(c.code?.toUpperCase(), c);
       }
     }
 
-    // For name-only entries, search by exact name (case-insensitive)
-    const nameOnlyEntries = dcards.filter(d => !d.code && (d as any).name);
-    for (const e of nameOnlyEntries) {
-      const n = ((e as any).name as string).trim();
-      const key = n.toLowerCase();
-      if (cardByName.has(key)) continue;
-      let { data: hit } = await supabase
-        .from("cards").select("*").eq("game", currentGame).ilike("name", n).limit(1).maybeSingle();
-      if (!hit) {
-        await supabase.functions.invoke("card-search", { body: { game: currentGame, query: n } });
-        const { data: refreshed } = await supabase
-          .from("cards").select("*").eq("game", currentGame).ilike("name", n).limit(1).maybeSingle();
-        hit = refreshed ?? null;
+    // Single batch query by name for name-only entries
+    const cardByName = new Map<string, any>();
+    if (names.length) {
+      const { data: namedCards } = await supabase
+        .from("cards")
+        .select("id, code, name, image_small, image_large")
+        .eq("game", currentGame)
+        .in("name", names);
+      for (const c of namedCards ?? []) {
+        cardByName.set(c.name?.toLowerCase(), c);
       }
-      if (hit) cardByName.set(key, hit);
     }
 
+    // Single batch collection_entries query
     const allCards = [...cardByCode.values(), ...cardByName.values()];
-    const cardIds = Array.from(new Set(allCards.map(c => c.id)));
+    const cardIds = Array.from(new Set(allCards.map((c) => c.id)));
     const haveByCard = new Map<string, number>();
     if (cardIds.length) {
       const { data: entries } = await supabase
-        .from("collection_entries").select("card_id,quantity").in("card_id", cardIds);
-      (entries ?? []).forEach(e => haveByCard.set(e.card_id, (haveByCard.get(e.card_id) ?? 0) + (e.quantity ?? 0)));
+        .from("collection_entries")
+        .select("card_id, quantity")
+        .in("card_id", cardIds);
+      (entries ?? []).forEach((e) => haveByCard.set(e.card_id, (haveByCard.get(e.card_id) ?? 0) + (e.quantity ?? 0)));
     }
 
-    setAnalysis(dcards.map(d => {
-      const dn = (d as any).name as string | null;
-      const c = d.code ? cardByCode.get(d.code?.toUpperCase()) : (dn ? cardByName.get(dn.toLowerCase()) : undefined);
-      return {
-        key: d.id,
-        code: d.code,
-        queryName: dn,
-        needed: d.copies,
-        have: c ? (haveByCard.get(c.id) ?? 0) : 0,
-        cardId: c?.id,
-        name: c?.name ?? dn ?? d.code ?? "Unknown",
-        imageSmall: c?.image_small ?? undefined,
-      };
-    }));
+    setAnalysis(
+      dcards.map((d) => {
+        const dn = (d as any).name as string | null;
+        const c = d.code ? cardByCode.get(d.code?.toUpperCase()) : dn ? cardByName.get(dn.toLowerCase()) : undefined;
+        return {
+          key: d.id,
+          code: d.code,
+          queryName: dn,
+          needed: d.copies,
+          have: c ? (haveByCard.get(c.id) ?? 0) : 0,
+          cardId: c?.id,
+          name: c?.name ?? dn ?? d.code ?? "Unknown",
+          imageSmall: c?.image_small ?? undefined,
+        };
+      }),
+    );
   };
 
   const ensureCardId = async (a: AnalysisRow): Promise<string | null> => {
     if (a.cardId) return a.cardId;
     if (a.code) {
       const { data: existing } = await supabase
-        .from("cards").select("id").eq("game", currentGame).eq("code", a.code).maybeSingle();
+        .from("cards")
+        .select("id")
+        .eq("game", currentGame)
+        .eq("code", a.code)
+        .maybeSingle();
       if (existing?.id) return existing.id;
-      await supabase.functions.invoke("card-search", { body: { game: currentGame, query: a.code } });
-      const { data: refreshed } = await supabase
-        .from("cards").select("id").eq("game", currentGame).eq("code", a.code).maybeSingle();
-      return refreshed?.id ?? null;
     }
     if (a.queryName) {
       const { data: existing } = await supabase
-        .from("cards").select("id").eq("game", currentGame).ilike("name", a.queryName).limit(1).maybeSingle();
+        .from("cards")
+        .select("id")
+        .eq("game", currentGame)
+        .ilike("name", a.queryName)
+        .limit(1)
+        .maybeSingle();
       if (existing?.id) return existing.id;
-      await supabase.functions.invoke("card-search", { body: { game: currentGame, query: a.queryName } });
-      const { data: refreshed } = await supabase
-        .from("cards").select("id").eq("game", currentGame).ilike("name", a.queryName).limit(1).maybeSingle();
-      return refreshed?.id ?? null;
     }
     return null;
   };
@@ -242,11 +251,15 @@ export default function Decks() {
     const cardId = await ensureCardId(a);
     if (!cardId) return toast.error(`Card ${a.name ?? a.code ?? a.queryName} not found in catalog`);
     const { error } = await supabase.from("collection_entries").insert({
-      user_id: u.user.id, card_id: cardId, game: currentGame,
-      rarity: null, language: "EN", quantity: 1,
+      user_id: u.user.id,
+      card_id: cardId,
+      game: currentGame,
+      rarity: null,
+      language: "EN",
+      quantity: 1,
     });
     if (error) return toast.error(error.message);
-    setAnalysis(prev => prev.map(p => p.key === a.key ? { ...p, have: p.have + 1, cardId } : p));
+    setAnalysis((prev) => prev.map((p) => (p.key === a.key ? { ...p, have: p.have + 1, cardId } : p)));
     toast.success(`Added ${a.name ?? a.code}`);
   };
 
@@ -267,7 +280,7 @@ export default function Decks() {
     if (!target) return;
     const { error } = await supabase.from("collection_entries").delete().eq("id", target);
     if (error) return toast.error(error.message);
-    setAnalysis(prev => prev.map(p => p.key === a.key ? { ...p, have: Math.max(0, p.have - 1), cardId } : p));
+    setAnalysis((prev) => prev.map((p) => (p.key === a.key ? { ...p, have: Math.max(0, p.have - 1), cardId } : p)));
   };
 
   return (
@@ -278,21 +291,36 @@ export default function Decks() {
           <p className="text-muted-foreground">Import a deck list, see what you have vs. need.</p>
         </div>
         <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-1" /> Import deck</Button></DialogTrigger>
+          <DialogTrigger asChild>
+            <Button>
+              <Plus className="h-4 w-4 mr-1" /> Import deck
+            </Button>
+          </DialogTrigger>
           <DialogContent>
-            <DialogHeader><DialogTitle>Import deck list</DialogTitle></DialogHeader>
+            <DialogHeader>
+              <DialogTitle>Import deck list</DialogTitle>
+            </DialogHeader>
             <div className="space-y-3">
-              <div><Label>Name</Label><Input value={name} onChange={e => setName(e.target.value)} placeholder={currentGame === "yugioh" ? "Blue-Eyes Control" : "Red Aggro"} /></div>
+              <div>
+                <Label>Name</Label>
+                <Input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder={currentGame === "yugioh" ? "Blue-Eyes Control" : "Red Aggro"}
+                />
+              </div>
               <div>
                 <Label>List</Label>
                 <Textarea
                   rows={10}
                   value={raw}
-                  onChange={e => setRaw(e.target.value)}
+                  onChange={(e) => setRaw(e.target.value)}
                   placeholder={PLACEHOLDERS[currentGame]}
                 />
               </div>
-              <Button className="w-full" onClick={create}>Import</Button>
+              <Button className="w-full" onClick={create}>
+                Import
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
@@ -305,9 +333,12 @@ export default function Decks() {
         </Card>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {decks.map(d => (
+          {decks.map((d) => (
             <div key={d.id} className="relative group">
-              <Card className="p-5 bg-gradient-card cursor-pointer hover:shadow-pop transition-all" onClick={() => analyze(d)}>
+              <Card
+                className="p-5 bg-gradient-card cursor-pointer hover:shadow-pop transition-all"
+                onClick={() => analyze(d)}
+              >
                 <Swords className="h-5 w-5 text-primary mb-2" />
                 <h3 className="text-2xl font-display pr-8">{d.name}</h3>
                 <p className="text-xs text-muted-foreground">Tap to check what you need</p>
@@ -316,7 +347,10 @@ export default function Decks() {
                 size="icon"
                 variant="ghost"
                 className="absolute top-2 right-2 h-8 w-8 opacity-70 hover:opacity-100 hover:bg-destructive/10 hover:text-destructive"
-                onClick={(e) => { e.stopPropagation(); setToDelete(d); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setToDelete(d);
+                }}
                 aria-label="Delete deck"
               >
                 <Trash2 className="h-4 w-4" />
@@ -336,7 +370,11 @@ export default function Decks() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete} disabled={deleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+            <AlertDialogAction
+              onClick={confirmDelete}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
               {deleting ? "Deleting…" : "Delete"}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -345,9 +383,11 @@ export default function Decks() {
 
       <Dialog open={!!active} onOpenChange={(o) => !o && setActive(null)}>
         <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>{active?.name}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>{active?.name}</DialogTitle>
+          </DialogHeader>
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            {analysis.map(a => {
+            {analysis.map((a) => {
               const ok = a.have >= a.needed;
               const owned = a.have > 0;
               const imgSrc = cardImage(currentGame, a.code, a.imageSmall);
@@ -358,12 +398,12 @@ export default function Decks() {
                     src={imgSrc}
                     alt={label}
                     loading="lazy"
-                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = "0"; }}
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.opacity = "0";
+                    }}
                     className={`w-full card-aspect object-cover ${owned ? "" : "opacity-40 grayscale"}`}
                   />
-                  {!owned && (
-                    <div className="absolute inset-0 bg-background/40 pointer-events-none" />
-                  )}
+                  {!owned && <div className="absolute inset-0 bg-background/40 pointer-events-none" />}
                   <div className="absolute top-1 right-1 flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-background/90 shadow">
                     {ok ? <Check className="h-3 w-3 text-green-600" /> : <X className="h-3 w-3 text-destructive" />}
                     {a.have}/{a.needed}
@@ -382,13 +422,7 @@ export default function Decks() {
                         <Minus className="h-3 w-3" />
                       </Button>
                       <span className="text-xs font-semibold tabular-nums">{a.have}</span>
-                      <Button
-                        size="icon"
-                        variant="outline"
-                        className="h-6 w-6"
-                        disabled={false}
-                        onClick={() => addOne(a)}
-                      >
+                      <Button size="icon" variant="outline" className="h-6 w-6" onClick={() => addOne(a)}>
                         <Plus className="h-3 w-3" />
                       </Button>
                     </div>
@@ -397,10 +431,8 @@ export default function Decks() {
               );
             })}
           </div>
-          {analysis.some(a => a.have > 0 && a.have < a.needed) && (
-            <p className="text-xs text-muted-foreground pt-2">
-              💡 Faded cards are ones you don't own yet.
-            </p>
+          {analysis.some((a) => a.have > 0 && a.have < a.needed) && (
+            <p className="text-xs text-muted-foreground pt-2">💡 Faded cards are ones you don't own yet.</p>
           )}
         </DialogContent>
       </Dialog>
