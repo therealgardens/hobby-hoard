@@ -21,7 +21,7 @@ type Deck = Tables<"decks">;
 // Estrae coppie {copies, code} da entrambi i formati supportati
 function parseDeckList(raw: string): { copies: number; code: string }[] {
   const results: { copies: number; code: string }[] = [];
-  const CODE_RE = /\b([A-Z]{2,5}-(?:[A-Z]{0,3})?\d{2,4}[A-Za-z0-9_]*)\b/i;
+  const CODE_RE = /\b([A-Z]{2,5}\d{0,2}-(?:[A-Z]{0,3})?\d{2,4}[A-Za-z0-9_]*)\b/i;
   for (const line of raw.split(/\r?\n/)) {
     const t = line.trim();
     if (!t) continue;
@@ -103,7 +103,7 @@ export default function Decks() {
     const entries = dcards.map(d => {
       let code = d.code?.toUpperCase() ?? null;
       if (!code && d.name) {
-        const m = d.name.match(/\b([A-Z]{2,5}-(?:[A-Z]{0,3})?\d{2,4}[A-Za-z0-9_]*)\b/i);
+        const m = d.name.match(/\b([A-Z]{2,5}\d{0,2}-(?:[A-Z]{0,3})?\d{2,4}[A-Za-z0-9_]*)\b/i);
         if (m) code = m[1].toUpperCase();
       }
       return { key: d.id, code, copies: d.copies };
