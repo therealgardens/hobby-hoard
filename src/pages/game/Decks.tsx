@@ -31,15 +31,8 @@ import { withDbRetry } from "@/lib/supabaseRetry";
 
 type Deck = Tables<"decks">;
 
-type ParsedDeckEntry = {
-  copies: number;
-  code?: string;
-  name?: string;
-};
-
-function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
-  const results: ParsedDeckEntry[] = [];
-  const CODE_RE = /\b([A-Z]{2,5}\d{0,2}-(?:[A-Z]{0,3})?\d{2,4}[A-Za-z0-9_-]*)\b/i;
+function parseDeckList(raw: string): { copies: number; code: string }[] {
+  const results: { copies: number; code: string }[] = [];
 
   for (const line of raw.split(/\r?\n/)) {
     const t = line.trim();
@@ -53,40 +46,40 @@ function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
       continue;
     }
 
-    // Formato compatto: 1xOP15-002
-    const compact = t.match(/^(\d+)\s*[xX]\s*([A-Z]{2,5}\d{0,2}-(?:[A-Z]{0,3})?\d{2,4}[A-Za-z0-9_-]*)$/i);
-    if (compact) {
+    // Formato compatto: 1xOP15-002 / 4xEB03-053 / 3xLEDE-EN001
+    let m = t.match(
+      /^(\d+)\s*[xX]\s*([A-Z0-9]{2,10}-(?:[A-Z]{0,3})?\d{2,4}[A-Z0-9_-]*)$/i
+    );
+    if (m) {
       results.push({
-        copies: Math.max(1, parseInt(compact[1], 10)),
-        code: compact[2].toUpperCase(),
+        copies: Math.max(1, parseInt(m[1], 10)),
+        code: m[2].toUpperCase(),
       });
       continue;
     }
 
-    // Formato classico con codice presente nella riga
-    const codeMatch = t.match(CODE_RE);
-    if (codeMatch) {
-      const code = codeMatch[1].toUpperCase();
-      let copies = 1;
-
-      const qtyMatch = t.match(/^(\d+)/);
-      if (qtyMatch) {
-        copies = Math.max(1, parseInt(qtyMatch[1], 10));
-      }
-
-      results.push({ copies, code });
+    // Formato con nome + codice: 1 Boa Hancock (OP14-041)
+    m = t.match(
+      /^(\d+)\s+.+?\\(([A-Z0-9]{2,10}-(?:[A-Z]{0,3})?\d{2,4}[A-Z0-9_-]*)\\)$/i
+    );
+    if (m) {
+      results.push({
+        copies: Math.max(1, parseInt(m[1], 10)),
+        code: m[2].toUpperCase(),
+      });
       continue;
     }
 
-    // Yu-Gi-Oh per nome: 3 Crystal Bond
-    if (game === "yugioh") {
-      const byName = t.match(/^(\d+)\s+(.+)$/);
-      if (byName) {
-        results.push({
-          copies: Math.max(1, parseInt(byName[1], 10)),
-          name: byName[2].trim(),
-        });
-      }
+    // Solo codice: OP15-002
+    m = t.match(
+      /^([A-Z0-9]{2,10}-(?:[A-Z]{0,3})?\d{2,4}[A-Z0-9_-]*)$/i
+    );
+    if (m) {
+      results.push({
+        copies: 1,
+        code: m[1].toUpperCase(),
+      });
+      continue;
     }
   }
 
@@ -132,7 +125,7 @@ export default function Decks() {
   const create = async () => {
     if (!deckName.trim() || !raw.trim()) return;
 
-    const parsed = parseDeckList(raw, currentGame);
+    const parsed = parseDeckList(raw);
     if (!parsed.length) return toast.error("Nessuna carta trovata nel testo");
 
     const {  u } = await supabase.auth.getUser();
@@ -151,22 +144,23 @@ export default function Decks() {
 
     if (error || !deck) return toast.error(error?.message ?? "Failed");
 
-    const rows = parsed.map((p) => ({
-      deck_id: deck.id,
-      user_id: u.user!.id,
-      code: p.code ?? null,
-      name: p.name ?? null,
-      copies: p.copies,
-    }));
+    const { error: insertDeckCardsError } = await supabase.from("deck_cards").insert(
+      parsed.map((p) => ({
+        deck_id: deck.id,
+        user_id: u.user!.id,
+        code: p.code,
+        name: null,
+        copies: p.copies,
+      }))
+    );
 
-    const { error: deckCardsError } = await supabase.from("deck_cards").insert(rows);
-    if (deckCardsError) return toast.error(deckCardsError.message);
+    if (insertDeckCardsError) return toast.error(insertDeckCardsError.message);
 
     setDeckName("");
     setRaw("");
     setOpen(false);
     await load();
-    analyze(deck);
+    await analyze(deck);
     toast.success(`Importate ${parsed.length} carte`);
   };
 
@@ -174,95 +168,87 @@ export default function Decks() {
     setActive(deck);
     setCards([]);
 
-    const {  dcards } = await supabase
+    const {  dcards, error: dcardsError } = await supabase
       .from("deck_cards")
       .select("id, code, name, copies")
       .eq("deck_id", deck.id);
 
+    if (dcardsError) {
+      toast.error(dcardsError.message);
+      return;
+    }
+
     if (!dcards?.length) return;
 
-    const entries = dcards.map((d) => ({
-      key: d.id,
-      code: d.code?.toUpperCase() ?? null,
-      name: d.name ?? null,
-      copies: d.copies,
-    }));
+    const entries = dcards
+      .map((d) => {
+        let code = d.code?.toUpperCase() ?? null;
 
-    const codeEntries = entries.filter((e) => !!e.code) as {
-      key: string;
-      code: string;
-      name: string | null;
-      copies: number;
-    }[];
+        if (!code && d.name) {
+          const m = d.name.match(
+            /\b([A-Z0-9]{2,10}-(?:[A-Z]{0,3})?\d{2,4}[A-Z0-9_-]*)\b/i
+          );
+          if (m) code = m[1].toUpperCase();
+        }
 
-    const nameEntries = entries.filter((e) => !e.code && !!e.name) as {
-      key: string;
-      code: null;
-      name: string;
-      copies: number;
-    }[];
+        return { key: d.id, code, copies: d.copies };
+      })
+      .filter((e) => !!e.code) as { key: string; code: string; copies: number }[];
 
-    const codeMap = new Map<string, any>();
-    if (codeEntries.length) {
-      const codes = Array.from(new Set(codeEntries.map((e) => e.code)));
-      const {  dbCardsByCode } = await supabase
-        .from("cards")
-        .select("id, code, name, image_small, game")
-        .eq("game", currentGame)
-        .in("code", [...codes, ...codes.map((c) => c.toLowerCase())]);
+    if (!entries.length) return;
 
-      for (const c of dbCardsByCode ?? []) {
-        codeMap.set(c.code?.toUpperCase(), c);
-      }
+    const codes = Array.from(new Set(entries.map((e) => e.code)));
+
+    const {  dbCards, error: dbCardsError } = await supabase
+      .from("cards")
+      .select("id, code, name, image_small, game")
+      .eq("game", currentGame)
+      .in("code", [...codes, ...codes.map((c) => c.toLowerCase())]);
+
+    if (dbCardsError) {
+      toast.error(dbCardsError.message);
+      return;
     }
 
-    const nameMap = new Map<string, any>();
-    for (const entry of nameEntries) {
-      const { data } = await supabase
-        .from("cards")
-        .select("id, code, name, image_small, game")
-        .eq("game", currentGame)
-        .ilike("name", entry.name)
-        .maybeSingle();
-
-      if (data) nameMap.set(entry.name.toLowerCase(), data);
+    const byCode = new Map<string, any>();
+    for (const c of dbCards ?? []) {
+      byCode.set(c.code?.toUpperCase(), c);
     }
 
-    const allMatchedCards = [
-      ...Array.from(codeMap.values()),
-      ...Array.from(nameMap.values()),
-    ];
-
-    const cardIds = Array.from(new Set(allMatchedCards.map((c) => c.id)));
+    const cardIds = [...byCode.values()].map((c) => c.id);
     const haveMap = new Map<string, number>();
 
     if (cardIds.length) {
-      const {  entries2 } = await supabase
+      const {  entries2, error: entriesError } = await supabase
         .from("collection_entries")
         .select("card_id, quantity")
         .in("card_id", cardIds);
+
+      if (entriesError) {
+        toast.error(entriesError.message);
+        return;
+      }
 
       for (const e of entries2 ?? []) {
         haveMap.set(e.card_id, (haveMap.get(e.card_id) ?? 0) + (e.quantity ?? 0));
       }
     }
 
-    const finalCards: DeckCard[] = entries.map((e) => {
-      const c = e.code ? codeMap.get(e.code) : nameMap.get((e.name ?? "").toLowerCase());
-
-      return {
-        key: e.key,
-        code: c?.code ?? e.code ?? "UNKNOWN",
-        copies: e.copies,
-        have: c ? (haveMap.get(c.id) ?? 0) : 0,
-        cardId: c?.id,
-        name: c?.name ?? e.name ?? e.code ?? "Carta",
-        imageSmall: c?.image_small ?? null,
-        game: c?.game ?? currentGame,
-      };
-    });
-
-    setCards(finalCards);
+    setCards(
+      entries.map((e) => {
+        const c = byCode.get(e.code);
+        return {
+          key: e.key,
+          code: e.code,
+          copies: e.copies,
+          have: c ? (haveMap.get(c.id) ?? 0) : 0,
+          cardId: c?.id,
+          name: c?.name ?? e.code,
+          imageSmall: c?.image_small ?? null,
+          game: c?.game ?? currentGame,
+        };
+      })
+    );
   };
 
   const addOne = async (card: DeckCard) => {
@@ -272,28 +258,19 @@ export default function Decks() {
     let cardId = card.cardId;
 
     if (!cardId) {
-      if (card.code && card.code !== "UNKNOWN") {
-        const { data } = await supabase
-          .from("cards")
-          .select("id")
-          .eq("game", currentGame)
-          .ilike("code", card.code)
-          .maybeSingle();
-        cardId = data?.id;
-      } else if (card.name) {
-        const { data } = await supabase
-          .from("cards")
-          .select("id")
-          .eq("game", currentGame)
-          .ilike("name", card.name)
-          .maybeSingle();
-        cardId = data?.id;
-      }
+      const { data } = await supabase
+        .from("cards")
+        .select("id")
+        .eq("game", currentGame)
+        .ilike("code", card.code)
+        .maybeSingle();
+
+      cardId = data?.id;
     }
 
-    if (!cardId) return toast.error(`${card.name ?? card.code} non trovata nel catalogo`);
+    if (!cardId) return toast.error(`${card.code} non trovata nel catalogo`);
 
-    await supabase.from("collection_entries").insert({
+    const { error } = await supabase.from("collection_entries").insert({
       user_id: u.user.id,
       card_id: cardId,
       game: currentGame,
@@ -301,6 +278,8 @@ export default function Decks() {
       language: "EN",
       quantity: 1,
     });
+
+    if (error) return toast.error(error.message);
 
     setCards((prev) =>
       prev.map((p) => (p.key === card.key ? { ...p, have: p.have + 1, cardId } : p))
@@ -315,7 +294,7 @@ export default function Decks() {
     const {  u } = await supabase.auth.getUser();
     if (!u.user) return;
 
-    const {  rows } = await supabase
+    const {  rows, error: rowsError } = await supabase
       .from("collection_entries")
       .select("id")
       .eq("user_id", u.user.id)
@@ -323,10 +302,13 @@ export default function Decks() {
       .order("created_at", { ascending: false })
       .limit(1);
 
+    if (rowsError) return toast.error(rowsError.message);
+
     const id = rows?.[0]?.id;
     if (!id) return;
 
-    await supabase.from("collection_entries").delete().eq("id", id);
+    const { error } = await supabase.from("collection_entries").delete().eq("id", id);
+    if (error) return toast.error(error.message);
 
     setCards((prev) =>
       prev.map((p) => (p.key === card.key ? { ...p, have: Math.max(0, p.have - 1) } : p))
@@ -337,8 +319,19 @@ export default function Decks() {
     if (!toDelete) return;
 
     setDeleting(true);
-    await supabase.from("deck_cards").delete().eq("deck_id", toDelete.id);
+
+    const { error: cardsDeleteError } = await supabase
+      .from("deck_cards")
+      .delete()
+      .eq("deck_id", toDelete.id);
+
+    if (cardsDeleteError) {
+      setDeleting(false);
+      return toast.error(cardsDeleteError.message);
+    }
+
     const { error } = await supabase.from("decks").delete().eq("id", toDelete.id);
+
     setDeleting(false);
     setToDelete(null);
 
@@ -385,7 +378,7 @@ export default function Decks() {
                   value={raw}
                   onChange={(e) => setRaw(e.target.value)}
                   placeholder={
-                    "One Piece:\n1xOP15-002\n4xOP15-053\n\noppure:\n1 Boa Hancock (OP14-041)\n\nYu-Gi-Oh:\n3 Crystal Bond\n2 Rainbow Dragon\n\noppure:\n3 Gandora (LEDE-EN001)"
+                    "Leader\n1 Boa Hancock (OP14-041)\n4 Nami (EB03-053)\n\noppure:\n1xOP15-002\n4xOP15-053\n\noppure:\n3 Gandora (LEDE-EN001)"
                   }
                 />
               </div>
@@ -485,7 +478,9 @@ export default function Decks() {
                     />
                   )}
 
-                  {!owned && <div className="absolute inset-0 bg-background/40 pointer-events-none" />}
+                  {!owned && (
+                    <div className="absolute inset-0 bg-background/40 pointer-events-none" />
+                  )}
 
                   <div className="absolute top-1 right-1 flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-background/90 shadow">
                     {ok ? (
