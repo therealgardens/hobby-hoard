@@ -52,7 +52,6 @@ function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
       continue;
     }
 
-    // One Piece / codici compatti
     let m = t.match(
       /^(\d+)\s*[xX]\s*([A-Z0-9]{2,10}-(?:[A-Z]{0,3})?\d{2,4}[A-Z0-9_-]*)$/i
     );
@@ -64,7 +63,6 @@ function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
       continue;
     }
 
-    // Nome + codice in parentesi
     m = t.match(/^(\d+)\s+(.+?)\s+\\(([^()]+)\\)$/i);
     if (m) {
       const copies = Math.max(1, parseInt(m[1], 10));
@@ -79,7 +77,6 @@ function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
       }
     }
 
-    // Solo codice
     m = t.match(
       /^([A-Z0-9]{2,10}-(?:[A-Z]{0,3})?\d{2,4}[A-Z0-9_-]*)$/i
     );
@@ -91,7 +88,6 @@ function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
       continue;
     }
 
-    // Yu-Gi-Oh per nome
     if (game === "yugioh") {
       m = t.match(/^(\d+)\s+(.+)$/);
       if (m) {
@@ -132,6 +128,26 @@ export default function Decks() {
   const [toDelete, setToDelete] = useState<Deck | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  const getCurrentUser = async () => {
+    const {  sessionData, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      console.error("session error", sessionError);
+    }
+
+    const sessionUser = sessionData?.session?.user;
+    if (sessionUser) return sessionUser;
+
+    const {  authData, error: authError } = await supabase.auth.getUser();
+
+    if (authError) {
+      console.error("auth error", authError);
+      return null;
+    }
+
+    return authData?.user ?? null;
+  };
+
   const load = async () => {
     const { data, error } = await withDbRetry(() =>
       supabase.from("decks").select("*").eq("game", currentGame).order("created_at")
@@ -169,15 +185,7 @@ export default function Decks() {
         return;
       }
 
-      const {  authData, error: authError } = await supabase.auth.getUser();
-
-      if (authError) {
-        console.error("auth error", authError);
-        toast.error(authError.message);
-        return;
-      }
-
-      const user = authData?.user;
+      const user = await getCurrentUser();
 
       if (!user) {
         toast.error("Utente non autenticato");
@@ -341,14 +349,8 @@ export default function Decks() {
 
   const addOne = async (card: DeckCard) => {
     try {
-      const {  authData, error: authError } = await supabase.auth.getUser();
+      const user = await getCurrentUser();
 
-      if (authError) {
-        toast.error(authError.message);
-        return;
-      }
-
-      const user = authData?.user;
       if (!user) {
         toast.error("Utente non autenticato");
         return;
@@ -424,14 +426,8 @@ export default function Decks() {
     try {
       if (card.have <= 0 || !card.cardId) return;
 
-      const {  authData, error: authError } = await supabase.auth.getUser();
+      const user = await getCurrentUser();
 
-      if (authError) {
-        toast.error(authError.message);
-        return;
-      }
-
-      const user = authData?.user;
       if (!user) {
         toast.error("Utente non autenticato");
         return;
