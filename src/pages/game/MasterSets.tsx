@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, Plus, Search, Trash2, Heart, LayoutGrid, List, Minus, Loader2, BookOpen } from "lucide-react";
+import { ArrowLeft, Plus, Search, Trash2, Heart, LayoutGrid, List, Minus, Loader2, BookOpen, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { cardImageCandidates, proxiedImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
@@ -31,10 +31,28 @@ interface SetInfo {
   logo?: string | null;
 }
 
+interface RecentEntry {
+  entryId: string;
+  cardId: string;
+  cardName: string;
+  cardCode: string | null;
+  imageSmall: string | null;
+  game: string;
+  addedAt: string;
+}
+
 const LANGS = ["EN", "JP", "IT", "FR", "DE", "ES", "PT"];
 const LANG_FLAG: Record<string, string> = {
   EN: "🇬🇧", JP: "🇯🇵", IT: "🇮🇹", FR: "🇫🇷", DE: "🇩🇪", ES: "🇪🇸", PT: "🇵🇹",
 };
+
+// ─── Rarità per gioco ─────────────────────────────────────────────────────────
+const RARITIES: Record<Game, string[]> = {
+  onepiece: ["C", "UC", "R", "SR", "L", "SEC", "SP", "TR", "AA", "MR", "Promo"],
+  yugioh: ["N", "R", "SR", "UR", "Ultimate Rare", "SEC", "Prismatic SR", "Quarter Century SEC", "Collector's Rare", "Ghost Rare", "Starlight Rare", "Promo"],
+  pokemon: ["Common", "Uncommon", "Rare", "Double Rare", "Illustration Rare", "Ultra Rare", "Special Illustration Rare", "Hyper Rare", "Shiny Rare", "Shiny Ultra Rare", "Ace Spec", "Promo"],
+};
+
 const SETS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 interface OwnedCache {
@@ -47,7 +65,7 @@ const _setsCache = new Map<string, SetInfo[]>();
 
 function extractSetId(s: string | null | undefined): string | null {
   if (!s) return null;
-  const m = s.match(/\[([A-Z]{1,4}-?\d{1,3}[A-Z]?)\]/i);
+  const m = s.match(/\\[([A-Z]{1,4}-?\d{1,3}[A-Z]?)\\]/i);
   if (m) return m[1].toUpperCase().replace(/-/g, "");
   const m2 = s.match(/\b(OP|ST|EB|PRB|GC)-?(\d{1,3})\b/i);
   if (m2) return (m2[1] + m2[2]).toUpperCase();
@@ -63,7 +81,7 @@ function setIdForCard(game: Game, c: { set_id: string | null; set_name: string |
 export default function MasterSets() {
   const { game } = useParams<{ game: Game }>();
   const navigate = useNavigate();
-  const { user } = useAuth(); // ← fix bug 2
+  const { user } = useAuth();
 
   const cachedOwned = game ? _ownedCache.get(game) : undefined;
   const cachedSets = game ? _setsCache.get(game) : undefined;
@@ -79,6 +97,8 @@ export default function MasterSets() {
   const [wantedCardIds, setWantedCardIds] = useState<Set<string>>(new Set());
   const [wishlistBusy, setWishlistBusy] = useState<Set<string>>(new Set());
   const [quickAddBusy, setQuickAddBusy] = useState<Set<string>>(new Set());
+  const [recentEntries, setRecentEntries] = useState<RecentEntry[]>([]);
+  const [loadingRecent, setLoadingRecent] = useState(false);
 
   const [picked, setPicked] = useState<CardRow | null>(null);
   const [pickedOwned, setPickedOwned] = useState(false);
@@ -99,12 +119,11 @@ export default function MasterSets() {
     } catch (_) {}
   };
 
-  // ← fix bug 2: usa user da useAuth invece di getUser() async
   const refreshOwned = async () => {
     if (!game || !user) return;
     const uid = user.id;
 
-    const { data: ownedRows, error: ownedErr } = await withDbRetry(() =>
+    const {  ownedRows, error: ownedErr } = await withDbRetry(() =>
       supabase.from("collection_entries").select("card_id, language").eq("user_id", uid).eq("game", game),
     );
     if (ownedErr) { console.warn("refreshOwned failed", ownedErr); return; }
@@ -112,7 +131,7 @@ export default function MasterSets() {
     const cardIds = Array.from(new Set((ownedRows ?? []).map((r: any) => r.card_id).filter(Boolean))) as string[];
     let cardsById = new Map<string, { set_id: string | null; set_name: string | null; code: string | null }>();
     if (cardIds.length) {
-      const { data: cards, error: cardsErr } = await withDbRetry(() =>
+      const {  cards, error: cardsErr } = await withDbRetry(() =>
         supabase.from("cards").select("id, set_id, set_name, code").in("id", cardIds),
       );
       if (cardsErr) { console.warn("refreshOwned cards failed", cardsErr); return; }
@@ -144,7 +163,73 @@ export default function MasterSets() {
     } catch (_) {}
   };
 
-  // ← fix bug 2: dipende da user?.id, legge sessionStorage solo quando user è pronto
+  // ─── Carica ultime 30 carte inserite ────────────────────────────────────────
+  const refreshRecent = async () => {
+    if (!game || !user) return;
+    setLoadingRecent(true);
+    try {
+      const {  entries } = await supabase
+        .from("collection_entries")
+        .select("id, card_id, created_at")
+        .eq("user_id", user.id)
+        .eq("game", game)
+        .order("created_at", { ascending: false })
+        .limit(30);
+
+      if (!entries?.length) { setRecentEntries([]); return; }
+
+      const cardIds = entries.map((e) => e.card_id).filter(Boolean) as string[];
+      const {  cards } = await supabase
+        .from("cards")
+        .select("id, name, code, image_small")
+        .in("id", cardIds);
+
+      const cardsMap = new Map((cards ?? []).map((c) => [c.id, c]));
+
+      setRecentEntries(
+        entries.map((e) => {
+          const card = cardsMap.get(e.card_id);
+          return {
+            entryId: e.id,
+            cardId: e.card_id,
+            cardName: card?.name ?? "Carta sconosciuta",
+            cardCode: card?.code ?? null,
+            imageSmall: card?.image_small ?? null,
+            game,
+            addedAt: e.created_at,
+          };
+        })
+      );
+    } finally {
+      setLoadingRecent(false);
+    }
+  };
+
+  const removeRecentEntry = async (entryId: string, cardId: string) => {
+    const { error } = await supabase
+      .from("collection_entries")
+      .delete()
+      .eq("id", entryId);
+
+    if (error) { toast.error(error.message); return; }
+
+    setRecentEntries((prev) => prev.filter((e) => e.entryId !== entryId));
+    toast.success("Carta rimossa");
+
+    // Aggiorna owned se la carta non ha più entries
+    const {  remain } = await supabase
+      .from("collection_entries")
+      .select("id")
+      .eq("card_id", cardId)
+      .eq("user_id", user!.id)
+      .limit(1);
+
+    if (!remain?.length) {
+      setOwnedCardIds((prev) => { const n = new Set(prev); n.delete(cardId); return n; });
+    }
+    emitCollectionChanged({ game, cardId });
+  };
+
   useEffect(() => {
     if (!game || !user) return;
     setActiveSet(null);
@@ -184,7 +269,6 @@ export default function MasterSets() {
 
       setLoadingSets(false);
 
-      // ← fix bug 2: user.id è già disponibile qui, no await getUser()
       const uid = user.id;
       if (!_ownedCache.has(game)) {
         try {
@@ -203,8 +287,9 @@ export default function MasterSets() {
       }
 
       await refreshOwned();
+      await refreshRecent();
     })();
-  }, [game, user?.id]); // ← dipende da user?.id
+  }, [game, user?.id]);
 
   useEffect(() => {
     if (!game || !user) return;
@@ -212,7 +297,10 @@ export default function MasterSets() {
     const refreshTimeout = { current: null as ReturnType<typeof setTimeout> | null };
     const debouncedRefresh = () => {
       if (refreshTimeout.current) clearTimeout(refreshTimeout.current);
-      refreshTimeout.current = setTimeout(() => refreshOwned(), 400);
+      refreshTimeout.current = setTimeout(() => {
+        refreshOwned();
+        refreshRecent();
+      }, 400);
     };
 
     const onVisible = () => {
@@ -220,19 +308,18 @@ export default function MasterSets() {
     };
 
     const offChange = onCollectionChanged((detail) => {
-  if (!detail?.game || detail.game === game) {
-    // Aggiornamento ottimistico immediato se il payload contiene la carta
-    if (detail.card && detail.cardId && !ownedCardIds.has(detail.cardId)) {
-      const sid = setIdForCard(game, detail.card);
-      if (sid) {
-        setOwnedBySet((prev) => new Map(prev).set(sid, (prev.get(sid) ?? 0) + 1));
-        setOwnedCardIds((prev) => new Set(prev).add(detail.cardId));
+      if (!detail?.game || detail.game === game) {
+        if (detail.card && detail.cardId && !ownedCardIds.has(detail.cardId)) {
+          const sid = setIdForCard(game, detail.card);
+          if (sid) {
+            setOwnedBySet((prev) => new Map(prev).set(sid, (prev.get(sid) ?? 0) + 1));
+            setOwnedCardIds((prev) => new Set(prev).add(detail.cardId));
+          }
+        }
+        refreshOwned();
+        refreshRecent();
       }
-    }
-    // Sync col DB dopo
-    refreshOwned();
-  }
-});
+    });
 
     window.addEventListener("focus", debouncedRefresh);
     document.addEventListener("visibilitychange", onVisible);
@@ -243,7 +330,7 @@ export default function MasterSets() {
       document.removeEventListener("visibilitychange", onVisible);
       offChange();
     };
-  }, [game, user?.id]); // ← dipende da user?.id
+  }, [game, user?.id]);
 
   const visibleSets = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -288,7 +375,7 @@ export default function MasterSets() {
     writeOwnedCache(nextCounts, nextIds, nextLangs);
 
     try {
-      const { data: existing } = await supabase
+      const {  existing } = await supabase
         .from("collection_entries").select("id, quantity")
         .eq("user_id", uid).eq("card_id", c.id).maybeSingle();
       let error;
@@ -315,6 +402,7 @@ export default function MasterSets() {
       }
       toast.success(`Added ${c.name}`);
       emitCollectionChanged({ game, cardId: c.id });
+      await refreshRecent();
     } finally {
       setQuickAddBusy((prev) => { const n = new Set(prev); n.delete(c.id); return n; });
     }
@@ -355,7 +443,7 @@ export default function MasterSets() {
     setPicked(null);
 
     try {
-      const { data: existing } = await supabase
+      const {  existing } = await supabase
         .from("collection_entries").select("id, quantity")
         .eq("user_id", uid).eq("card_id", savedId).maybeSingle();
       let error;
@@ -382,6 +470,7 @@ export default function MasterSets() {
       }
       toast.success(`Added ${picked?.name ?? "card"} ×${quantity}`);
       emitCollectionChanged({ game, cardId: savedId });
+      await refreshRecent();
     } finally {
       setSavingCard(false);
     }
@@ -390,7 +479,8 @@ export default function MasterSets() {
   const removeOne = async () => {
     if (!picked || !game || !user) return;
     const uid = user.id;
-    const { data: rows } = await supabase
+    // Prende solo l'entry più recente — non tocca i doppioni
+    const {  rows } = await supabase
       .from("collection_entries").select("id")
       .eq("user_id", uid).eq("card_id", picked.id)
       .order("created_at", { ascending: false }).limit(1);
@@ -402,7 +492,7 @@ export default function MasterSets() {
     const removedId = picked.id;
     const removedSetId = setIdForCard(game, picked);
     setPicked(null);
-    const { data: remain } = await supabase
+    const {  remain } = await supabase
       .from("collection_entries").select("id")
       .eq("user_id", uid).eq("card_id", removedId).limit(1);
     if (!remain || remain.length === 0) {
@@ -414,9 +504,12 @@ export default function MasterSets() {
       writeOwnedCache(nextCounts, nextIds, nextLangs);
     }
     emitCollectionChanged({ game, cardId: removedId });
+    await refreshRecent();
   };
 
   if (!game) return null;
+
+  const gameRarities = RARITIES[game] ?? [];
 
   return (
     <div>
@@ -476,15 +569,30 @@ export default function MasterSets() {
                 <TabsList>
                   <TabsTrigger value="all">All Expansions ({visibleSets.length})</TabsTrigger>
                   <TabsTrigger value="mine">My Master Sets ({ownedSets.length})</TabsTrigger>
+                  <TabsTrigger value="recent">
+                    <Clock className="h-3.5 w-3.5 mr-1" />
+                    Ultime aggiunte
+                  </TabsTrigger>
                 </TabsList>
+
                 <TabsContent value="all" className="mt-6">
                   {loadingSets && sets.length === 0 ? <SetGridSkeleton /> : <SetGrid sets={visibleSets} ownedBySet={ownedBySet} onOpen={setActiveSet} />}
                 </TabsContent>
+
                 <TabsContent value="mine" className="mt-6">
                   {loadingSets && sets.length === 0 ? <SetGridSkeleton />
                    : ownedSets.length === 0 ? (
                     <p className="text-muted-foreground text-center py-12">You don't own any cards yet. Open an expansion and start building.</p>
                    ) : <SetGrid sets={ownedSets} ownedBySet={ownedBySet} onOpen={setActiveSet} />}
+                </TabsContent>
+
+                <TabsContent value="recent" className="mt-6">
+                  <RecentCards
+                    entries={recentEntries}
+                    loading={loadingRecent}
+                    game={game}
+                    onRemove={removeRecentEntry}
+                  />
                 </TabsContent>
               </Tabs>
             </>
@@ -494,6 +602,7 @@ export default function MasterSets() {
         </>
       )}
 
+      {/* Dialog aggiungi/modifica carta */}
       <Dialog open={!!picked} onOpenChange={(o) => !o && setPicked(null)}>
         <DialogContent onKeyDown={(e) => { if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "TEXTAREA") { e.preventDefault(); saveCard(); } }}>
           <DialogHeader>
@@ -507,7 +616,27 @@ export default function MasterSets() {
                   <p className="font-semibold">{picked.name}</p>
                   <p className="text-xs text-muted-foreground">{picked.code} · {picked.set_name}</p>
                 </div>
-                <div><Label>Rarity</Label><Input value={rarity} onChange={(e) => setRarity(e.target.value)} placeholder="e.g. Rare Holo" /></div>
+
+                {/* Rarità — dropdown per gioco */}
+                <div>
+                  <Label>Rarity</Label>
+                  {gameRarities.length > 0 ? (
+                    <Select value={rarity} onValueChange={setRarity}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Seleziona rarità" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">— Nessuna —</SelectItem>
+                        {gameRarities.map((r) => (
+                          <SelectItem key={r} value={r}>{r}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input value={rarity} onChange={(e) => setRarity(e.target.value)} placeholder="e.g. Rare Holo" />
+                  )}
+                </div>
+
                 <div>
                   <Label>Language</Label>
                   <Select value={language} onValueChange={setLanguage}>
@@ -530,6 +659,73 @@ export default function MasterSets() {
           )}
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+// ─── RecentCards ─────────────────────────────────────────────────────────────
+function RecentCards({
+  entries, loading, game, onRemove,
+}: {
+  entries: RecentEntry[];
+  loading: boolean;
+  game: Game;
+  onRemove: (entryId: string, cardId: string) => void;
+}) {
+  if (loading) {
+    return (
+      <div className="flex flex-col gap-2">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Card key={i} className="flex items-center gap-3 px-3 py-2 bg-gradient-card">
+            <Skeleton className="h-10 w-8 rounded" />
+            <div className="flex-1 space-y-1.5">
+              <Skeleton className="h-4 w-1/2" />
+              <Skeleton className="h-3 w-1/4" />
+            </div>
+          </Card>
+        ))}
+      </div>
+    );
+  }
+
+  if (!entries.length) {
+    return <p className="text-muted-foreground text-center py-12">Nessuna carta aggiunta ancora.</p>;
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="text-xs text-muted-foreground mb-3">
+        Ultime {entries.length} carte aggiunte — clicca 🗑 per rimuovere un'aggiunta per errore.
+      </p>
+      {entries.map((e) => {
+        const imgSrc = e.imageSmall ? proxiedImage(e.imageSmall) : null;
+        const date = new Date(e.addedAt).toLocaleString("it-IT", {
+          day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
+        });
+        return (
+          <Card key={e.entryId} className="flex items-center gap-3 px-3 py-2 bg-gradient-card">
+            {imgSrc ? (
+              <img src={imgSrc} alt={e.cardName} className="h-10 w-8 object-cover rounded shrink-0" loading="lazy" />
+            ) : (
+              <div className="h-10 w-8 bg-muted rounded shrink-0 flex items-center justify-center text-[9px] font-mono text-muted-foreground">
+                {e.cardCode?.slice(0, 4) ?? "?"}
+              </div>
+            )}
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold truncate">{e.cardName}</p>
+              <p className="text-xs text-muted-foreground">{e.cardCode ?? "—"} · {date}</p>
+            </div>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8 shrink-0 hover:bg-destructive/10 hover:text-destructive"
+              onClick={() => onRemove(e.entryId, e.cardId)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </Card>
+        );
+      })}
     </div>
   );
 }
@@ -632,7 +828,7 @@ function CreateBinderDialog({ open, onOpenChange, game, set, cards, ownedCardIds
   const pagesNeeded = Math.max(1, Math.ceil(cardsToPlace.length / perPage));
 
   const create = async () => {
-    const { data: userData } = await supabase.auth.getUser();
+    const {  userData } = await supabase.auth.getUser();
     if (!userData.user) return toast.error("Not signed in");
     if (!name.trim() || creating) return;
     setCreating(true);
@@ -718,6 +914,7 @@ function SetView({
     if (typeof window === "undefined") return "grid";
     return (localStorage.getItem("masterset.view") as "grid" | "list") ?? "grid";
   });
+  const [showOnlyOwned, setShowOnlyOwned] = useState(false);
   const [binderDialogOpen, setBinderDialogOpen] = useState(false);
 
   useEffect(() => { try { localStorage.setItem("masterset.view", view); } catch (_) {} }, [view]);
@@ -729,7 +926,7 @@ function SetView({
       if (error) toast.error(error.message);
       const remote = ((data?.cards as CardRow[]) ?? []);
       const dashed = set.id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
-      const { data: local } = await supabase.from("cards").select("*").eq("game", game)
+      const {  local } = await supabase.from("cards").select("*").eq("game", game)
         .or(game === "pokemon" ? `set_id.eq.${set.id}` : `set_name.ilike.%[${set.id}]%,set_name.ilike.%[${dashed}]%,code.ilike.${set.id}-%`)
         .limit(500);
       const map = new Map<string, CardRow>();
@@ -738,6 +935,11 @@ function SetView({
       setLoading(false);
     })();
   }, [game, set.id]);
+
+  const visibleCards = useMemo(
+    () => showOnlyOwned ? cards.filter((c) => ownedCardIds.has(c.id)) : cards,
+    [cards, showOnlyOwned, ownedCardIds]
+  );
 
   const ownedCount = cards.filter((c) => ownedCardIds.has(c.id)).length;
 
@@ -754,6 +956,22 @@ function SetView({
             <BookOpen className="h-4 w-4 mr-1" /> Crea binder
           </Button>
         )}
+
+        {/* Toggle solo possedute */}
+        {!loading && cards.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowOnlyOwned((v) => !v)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium border transition-colors ${
+              showOnlyOwned
+                ? "bg-primary text-primary-foreground border-primary"
+                : "bg-muted text-muted-foreground border-border hover:text-foreground"
+            }`}
+          >
+            <span>{showOnlyOwned ? "✓" : ""} Solo possedute</span>
+          </button>
+        )}
+
         <div className="flex items-center gap-1 rounded-md border bg-muted p-0.5">
           <Button type="button" size="sm" variant={view === "grid" ? "default" : "ghost"} className="h-7 w-7 p-0" onClick={() => setView("grid")}><LayoutGrid className="h-4 w-4" /></Button>
           <Button type="button" size="sm" variant={view === "list" ? "default" : "ghost"} className="h-7 w-7 p-0" onClick={() => setView("list")}><List className="h-4 w-4" /></Button>
@@ -766,11 +984,13 @@ function SetView({
           game={game} set={set} cards={cards} ownedCardIds={ownedCardIds} onCreated={onBinderCreated} />
       )}
 
-      {loading ? <SetViewSkeleton /> : cards.length === 0 ? (
-        <p className="text-muted-foreground text-center py-12">No cards available for this expansion yet.</p>
+      {loading ? <SetViewSkeleton /> : visibleCards.length === 0 ? (
+        <p className="text-muted-foreground text-center py-12">
+          {showOnlyOwned ? "Non possiedi ancora carte di questo set." : "No cards available for this expansion yet."}
+        </p>
       ) : view === "grid" ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          {cards.map((c) => {
+          {visibleCards.map((c) => {
             const owned = ownedCardIds.has(c.id);
             const wanted = wantedCardIds.has(c.id);
             const lang = ownedLangByCard.get(c.id);
@@ -801,7 +1021,7 @@ function SetView({
         </div>
       ) : (
         <div className="flex flex-col gap-1.5">
-          {cards.map((c) => {
+          {visibleCards.map((c) => {
             const owned = ownedCardIds.has(c.id);
             const wanted = wantedCardIds.has(c.id);
             const lang = ownedLangByCard.get(c.id);
