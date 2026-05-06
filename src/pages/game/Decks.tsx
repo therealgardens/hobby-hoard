@@ -52,7 +52,7 @@ function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
       continue;
     }
 
-    // 1xOP12-045 / 4xEB03-053 / 3xLEDE-EN001
+    // Formato che già funziona: 1xOP12-045 / 4xEB03-053 / 3xLEDE-EN001
     let m = t.match(
       /^(\d+)\s*[xX]\s*([A-Z0-9]{2,10}-(?:[A-Z]{0,3})?\d{2,4}[A-Z0-9_-]*)$/i
     );
@@ -64,7 +64,20 @@ function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
       continue;
     }
 
-    // OP12-045
+    // FIX One Piece / Yu-Gi-Oh con nome + codice:
+    // 1 Boa Hancock (OP14-041)
+    // 4 Nami (EB03-053)
+    // 3 Gandora (LEDE-EN001)
+    m = t.match(/^(\d+)\s+(.+?)\s+\\(([A-Z0-9-]+)\\)$/i);
+    if (m) {
+      results.push({
+        copies: Math.max(1, parseInt(m[1], 10)),
+        code: m[3].toUpperCase(),
+      });
+      continue;
+    }
+
+    // Solo codice: OP12-045
     m = t.match(
       /^([A-Z0-9]{2,10}-(?:[A-Z]{0,3})?\d{2,4}[A-Z0-9_-]*)$/i
     );
@@ -72,23 +85,6 @@ function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
       results.push({
         copies: 1,
         code: m[1].toUpperCase(),
-      });
-      continue;
-    }
-
-    // 1 Boa Hancock (OP14-041)
-    // 4 Nami (EB03-053)
-    // 3 Gandora (LEDE-EN001)
-    m = t.match(/^(\d+)\s+(.+?)\s+\\(([^()]+)\\)$/);
-    if (m) {
-      const copies = Math.max(1, parseInt(m[1], 10));
-      const name = m[2].trim();
-      const code = m[3].trim();
-
-      results.push({
-        copies,
-        name: name || undefined,
-        code: code ? code.toUpperCase() : undefined,
       });
       continue;
     }
@@ -113,6 +109,7 @@ function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
 
   return results;
 }
+
 
 type DeckCard = {
   key: string;
