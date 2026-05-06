@@ -81,35 +81,13 @@ function parseOnePiece(raw: string): ParsedDeckEntry[] {
 }
 
 // ─── YU-GI-OH PARSER ─────────────────────────────────────────────────────────
+// Gestisce:
+//   "3 Crystal Bond"        — quantità + nome
+//   "3 LEDE-EN001"          — quantità + codice testuale
+//   "3 Gandora (LEDE-EN001)" — quantità + nome + codice
+// Ignora: == MONSTER CARDS (58 cards) == e simili
 function parseYugioh(raw: string): ParsedDeckEntry[] {
   const results: ParsedDeckEntry[] = [];
-
-  const YGO_CODE = /\b([A-Z]{2,8}-(?:[A-Z]{0,3})?\d{2,4})\b/i;
-  const SECTION = /^==.*==\s*$/;
-
-  for (const line of raw.split(/\r?\n/)) {
-    const t = line.trim();
-    if (!t || t.startsWith("//") || SECTION.test(t)) continue;
-
-    const codeMatch = t.match(YGO_CODE);
-    if (codeMatch) {
-      const code = codeMatch[1].toUpperCase();
-      const qtyMatch = t.match(/^(\d+)\s*/);
-      const copies = qtyMatch ? Math.max(1, parseInt(qtyMatch[1], 10)) : 1;
-      results.push({ copies, code });
-      continue;
-    }
-
-    const nameMatch = t.match(/^(\d+)\s+(.+)$/);
-    if (nameMatch) {
-      const copies = Math.max(1, parseInt(nameMatch[1], 10));
-      const name = nameMatch[2].trim();
-      if (name) results.push({ copies, name });
-    }
-  }
-
-  return results;
-}
 
   const YGO_CODE = /\b([A-Z]{2,8}-(?:[A-Z]{0,3})?\d{2,4})\b/i;
   const SECTION = /^==.*==\s*$/;
@@ -145,7 +123,6 @@ function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
 }
 
 // ─── BATCH LOOKUP ─────────────────────────────────────────────────────────────
-// 3 query totali per tutto il deck, indipendentemente dal numero di carte
 async function batchLookupCards(
   entries: { id: string; code: string | null; name: string | null; copies: number }[],
   game: Game
@@ -173,35 +150,6 @@ async function batchLookupCards(
 
   const allFound = [...(byCode ?? []), ...(byName ?? [])];
 
-  // Per YGO: raccogli gli ID numerici non trovati nel DB e chiamali in batch all'API
-  let apiCards: Map<string, { name: string; image_small: string | null }> = new Map();
-  if (game === "yugioh") {
-    const numericCodes = codes.filter((c) => /^\d+$/.test(c));
-    const notInDb = numericCodes.filter(
-      (c) => !allFound.some((f) => f.external_id === c)
-    );
-
-    if (notInDb.length) {
-      try {
-        // YGOPRODeck supporta più ID separati da virgola in una sola chiamata
-        const res = await fetch(
-          `https://db.ygoprodeck.com/api/v7/cardinfo.php?id=${notInDb.join(",")}`
-        );
-        if (res.ok) {
-          const json = await res.json();
-          for (const card of json?.data ?? []) {
-            apiCards.set(String(card.id), {
-              name: card.name,
-              image_small: card.card_images?.[0]?.image_url_small ?? null,
-            });
-          }
-        }
-      } catch {
-        // silenzioso — mostrerà placeholder
-      }
-    }
-  }
-
   return entries.map((e) => {
     const matched = e.code
       ? allFound.find((c) =>
@@ -213,13 +161,9 @@ async function batchLookupCards(
           c.name?.toLowerCase() === e.name?.toLowerCase()
         );
 
-    // Dati dall'API esterna (solo YGO, solo se non nel DB)
-    const fromApi = !matched && e.code ? apiCards.get(e.code) : null;
-
     const imageCode =
       matched?.external_id ??
       matched?.code ??
-      (game === "yugioh" && e.code && /^\d+$/.test(e.code) ? e.code : null) ??
       e.code ??
       null;
 
@@ -229,8 +173,8 @@ async function batchLookupCards(
       copies: e.copies,
       have: 0,
       cardId: matched?.id ?? undefined,
-      name: matched?.name ?? fromApi?.name ?? e.name ?? e.code ?? "Carta",
-      imageSmall: matched?.image_small ?? fromApi?.image_small ?? null,
+      name: matched?.name ?? e.name ?? e.code ?? "Carta",
+      imageSmall: matched?.image_small ?? null,
       game: matched?.game ?? game,
       _imageCode: imageCode,
       _fromApi: !matched,
@@ -253,7 +197,6 @@ async function lookupSingleCard(
       .maybeSingle();
     if (data) return data;
 
-    // Secondo tentativo YGO: codice testuale su external_id
     if (game === "yugioh" && !/^\d+$/.test(entry.code)) {
       const { data: data2 } = await supabase
         .from("cards")
@@ -368,7 +311,6 @@ export default function Decks() {
       if (error) { toast.error(error.message); return; }
       if (!dcards?.length) return;
 
-      // Batch lookup — 2 query invece di N
       const finalCards = await batchLookupCards(
         dcards.map((d) => ({
           id: d.id,
@@ -379,7 +321,6 @@ export default function Decks() {
         currentGame
       );
 
-      // Una query per le quantità possedute
       const cardIds = finalCards.map((c) => c.cardId).filter(Boolean) as string[];
       const haveMap = new Map<string, number>();
 
@@ -539,7 +480,7 @@ export default function Decks() {
                   placeholder={
                     currentGame === "onepiece"
                       ? "1xOP15-002\n4 Viola (OP15-040)\n4xOP15-052"
-                      : '3 Crystal Bond\n3 LEDE-EN001\n["Exported from ygoprodeck...", "10938846", ...]'
+                      : "3 Crystal Bond\n3 LEDE-EN001\n1 Tornado Dragon"
                   }
                 />
               </div>
