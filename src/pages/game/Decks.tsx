@@ -23,7 +23,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Plus, Swords, Check, X, Minus, Trash2 } from "lucide-react";
+import { Plus, Swords, Check, X, Minus, Trash2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import type { Tables } from "@/integrations/supabase/types";
 import { cardImage, proxiedImage, type Game } from "@/lib/game";
@@ -47,30 +47,33 @@ type MatchedCard = {
   _fromApi?: boolean;
 };
 
+type DeckCard = {
+  key: string;
+  code: string;
+  copies: number;
+  have: number;
+  cardId?: string;
+  name?: string;
+  imageSmall?: string | null;
+  game?: string;
+  _imageCode?: string | null;
+  _fromApi?: boolean;
+};
+
 // ─── ONE PIECE PARSER ────────────────────────────────────────────────────────
-// Gestisce:
-//   1xOP15-002       1 OP15-002
-//   1 Lucy (OP15-002)
-//   1 Fo...llow...Me (OP10-059)
-// Ignora righe di sezione: Leader, Character, Event, Stage
 function parseOnePiece(raw: string): ParsedDeckEntry[] {
   const results: ParsedDeckEntry[] = [];
-
   const SECTION = /^(leader|character|event|stage)\b/i;
 
   for (const line of raw.split(/\r?\n/)) {
     const t = line.trim();
     if (!t || t.startsWith("//") || SECTION.test(t)) continue;
 
-    // Estrae quantità e codice in un'unica regex:
-    // Gestisce: 4xOP15-040 / 4x OP15-040 / 4 OP15-040 / 4 Nome (OP15-040)
-    // Il codice è sempre: 2-3 lettere + 2-3 cifre + trattino + 3-4 cifre
     const m = t.match(/^(\d+)\s*[xX]?\s*(?:[^(]*\()?([A-Z]{2,3}\d{2,3}-\d{3,4})\)?/i);
     if (!m) continue;
 
     const copies = Math.max(1, parseInt(m[1], 10));
     const code = m[2].toUpperCase();
-
     results.push({ copies, code });
   }
 
@@ -78,10 +81,6 @@ function parseOnePiece(raw: string): ParsedDeckEntry[] {
 }
 
 // ─── YU-GI-OH PARSER ─────────────────────────────────────────────────────────
-// Gestisce:
-//   Formato testo:  "3 Crystal Bond"  /  "1 LEDE-EN001"  /  "3 Gandora (LEDE-EN001)"
-//   Formato JSON:   ["Exported from https://ygoprodeck.com/...", "10938846", ...]
-// Ignora: == MONSTER CARDS (58 cards) == e simili
 function parseYugioh(raw: string): ParsedDeckEntry[] {
   const results: ParsedDeckEntry[] = [];
 
@@ -138,101 +137,95 @@ function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
   return [];
 }
 
-// ─── API ESTERNA YGOPRODECK ───────────────────────────────────────────────────
-async function fetchYgoApiById(id: string, game: Game): Promise<MatchedCard | null> {
-  try {
-    const res = await fetch(`https://db.ygoprodeck.com/api/v7/cardinfo.php?id=${id}`);
-    if (!res.ok) return null;
-    const json = await res.json();
-    const card = json?.data?.[0];
-    if (!card) return null;
+// ─── BATCH LOOKUP ─────────────────────────────────────────────────────────────
+// 3 query totali per tutto il deck, indipendentemente dal numero di carte
+async function batchLookupCards(
+  entries: { id: string; code: string | null; name: string | null; copies: number }[],
+  game: Game
+): Promise<DeckCard[]> {
+  const codes = entries.map((e) => e.code).filter(Boolean) as string[];
+  const names = entries.map((e) => !e.code && e.name ? e.name : null).filter(Boolean) as string[];
+
+  // Query per codici
+  const { data: byCode } = codes.length
+    ? await supabase
+        .from("cards")
+        .select("id, code, name, image_small, game, external_id")
+        .eq("game", game)
+        .in(game === "yugioh" ? "external_id" : "code", codes)
+    : { data: [] };
+
+  // Query per nomi (solo YGO, OP ha sempre il codice)
+  const { data: byName } = names.length && game === "yugioh"
+    ? await supabase
+        .from("cards")
+        .select("id, code, name, image_small, game, external_id")
+        .eq("game", game)
+        .in("name", names)
+    : { data: [] };
+
+  const allFound = [...(byCode ?? []), ...(byName ?? [])];
+
+  return entries.map((e) => {
+    const matched = e.code
+      ? allFound.find((c) =>
+          game === "yugioh"
+            ? c.external_id === e.code || c.code?.toUpperCase() === e.code!.toUpperCase()
+            : c.code?.toUpperCase() === e.code!.toUpperCase()
+        )
+      : allFound.find((c) =>
+          c.name?.toLowerCase() === e.name?.toLowerCase()
+        );
+
+    const imageCode =
+      matched?.external_id ??
+      matched?.code ??
+      (game === "yugioh" && e.code && /^\d+$/.test(e.code) ? e.code : null) ??
+      e.code ??
+      null;
+
     return {
-      id: null,
-      code: String(card.id),
-      name: card.name,
-      image_small: card.card_images?.[0]?.image_url_small ?? null,
-      game,
-      external_id: String(card.id),
-      _fromApi: true,
+      key: e.id,
+      code: matched?.code ?? e.code ?? "UNKNOWN",
+      copies: e.copies,
+      have: 0,
+      cardId: matched?.id ?? undefined,
+      name: matched?.name ?? e.name ?? e.code ?? "Carta",
+      imageSmall: matched?.image_small ?? null,
+      game: matched?.game ?? game,
+      _imageCode: imageCode,
+      _fromApi: !matched,
     };
-  } catch {
-    return null;
-  }
+  });
 }
 
-async function fetchYgoApiByName(name: string, game: Game): Promise<MatchedCard | null> {
-  try {
-    const res = await fetch(
-      `https://db.ygoprodeck.com/api/v7/cardinfo.php?name=${encodeURIComponent(name)}`
-    );
-    if (!res.ok) return null;
-    const json = await res.json();
-    const card = json?.data?.[0];
-    if (!card) return null;
-    return {
-      id: null,
-      code: String(card.id),
-      name: card.name,
-      image_small: card.card_images?.[0]?.image_url_small ?? null,
-      game,
-      external_id: String(card.id),
-      _fromApi: true,
-    };
-  } catch {
-    return null;
-  }
-}
-
-// ─── LOOKUP CARTE ─────────────────────────────────────────────────────────────
-async function lookupOnePieceCard(code: string, game: Game): Promise<MatchedCard | null> {
-  const { data } = await supabase
-    .from("cards")
-    .select("id, code, name, image_small, game, external_id")
-    .eq("game", game)
-    .ilike("code", code)
-    .maybeSingle();
-  return data ?? null;
-}
-
-async function lookupYugiohCard(
+// ─── LOOKUP SINGOLO (usato solo da addOne/removeOne) ─────────────────────────
+async function lookupSingleCard(
   entry: { code?: string; name?: string },
   game: Game
 ): Promise<MatchedCard | null> {
   if (entry.code) {
-    // ID numerico YGOPRODeck → cerca per external_id
-    if (/^\d+$/.test(entry.code)) {
-      const { data } = await supabase
-        .from("cards")
-        .select("id, code, name, image_small, game, external_id")
-        .eq("game", game)
-        .eq("external_id", entry.code)
-        .maybeSingle();
-      if (data) return data;
-
-      // Non nel DB: prendi dati dall'API YGOPRODeck
-      return await fetchYgoApiById(entry.code, game);
-    }
-
-    // Codice testuale (es. LEDE-EN001) → cerca per colonna code
+    const col = game === "yugioh" && /^\d+$/.test(entry.code) ? "external_id" : "code";
     const { data } = await supabase
       .from("cards")
       .select("id, code, name, image_small, game, external_id")
       .eq("game", game)
-      .ilike("code", entry.code)
+      .ilike(col, entry.code)
       .maybeSingle();
     if (data) return data;
 
-    // Secondo tentativo: alcuni set salvano il codice in external_id
-    const { data: data2 } = await supabase
-      .from("cards")
-      .select("id, code, name, image_small, game, external_id")
-      .eq("game", game)
-      .ilike("external_id", entry.code)
-      .maybeSingle();
-    if (data2) return data2;
+    // Secondo tentativo YGO: codice testuale su external_id
+    if (game === "yugioh" && !/^\d+$/.test(entry.code)) {
+      const { data: data2 } = await supabase
+        .from("cards")
+        .select("id, code, name, image_small, game, external_id")
+        .eq("game", game)
+        .ilike("external_id", entry.code)
+        .maybeSingle();
+      if (data2) return data2;
+    }
   }
 
-  // Fallback per nome — prima DB, poi API
   if (entry.name) {
     const { data } = await supabase
       .from("cards")
@@ -241,26 +234,10 @@ async function lookupYugiohCard(
       .ilike("name", `%${entry.name}%`)
       .maybeSingle();
     if (data) return data;
-
-    return await fetchYgoApiByName(entry.name, game);
   }
 
   return null;
 }
-
-// ─── TIPI UI ─────────────────────────────────────────────────────────────────
-type DeckCard = {
-  key: string;
-  code: string;
-  copies: number;
-  have: number;
-  cardId?: string;
-  name?: string;
-  imageSmall?: string | null;
-  game?: string;
-  _imageCode?: string | null;
-  _fromApi?: boolean;
-};
 
 // ─── COMPONENTE ──────────────────────────────────────────────────────────────
 export default function Decks() {
@@ -275,6 +252,7 @@ export default function Decks() {
   const [cards, setCards] = useState<DeckCard[]>([]);
   const [toDelete, setToDelete] = useState<Deck | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
 
   const load = async () => {
     const { data, error } = await withDbRetry(() =>
@@ -340,6 +318,7 @@ export default function Decks() {
   const analyze = async (deck: Deck) => {
     try {
       setActive(deck);
+      setAnalyzing(true);
       setCards([]);
 
       const { data: dcards, error } = await supabase
@@ -350,43 +329,18 @@ export default function Decks() {
       if (error) { toast.error(error.message); return; }
       if (!dcards?.length) return;
 
-      const finalCards: DeckCard[] = [];
-
-      for (const d of dcards) {
-        const code = d.code?.trim() ?? null;
-        const name = d.name ?? null;
-
-        const matchedCard: MatchedCard | null =
-          currentGame === "yugioh"
-            ? await lookupYugiohCard(
-                { code: code ?? undefined, name: name ?? undefined },
-                currentGame
-              )
-            : code
-            ? await lookupOnePieceCard(code, currentGame)
-            : null;
-
-        const imageCode =
-          matchedCard?.external_id ??
-          matchedCard?.code ??
-          (currentGame === "yugioh" && code && /^\d+$/.test(code) ? code : null) ??
-          code ??
-          null;
-
-        finalCards.push({
-          key: d.id,
-          code: matchedCard?.code ?? code ?? "UNKNOWN",
+      // Batch lookup — 2 query invece di N
+      const finalCards = await batchLookupCards(
+        dcards.map((d) => ({
+          id: d.id,
+          code: d.code?.trim() ?? null,
+          name: d.name ?? null,
           copies: d.copies,
-          have: 0,
-          cardId: matchedCard?.id ?? undefined,
-          name: matchedCard?.name ?? name ?? code ?? "Carta",
-          imageSmall: matchedCard?.image_small ?? null,
-          game: matchedCard?.game ?? currentGame,
-          _imageCode: imageCode,
-          _fromApi: matchedCard?._fromApi ?? false,
-        });
-      }
+        })),
+        currentGame
+      );
 
+      // Una query per le quantità possedute
       const cardIds = finalCards.map((c) => c.cardId).filter(Boolean) as string[];
       const haveMap = new Map<string, number>();
 
@@ -410,6 +364,8 @@ export default function Decks() {
     } catch (err: any) {
       console.error(err);
       toast.error(err?.message ?? "Errore analisi deck");
+    } finally {
+      setAnalyzing(false);
     }
   };
 
@@ -422,15 +378,10 @@ export default function Decks() {
       let cardId = card.cardId;
 
       if (!cardId) {
-        const matched =
-          currentGame === "yugioh"
-            ? await lookupYugiohCard(
-                { code: card.code !== "UNKNOWN" ? card.code : undefined, name: card.name },
-                currentGame
-              )
-            : card.code && card.code !== "UNKNOWN"
-            ? await lookupOnePieceCard(card.code, currentGame)
-            : null;
+        const matched = await lookupSingleCard(
+          { code: card.code !== "UNKNOWN" ? card.code : undefined, name: card.name },
+          currentGame
+        );
 
         if (!matched?.id) {
           toast.error(
@@ -615,87 +566,105 @@ export default function Decks() {
       <Dialog open={!!active} onOpenChange={(o) => !o && setActive(null)}>
         <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{active?.name}</DialogTitle>
+            <DialogTitle className="flex items-center justify-between pr-8">
+              <span>{active?.name}</span>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7"
+                disabled={analyzing}
+                onClick={() => active && analyze(active)}
+              >
+                <RefreshCw className={`h-4 w-4 ${analyzing ? "animate-spin" : ""}`} />
+              </Button>
+            </DialogTitle>
           </DialogHeader>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            {cards.map((card) => {
-              const ok = card.have >= card.copies;
-              const owned = card.have > 0;
-              const isApiOnly = card._fromApi && !card.cardId;
+          {analyzing ? (
+            <div className="flex items-center justify-center py-16 text-muted-foreground">
+              <RefreshCw className="h-6 w-6 animate-spin mr-2" />
+              Caricamento...
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+              {cards.map((card) => {
+                const ok = card.have >= card.copies;
+                const owned = card.have > 0;
+                const isApiOnly = card._fromApi && !card.cardId;
 
-              const img =
-                card.imageSmall
-                  ? proxiedImage(card.imageSmall)
-                  : cardImage(card.game ?? currentGame, card._imageCode ?? card.code, null);
+                const img =
+                  card.imageSmall
+                    ? proxiedImage(card.imageSmall)
+                    : cardImage(card.game ?? currentGame, card._imageCode ?? card.code, null);
 
-              return (
-                <div
-                  key={card.key}
-                  className="relative rounded-lg overflow-hidden bg-muted shadow-soft"
-                >
-                  {img ? (
-                    <img
-                      src={img}
-                      alt={card.name}
-                      loading="lazy"
-                      className={`w-full card-aspect object-cover ${owned ? "" : "opacity-40 grayscale"}`}
-                      onError={(e) => {
-                        (e.currentTarget as HTMLImageElement).style.opacity = "0";
-                      }}
-                    />
-                  ) : (
-                    <div className="w-full card-aspect bg-muted-foreground/10 flex items-center justify-center">
-                      <span className="text-xs text-muted-foreground text-center px-2">{card.name}</span>
-                    </div>
-                  )}
-
-                  {!owned && (
-                    <div className="absolute inset-0 bg-background/40 pointer-events-none" />
-                  )}
-
-                  <div className="absolute top-1 right-1 flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-background/90 shadow">
-                    {ok ? (
-                      <Check className="h-3 w-3 text-green-600" />
+                return (
+                  <div
+                    key={card.key}
+                    className="relative rounded-lg overflow-hidden bg-muted shadow-soft"
+                  >
+                    {img ? (
+                      <img
+                        src={img}
+                        alt={card.name}
+                        loading="lazy"
+                        className={`w-full card-aspect object-cover ${owned ? "" : "opacity-40 grayscale"}`}
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.opacity = "0";
+                        }}
+                      />
                     ) : (
-                      <X className="h-3 w-3 text-destructive" />
-                    )}
-                    {card.have}/{card.copies}
-                  </div>
-
-                  <div className="p-2 bg-card space-y-1">
-                    <p className="text-xs font-semibold truncate">{card.name}</p>
-                    <p className="text-[10px] text-muted-foreground font-mono">{card.code}</p>
-
-                    {isApiOnly && (
-                      <p className="text-[9px] text-warning font-medium">⚠ Non in catalogo</p>
+                      <div className="w-full card-aspect bg-muted-foreground/10 flex items-center justify-center">
+                        <span className="text-xs text-muted-foreground text-center px-2">{card.name}</span>
+                      </div>
                     )}
 
-                    <div className="flex items-center justify-between gap-1 pt-1">
-                      <Button
-                        size="icon"
-                        variant="outline"
-                        className="h-6 w-6"
-                        disabled={card.have <= 0}
-                        onClick={() => removeOne(card)}
-                      >
-                        <Minus className="h-3 w-3" />
-                      </Button>
-                      <span className="text-xs font-semibold tabular-nums">{card.have}</span>
-                      <Button
-                        size="icon"
-                        variant="outline"
-                        className="h-6 w-6"
-                        onClick={() => addOne(card)}
-                      >
-                        <Plus className="h-3 w-3" />
-                      </Button>
+                    {!owned && (
+                      <div className="absolute inset-0 bg-background/40 pointer-events-none" />
+                    )}
+
+                    <div className="absolute top-1 right-1 flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-background/90 shadow">
+                      {ok ? (
+                        <Check className="h-3 w-3 text-green-600" />
+                      ) : (
+                        <X className="h-3 w-3 text-destructive" />
+                      )}
+                      {card.have}/{card.copies}
+                    </div>
+
+                    <div className="p-2 bg-card space-y-1">
+                      <p className="text-xs font-semibold truncate">{card.name}</p>
+                      <p className="text-[10px] text-muted-foreground font-mono">{card.code}</p>
+
+                      {isApiOnly && (
+                        <p className="text-[9px] text-warning font-medium">⚠ Non in catalogo</p>
+                      )}
+
+                      <div className="flex items-center justify-between gap-1 pt-1">
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="h-6 w-6"
+                          disabled={card.have <= 0}
+                          onClick={() => removeOne(card)}
+                        >
+                          <Minus className="h-3 w-3" />
+                        </Button>
+                        <span className="text-xs font-semibold tabular-nums">{card.have}</span>
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="h-6 w-6"
+                          onClick={() => addOne(card)}
+                        >
+                          <Plus className="h-3 w-3" />
+                        </Button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>
