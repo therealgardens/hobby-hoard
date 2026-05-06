@@ -37,77 +37,112 @@ type ParsedDeckEntry = {
   name?: string;
 };
 
-function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
+// ─── ONE PIECE PARSER ────────────────────────────────────────────────────────
+// Gestisce:
+//   1x OP15-002
+//   1 OP15-002
+//   1 Lucy (OP15-002)
+//   1 Fo...llow...Me (OP10-059)   ← nomi con caratteri speciali
+// Ignora righe di sezione: Leader, Character, Event, Stage
+function parseOnePiece(raw: string): ParsedDeckEntry[] {
   const results: ParsedDeckEntry[] = [];
+
+  // Regex del codice One Piece: OP##-### oppure EB##-### oppure ST##-### ecc.
+  const OP_CODE = /[A-Z]{1,3}\d{2,3}-\d{3,4}/i;
+
+  // Righe da saltare (sezioni)
+  const SECTION = /^(leader|character|event|stage)\b/i;
 
   for (const line of raw.split(/\r?\n/)) {
     const t = line.trim();
-    if (!t) continue;
+    if (!t || t.startsWith("//") || SECTION.test(t)) continue;
 
-    if (
-      t.startsWith("//") ||
-      /^==.*==$/i.test(t) ||
-      /^(leader|character|event|stage|monster cards|spell cards|trap cards|extra deck)\b/i.test(t)
-    ) {
-      continue;
-    }
+    // Cerca il codice OP ovunque nella riga
+    const codeMatch = t.match(OP_CODE);
+    if (!codeMatch) continue;
 
-    // Formato che già funziona: 1xOP12-045 / 4xEB03-053 / 3xLEDE-EN001
-    let m = t.match(
-      /^(\d+)\s*[xX]\s*([A-Z0-9]{2,10}-(?:[A-Z]{0,3})?\d{2,4}[A-Z0-9_-]*)$/i
-    );
-    if (m) {
-      results.push({
-        copies: Math.max(1, parseInt(m[1], 10)),
-        code: m[2].toUpperCase(),
-      });
-      continue;
-    }
+    const code = codeMatch[0].toUpperCase();
 
-    // FIX SOLO One Piece: formato "1 Boa Hancock (OP14-041)"
-    // Prende la quantità iniziale e QUALSIASI codice finale tra parentesi
-    if (game === "onepiece") {
-      m = t.match(/^(\d+)\s+.+\s+\\(([A-Z0-9-]+)\\)\s*$/i);
-      if (m) {
-        results.push({
-          copies: Math.max(1, parseInt(m[1], 10)),
-          code: m[2].toUpperCase(),
-        });
-        continue;
+    // Cerca la quantità all'inizio della riga: "4x..." oppure "4 ..."
+    const qtyMatch = t.match(/^(\d+)\s*[xX]?\s*/);
+    const copies = qtyMatch ? Math.max(1, parseInt(qtyMatch[1], 10)) : 1;
+
+    results.push({ copies, code });
+  }
+
+  return results;
+}
+
+// ─── YU-GI-OH PARSER ─────────────────────────────────────────────────────────
+// Gestisce:
+//   Formato testo:  "3 Crystal Bond"  /  "1 LEDE-EN001"  /  "3 Gandora (LEDE-EN001)"
+//   Formato JSON:   ["Exported from https://ygoprodeck.com/...", "10938846", "10938846", ...]
+// Ignora: == MONSTER CARDS (58 cards) == e simili
+function parseYugioh(raw: string): ParsedDeckEntry[] {
+  const results: ParsedDeckEntry[] = [];
+
+  // ── Formato JSON YGOPRODeck ──
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("[")) {
+    try {
+      const arr: unknown[] = JSON.parse(trimmed);
+      // Il primo elemento è sempre la stringa "Exported from ..."
+      // Gli altri sono ID numerici (possibilmente duplicati = copie)
+      const idCount = new Map<string, number>();
+      for (const item of arr) {
+        if (typeof item !== "string") continue;
+        if (item.startsWith("Exported from") || item.startsWith("http")) continue;
+        if (!/^\d+$/.test(item)) continue; // solo ID numerici
+        idCount.set(item, (idCount.get(item) ?? 0) + 1);
       }
+      for (const [id, copies] of idCount) {
+        results.push({ copies, code: id });
+      }
+      return results;
+    } catch {
+      // Se il JSON non è valido, cade nel parser testo sotto
     }
+  }
 
-    // Solo codice: OP12-045
-    m = t.match(
-      /^([A-Z0-9]{2,10}-(?:[A-Z]{0,3})?\d{2,4}[A-Z0-9_-]*)$/i
-    );
-    if (m) {
-      results.push({
-        copies: 1,
-        code: m[1].toUpperCase(),
-      });
+  // ── Formato testo ──
+  // Regex codice YGO testuale: es. LEDE-EN001, PHNI-IT052, BLC1-EN123
+  const YGO_CODE = /\b([A-Z]{2,8}-(?:[A-Z]{0,3})?\d{2,4})\b/i;
+
+  // Righe di sezione da saltare
+  const SECTION = /^==.*==\s*$/;
+
+  for (const line of raw.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || t.startsWith("//") || SECTION.test(t)) continue;
+
+    // Formato con codice testuale esplicito (con o senza nome):
+    // "3 Gandora (LEDE-EN001)" oppure "3 LEDE-EN001"
+    const codeMatch = t.match(YGO_CODE);
+    if (codeMatch) {
+      const code = codeMatch[1].toUpperCase();
+      const qtyMatch = t.match(/^(\d+)\s*/);
+      const copies = qtyMatch ? Math.max(1, parseInt(qtyMatch[1], 10)) : 1;
+      results.push({ copies, code });
       continue;
     }
 
-    // Yu-Gi-Oh per nome: 3 Crystal Bond
-    if (game === "yugioh") {
-      m = t.match(/^(\d+)\s+(.+)$/);
-      if (m) {
-        const copies = Math.max(1, parseInt(m[1], 10));
-        const name = m[2].trim();
-
-        if (name) {
-          results.push({
-            copies,
-            name,
-          });
-          continue;
-        }
-      }
+    // Formato solo nome: "3 Crystal Bond"
+    const nameMatch = t.match(/^(\d+)\s+(.+)$/);
+    if (nameMatch) {
+      const copies = Math.max(1, parseInt(nameMatch[1], 10));
+      const name = nameMatch[2].trim();
+      if (name) results.push({ copies, name });
     }
   }
 
   return results;
+}
+
+// ─── ENTRY POINT ─────────────────────────────────────────────────────────────
+function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
+  if (game === "onepiece") return parseOnePiece(raw);
+  if (game === "yugioh") return parseYugioh(raw);
+  return [];
 }
 
 type DeckCard = {
@@ -120,6 +155,57 @@ type DeckCard = {
   imageSmall?: string | null;
   game?: string;
 };
+
+// ─── LOOKUP CARTE ─────────────────────────────────────────────────────────────
+// One Piece: cerca per codice (sempre disponibile dopo il parser)
+async function lookupOnePieceCard(code: string, game: Game) {
+  const { data } = await supabase
+    .from("cards")
+    .select("id, code, name, image_small, game")
+    .eq("game", game)
+    .ilike("code", code)
+    .maybeSingle();
+  return data ?? null;
+}
+
+// Yu-Gi-Oh: se il codice è numerico cerca per id esterno (YGOPRODeck),
+// se è testuale cerca per codice, se è solo nome cerca per nome
+async function lookupYugiohCard(entry: { code?: string; name?: string }, game: Game) {
+  if (entry.code) {
+    // ID numerico YGOPRODeck → colonna dedicata (es. external_id o ygo_id)
+    if (/^\d+$/.test(entry.code)) {
+      const { data } = await supabase
+        .from("cards")
+        .select("id, code, name, image_small, game")
+        .eq("game", game)
+        .eq("external_id", entry.code)
+        .maybeSingle();
+      if (data) return data;
+    } else {
+      // Codice testuale (LEDE-EN001)
+      const { data } = await supabase
+        .from("cards")
+        .select("id, code, name, image_small, game")
+        .eq("game", game)
+        .ilike("code", entry.code)
+        .maybeSingle();
+      if (data) return data;
+    }
+  }
+
+  // Fallback per nome
+  if (entry.name) {
+    const { data } = await supabase
+      .from("cards")
+      .select("id, code, name, image_small, game")
+      .eq("game", game)
+      .ilike("name", entry.name)
+      .maybeSingle();
+    if (data) return data;
+  }
+
+  return null;
+}
 
 export default function Decks() {
   const { game } = useParams<{ game: Game }>();
@@ -138,44 +224,28 @@ export default function Decks() {
     const { data, error } = await withDbRetry(() =>
       supabase.from("decks").select("*").eq("game", currentGame).order("created_at")
     );
-
-    if (error) {
-      toast.error(error.message);
-      return;
-    }
-
+    if (error) { toast.error(error.message); return; }
     setDecks(data ?? []);
   };
 
-  useEffect(() => {
-    void load();
-  }, [currentGame]);
+  useEffect(() => { void load(); }, [currentGame]);
 
   const create = async () => {
     try {
       if (!deckName.trim() || !raw.trim()) return;
 
       const parsed = parseDeckList(raw, currentGame);
-
       if (!parsed.length) {
         toast.error("Nessuna carta trovata nel testo");
         return;
       }
 
-      const {
-         { session },
-      } = await supabase.auth.getSession();
-
+      const { data: { session } } = await supabase.auth.getSession();
       const userId = session?.user?.id ?? null;
 
-      const {  deck, error } = await supabase
+      const { data: deck, error } = await supabase
         .from("decks")
-        .insert({
-          user_id: userId,
-          name: deckName.trim(),
-          raw_list: raw,
-          game: currentGame,
-        })
+        .insert({ user_id: userId, name: deckName.trim(), raw_list: raw, game: currentGame })
         .select()
         .single();
 
@@ -204,7 +274,6 @@ export default function Decks() {
       setOpen(false);
       await load();
       await analyze(deck);
-
       toast.success(`Importate ${parsed.length} carte`);
     } catch (err: any) {
       console.error(err);
@@ -217,67 +286,56 @@ export default function Decks() {
       setActive(deck);
       setCards([]);
 
-      const {  dcards, error } = await supabase
+      const { data: dcards, error } = await supabase
         .from("deck_cards")
         .select("id, code, name, copies")
         .eq("deck_id", deck.id);
 
-      if (error) {
-        toast.error(error.message);
-        return;
-      }
-
+      if (error) { toast.error(error.message); return; }
       if (!dcards?.length) return;
 
       const finalCards: DeckCard[] = [];
 
       for (const d of dcards) {
-        let matchedCard: any = null;
-        const code = d.code?.toUpperCase() ?? null;
+        const code = d.code?.trim() ?? null;
         const name = d.name ?? null;
 
-        if (code) {
-          const { data } = await supabase
-            .from("cards")
-            .select("id, code, name, image_small, game")
-            .eq("game", currentGame)
-            .ilike("code", code)
-            .maybeSingle();
+        // Lookup separato per gioco
+        const matchedCard =
+          currentGame === "yugioh"
+            ? await lookupYugiohCard({ code: code ?? undefined, name: name ?? undefined }, currentGame)
+            : code
+            ? await lookupOnePieceCard(code, currentGame)
+            : null;
 
-          if (data) matchedCard = data;
-        }
-
-        if (!matchedCard && name) {
-          const { data } = await supabase
-            .from("cards")
-            .select("id, code, name, image_small, game")
-            .eq("game", currentGame)
-            .ilike("name", name)
-            .maybeSingle();
-
-          if (data) matchedCard = data;
-        }
+        // Per YGO con ID numerico: il "code" da mostrare e usare per l'immagine
+        // è l'ID numerico stesso finché non troviamo la carta nel DB
+        const displayCode = matchedCard?.code ?? code ?? "UNKNOWN";
+        const imageCode =
+          matchedCard?.code ??
+          (currentGame === "yugioh" && code && /^\d+$/.test(code) ? code : null) ??
+          code ??
+          null;
 
         finalCards.push({
           key: d.id,
-          code: matchedCard?.code ?? code ?? "UNKNOWN",
+          code: displayCode,
           copies: d.copies,
           have: 0,
           cardId: matchedCard?.id,
           name: matchedCard?.name ?? name ?? code ?? "Carta",
           imageSmall: matchedCard?.image_small ?? null,
           game: matchedCard?.game ?? currentGame,
-        });
+          // salviamo imageCode separato per costruire l'URL correttamente
+          _imageCode: imageCode,
+        } as DeckCard & { _imageCode: string | null });
       }
 
-      const cardIds = finalCards
-        .map((c) => c.cardId)
-        .filter(Boolean) as string[];
-
+      const cardIds = finalCards.map((c) => c.cardId).filter(Boolean) as string[];
       const haveMap = new Map<string, number>();
 
       if (cardIds.length) {
-        const {  entries } = await supabase
+        const { data: entries } = await supabase
           .from("collection_entries")
           .select("card_id, quantity")
           .in("card_id", cardIds);
@@ -301,35 +359,21 @@ export default function Decks() {
 
   const addOne = async (card: DeckCard) => {
     try {
-      const {
-         { session },
-      } = await supabase.auth.getSession();
-
+      const { data: { session } } = await supabase.auth.getSession();
       const userId = session?.user?.id ?? null;
       if (!userId) return;
 
       let cardId = card.cardId;
 
-      if (!cardId && card.code && card.code !== "UNKNOWN") {
-        const { data } = await supabase
-          .from("cards")
-          .select("id")
-          .eq("game", currentGame)
-          .ilike("code", card.code)
-          .maybeSingle();
+      if (!cardId) {
+        const matched =
+          currentGame === "yugioh"
+            ? await lookupYugiohCard({ code: card.code !== "UNKNOWN" ? card.code : undefined, name: card.name }, currentGame)
+            : card.code && card.code !== "UNKNOWN"
+            ? await lookupOnePieceCard(card.code, currentGame)
+            : null;
 
-        cardId = data?.id;
-      }
-
-      if (!cardId && card.name) {
-        const { data } = await supabase
-          .from("cards")
-          .select("id")
-          .eq("game", currentGame)
-          .ilike("name", card.name)
-          .maybeSingle();
-
-        cardId = data?.id;
+        cardId = matched?.id;
       }
 
       if (!cardId) {
@@ -346,17 +390,11 @@ export default function Decks() {
         quantity: 1,
       });
 
-      if (error) {
-        toast.error(error.message);
-        return;
-      }
+      if (error) { toast.error(error.message); return; }
 
       setCards((prev) =>
-        prev.map((p) =>
-          p.key === card.key ? { ...p, have: p.have + 1, cardId } : p
-        )
+        prev.map((p) => p.key === card.key ? { ...p, have: p.have + 1, cardId } : p)
       );
-
       toast.success(`Aggiunta ${card.name ?? card.code}`);
     } catch (err: any) {
       console.error(err);
@@ -368,14 +406,11 @@ export default function Decks() {
     try {
       if (card.have <= 0 || !card.cardId) return;
 
-      const {
-         { session },
-      } = await supabase.auth.getSession();
-
+      const { data: { session } } = await supabase.auth.getSession();
       const userId = session?.user?.id ?? null;
       if (!userId) return;
 
-      const {  rows } = await supabase
+      const { data: rows } = await supabase
         .from("collection_entries")
         .select("id")
         .eq("user_id", userId)
@@ -389,9 +424,7 @@ export default function Decks() {
       await supabase.from("collection_entries").delete().eq("id", id);
 
       setCards((prev) =>
-        prev.map((p) =>
-          p.key === card.key ? { ...p, have: Math.max(0, p.have - 1) } : p
-        )
+        prev.map((p) => p.key === card.key ? { ...p, have: Math.max(0, p.have - 1) } : p)
       );
     } catch (err: any) {
       console.error(err);
@@ -402,21 +435,14 @@ export default function Decks() {
   const confirmDelete = async () => {
     try {
       if (!toDelete) return;
-
       setDeleting(true);
-
       await supabase.from("deck_cards").delete().eq("deck_id", toDelete.id);
       const { error } = await supabase.from("decks").delete().eq("id", toDelete.id);
-
       setDeleting(false);
       setToDelete(null);
-
-      if (error) {
-        toast.error(error.message);
-        return;
-      }
-
+      if (error) { toast.error(error.message); return; }
       setDecks((prev) => prev.filter((d) => d.id !== toDelete.id));
+      if (active?.id === toDelete.id) { setActive(null); setCards([]); }
       toast.success("Deck eliminato");
     } catch (err: any) {
       setDeleting(false);
@@ -444,7 +470,6 @@ export default function Decks() {
             <DialogHeader>
               <DialogTitle>Importa deck</DialogTitle>
             </DialogHeader>
-
             <div className="space-y-3">
               <div>
                 <Label>Nome</Label>
@@ -454,7 +479,6 @@ export default function Decks() {
                   placeholder="Es. Boa Hancock Aggro"
                 />
               </div>
-
               <div>
                 <Label>Lista carte</Label>
                 <Textarea
@@ -462,11 +486,12 @@ export default function Decks() {
                   value={raw}
                   onChange={(e) => setRaw(e.target.value)}
                   placeholder={
-                    "One Piece:\n1xOP12-045\n1 Boa Hancock (OP14-041)\n4 Nami (EB03-053)\n\nYu-Gi-Oh:\n3 Crystal Bond\n3 Gandora (LEDE-EN001)"
+                    currentGame === "onepiece"
+                      ? "1xOP15-002\n4 Viola (OP15-040)\n4xOP15-052"
+                      : "3 Crystal Bond\n3 LEDE-EN001\n[\"Exported from ygoprodeck...\", \"10938846\", ...]"
                   }
                 />
               </div>
-
               <Button className="w-full" onClick={create}>
                 Importa
               </Button>
@@ -490,19 +515,13 @@ export default function Decks() {
               >
                 <Swords className="h-5 w-5 text-primary mb-2" />
                 <h3 className="text-2xl font-display pr-8">{d.name}</h3>
-                <p className="text-xs text-muted-foreground">
-                  Tocca per controllare cosa ti manca
-                </p>
+                <p className="text-xs text-muted-foreground">Tocca per controllare cosa ti manca</p>
               </Card>
-
               <Button
                 size="icon"
                 variant="ghost"
                 className="absolute top-2 right-2 h-8 w-8 opacity-70 hover:opacity-100 hover:bg-destructive/10 hover:text-destructive"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setToDelete(d);
-                }}
+                onClick={(e) => { e.stopPropagation(); setToDelete(d); }}
               >
                 <Trash2 className="h-4 w-4" />
               </Button>
@@ -519,7 +538,6 @@ export default function Decks() {
               "{toDelete?.name}" verrà eliminato definitivamente.
             </AlertDialogDescription>
           </AlertDialogHeader>
-
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deleting}>Annulla</AlertDialogCancel>
             <AlertDialogAction
@@ -543,9 +561,13 @@ export default function Decks() {
             {cards.map((card) => {
               const ok = card.have >= card.copies;
               const owned = card.have > 0;
+
+              // Usa _imageCode per costruire l'URL corretto (es. ID numerico per YGO)
+              const imageCode = (card as any)._imageCode ?? card.code;
               const img =
-                card.imageSmall ||
-                cardImage(card.game ?? currentGame, card.code, card.imageSmall);
+                card.imageSmall
+                  ? card.imageSmall
+                  : cardImage(card.game ?? currentGame, imageCode, null);
 
               return (
                 <div
@@ -567,11 +589,7 @@ export default function Decks() {
                   {!owned && <div className="absolute inset-0 bg-background/40 pointer-events-none" />}
 
                   <div className="absolute top-1 right-1 flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-background/90 shadow">
-                    {ok ? (
-                      <Check className="h-3 w-3 text-green-600" />
-                    ) : (
-                      <X className="h-3 w-3 text-destructive" />
-                    )}
+                    {ok ? <Check className="h-3 w-3 text-green-600" /> : <X className="h-3 w-3 text-destructive" />}
                     {card.have}/{card.copies}
                   </div>
 
@@ -589,9 +607,7 @@ export default function Decks() {
                       >
                         <Minus className="h-3 w-3" />
                       </Button>
-
                       <span className="text-xs font-semibold tabular-nums">{card.have}</span>
-
                       <Button
                         size="icon"
                         variant="outline"
