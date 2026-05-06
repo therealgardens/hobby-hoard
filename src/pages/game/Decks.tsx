@@ -52,7 +52,7 @@ function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
       continue;
     }
 
-    // Formato già funzionante: 1xOP12-045 / 4xEB03-053 / 3xLEDE-EN001
+    // Formato che già funziona: 1xOP12-045 / 4xEB03-053 / 3xLEDE-EN001
     let m = t.match(
       /^(\d+)\s*[xX]\s*([A-Z0-9]{2,10}-(?:[A-Z]{0,3})?\d{2,4}[A-Z0-9_-]*)$/i
     );
@@ -64,9 +64,10 @@ function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
       continue;
     }
 
-    // FIX SOLO One Piece: 1 Boa Hancock (OP14-041)
+    // FIX SOLO One Piece: formato "1 Boa Hancock (OP14-041)"
+    // Prende la quantità iniziale e QUALSIASI codice finale tra parentesi
     if (game === "onepiece") {
-      m = t.match(/^(\d+)\s+.*\\(([A-Z]{2}\d{2}-\d{3})\\)$/i);
+      m = t.match(/^(\d+)\s+.+\s+\\(([A-Z0-9-]+)\\)\s*$/i);
       if (m) {
         results.push({
           copies: Math.max(1, parseInt(m[1], 10)),
@@ -162,12 +163,12 @@ export default function Decks() {
       }
 
       const {
-        data: { session },
+         { session },
       } = await supabase.auth.getSession();
 
       const userId = session?.user?.id ?? null;
 
-      const { data: deck, error } = await supabase
+      const {  deck, error } = await supabase
         .from("decks")
         .insert({
           user_id: userId,
@@ -216,7 +217,7 @@ export default function Decks() {
       setActive(deck);
       setCards([]);
 
-      const { data: dcards, error } = await supabase
+      const {  dcards, error } = await supabase
         .from("deck_cards")
         .select("id, code, name, copies")
         .eq("deck_id", deck.id);
@@ -276,7 +277,7 @@ export default function Decks() {
       const haveMap = new Map<string, number>();
 
       if (cardIds.length) {
-        const { data: entries } = await supabase
+        const {  entries } = await supabase
           .from("collection_entries")
           .select("card_id, quantity")
           .in("card_id", cardIds);
@@ -301,7 +302,7 @@ export default function Decks() {
   const addOne = async (card: DeckCard) => {
     try {
       const {
-        data: { session },
+         { session },
       } = await supabase.auth.getSession();
 
       const userId = session?.user?.id ?? null;
@@ -368,13 +369,13 @@ export default function Decks() {
       if (card.have <= 0 || !card.cardId) return;
 
       const {
-        data: { session },
+         { session },
       } = await supabase.auth.getSession();
 
       const userId = session?.user?.id ?? null;
       if (!userId) return;
 
-      const { data: rows } = await supabase
+      const {  rows } = await supabase
         .from("collection_entries")
         .select("id")
         .eq("user_id", userId)
