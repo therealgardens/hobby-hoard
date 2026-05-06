@@ -37,7 +37,6 @@ type ParsedDeckEntry = {
   name?: string;
 };
 
-// Oggetto carta che può venire dal DB o dall'API esterna
 type MatchedCard = {
   id: string | null;
   code: string | null;
@@ -52,13 +51,14 @@ type MatchedCard = {
 // Gestisce:
 //   1xOP15-002       1 OP15-002
 //   1 Lucy (OP15-002)
-//   1 Fo...llow...Me (OP10-059)  ← nomi con caratteri speciali
+//   1 Fo...llow...Me (OP10-059)
 // Ignora righe di sezione: Leader, Character, Event, Stage
 function parseOnePiece(raw: string): ParsedDeckEntry[] {
   const results: ParsedDeckEntry[] = [];
 
-  // \b + gruppo di cattura per evitare di prendere la "x" davanti al codice
-  const OP_CODE = /\b([A-Z]{2,3}\d{2,3}-\d{3,4})\b/i;
+  // Lookbehind/lookahead per non catturare caratteri attaccati (es. la "x" in "4xOP15-040")
+  const OP_CODE = /(?<![A-Z0-9])([A-Z]{2,3}\d{2,3}-\d{3,4})(?![A-Z0-9])/i;
+
   const SECTION = /^(leader|character|event|stage)\b/i;
 
   for (const line of raw.split(/\r?\n/)) {
@@ -68,10 +68,16 @@ function parseOnePiece(raw: string): ParsedDeckEntry[] {
     const codeMatch = t.match(OP_CODE);
     if (!codeMatch) continue;
 
-    const code = codeMatch[1].toUpperCase(); // gruppo 1, non [0]
+    const code = codeMatch[1].toUpperCase();
 
-    const qtyMatch = t.match(/^(\d+)\s*[xX]?\s*/);
-    const copies = qtyMatch ? Math.max(1, parseInt(qtyMatch[1], 10)) : 1;
+    // Quantità: numero iniziale seguito da x/X, oppure numero seguito da spazio
+    const qtyMatch = t.match(/^(\d+)\s*[xX]/);
+    const qtyMatch2 = t.match(/^(\d+)\s+/);
+    const copies = qtyMatch
+      ? Math.max(1, parseInt(qtyMatch[1], 10))
+      : qtyMatch2
+      ? Math.max(1, parseInt(qtyMatch2[1], 10))
+      : 1;
 
     results.push({ copies, code });
   }
@@ -211,7 +217,7 @@ async function lookupYugiohCard(
         .maybeSingle();
       if (data) return data;
 
-      // Non nel DB: prendi i dati dall'API YGOPRODeck
+      // Non nel DB: prendi dati dall'API YGOPRODeck
       return await fetchYgoApiById(entry.code, game);
     }
 
@@ -368,7 +374,6 @@ export default function Decks() {
             ? await lookupOnePieceCard(code, currentGame)
             : null;
 
-        // Per immagini: preferisce external_id numerico (URL YGOPRODeck diretto)
         const imageCode =
           matchedCard?.external_id ??
           matchedCard?.code ??
@@ -390,11 +395,7 @@ export default function Decks() {
         });
       }
 
-      // Recupera quantità possedute per le carte che sono nel DB
-      const cardIds = finalCards
-        .map((c) => c.cardId)
-        .filter(Boolean) as string[];
-
+      const cardIds = finalCards.map((c) => c.cardId).filter(Boolean) as string[];
       const haveMap = new Map<string, number>();
 
       if (cardIds.length) {
@@ -428,7 +429,6 @@ export default function Decks() {
 
       let cardId = card.cardId;
 
-      // Se non abbiamo cardId, ritentiamo il lookup
       if (!cardId) {
         const matched =
           currentGame === "yugioh"
@@ -440,10 +440,9 @@ export default function Decks() {
             ? await lookupOnePieceCard(card.code, currentGame)
             : null;
 
-        // Se la carta viene solo dall'API esterna (non nel DB), non possiamo aggiungerla
-        if (matched?._fromApi || !matched?.id) {
+        if (!matched?.id) {
           toast.error(
-            `"${card.name ?? card.code}" non è ancora nel catalogo sincronizzato. Sincronizza il set per poterla aggiungere.`
+            `"${card.name ?? card.code}" non è nel catalogo sincronizzato. Sincronizza il set prima.`
           );
           return;
         }
@@ -631,17 +630,12 @@ export default function Decks() {
             {cards.map((card) => {
               const ok = card.have >= card.copies;
               const owned = card.have > 0;
+              const isApiOnly = card._fromApi && !card.cardId;
 
-              // Costruisce l'URL immagine con priorità:
-              // 1. image_small dal DB
-              // 2. URL costruito da _imageCode (external_id numerico per YGO, codice per OP)
               const img =
                 card.imageSmall
                   ? proxiedImage(card.imageSmall)
                   : cardImage(card.game ?? currentGame, card._imageCode ?? card.code, null);
-
-              // Carte dall'API esterna (non nel DB): mostra badge warning
-              const isApiOnly = card._fromApi && !card.cardId;
 
               return (
                 <div
@@ -700,7 +694,6 @@ export default function Decks() {
                         size="icon"
                         variant="outline"
                         className="h-6 w-6"
-                        disabled={isApiOnly}
                         onClick={() => addOne(card)}
                       >
                         <Plus className="h-3 w-3" />
