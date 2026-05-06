@@ -65,7 +65,7 @@ const _setsCache = new Map<string, SetInfo[]>();
 
 function extractSetId(s: string | null | undefined): string | null {
   if (!s) return null;
-  const m = s.match(/\\[([A-Z]{1,4}-?\d{1,3}[A-Z]?)\\]/i);
+  const m = s.match(/\[([A-Z]{1,4}-?\d{1,3}[A-Z]?)\]/i);
   if (m) return m[1].toUpperCase().replace(/-/g, "");
   const m2 = s.match(/\b(OP|ST|EB|PRB|GC)-?(\d{1,3})\b/i);
   if (m2) return (m2[1] + m2[2]).toUpperCase();
