@@ -155,7 +155,7 @@ async function batchLookupCards(
         .in(game === "yugioh" ? "external_id" : "code", codes)
     : { data: [] };
 
-  // Query per nomi (solo YGO, OP ha sempre il codice)
+  // Query per nomi (solo YGO senza codice)
   const { data: byName } = names.length && game === "yugioh"
     ? await supabase
         .from("cards")
@@ -165,6 +165,35 @@ async function batchLookupCards(
     : { data: [] };
 
   const allFound = [...(byCode ?? []), ...(byName ?? [])];
+
+  // Per YGO: raccogli gli ID numerici non trovati nel DB e chiamali in batch all'API
+  let apiCards: Map<string, { name: string; image_small: string | null }> = new Map();
+  if (game === "yugioh") {
+    const numericCodes = codes.filter((c) => /^\d+$/.test(c));
+    const notInDb = numericCodes.filter(
+      (c) => !allFound.some((f) => f.external_id === c)
+    );
+
+    if (notInDb.length) {
+      try {
+        // YGOPRODeck supporta più ID separati da virgola in una sola chiamata
+        const res = await fetch(
+          `https://db.ygoprodeck.com/api/v7/cardinfo.php?id=${notInDb.join(",")}`
+        );
+        if (res.ok) {
+          const json = await res.json();
+          for (const card of json?.data ?? []) {
+            apiCards.set(String(card.id), {
+              name: card.name,
+              image_small: card.card_images?.[0]?.image_url_small ?? null,
+            });
+          }
+        }
+      } catch {
+        // silenzioso — mostrerà placeholder
+      }
+    }
+  }
 
   return entries.map((e) => {
     const matched = e.code
@@ -176,6 +205,9 @@ async function batchLookupCards(
       : allFound.find((c) =>
           c.name?.toLowerCase() === e.name?.toLowerCase()
         );
+
+    // Dati dall'API esterna (solo YGO, solo se non nel DB)
+    const fromApi = !matched && e.code ? apiCards.get(e.code) : null;
 
     const imageCode =
       matched?.external_id ??
@@ -190,8 +222,8 @@ async function batchLookupCards(
       copies: e.copies,
       have: 0,
       cardId: matched?.id ?? undefined,
-      name: matched?.name ?? e.name ?? e.code ?? "Carta",
-      imageSmall: matched?.image_small ?? null,
+      name: matched?.name ?? fromApi?.name ?? e.name ?? e.code ?? "Carta",
+      imageSmall: matched?.image_small ?? fromApi?.image_small ?? null,
       game: matched?.game ?? game,
       _imageCode: imageCode,
       _fromApi: !matched,
