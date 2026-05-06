@@ -46,10 +46,9 @@ const LANG_FLAG: Record<string, string> = {
   EN: "🇬🇧", JP: "🇯🇵", IT: "🇮🇹", FR: "🇫🇷", DE: "🇩🇪", ES: "🇪🇸", PT: "🇵🇹",
 };
 
-// ─── Rarità per gioco ─────────────────────────────────────────────────────────
 const RARITIES: Record<Game, string[]> = {
   onepiece: ["C", "UC", "R", "SR", "L", "SEC", "SP", "TR", "AA", "MR", "Promo"],
-  yugioh: ["N", "R", "SR", "UR", "Ultimate Rare", "SEC", "Prismatic SR", "Quarter Century SEC", "Collectors Rare", "Ghost Rare", "Starlight Rare", "Promo"],
+  yugioh: ["N", "R", "SR", "UR", "Ultimate Rare", "SEC", "Prismatic SR", "Quarter Century SEC", "Collector's Rare", "Ghost Rare", "Starlight Rare", "Promo"],
   pokemon: ["Common", "Uncommon", "Rare", "Double Rare", "Illustration Rare", "Ultra Rare", "Special Illustration Rare", "Hyper Rare", "Shiny Rare", "Shiny Ultra Rare", "Ace Spec", "Promo"],
 };
 
@@ -122,7 +121,6 @@ export default function MasterSets() {
   const refreshOwned = async () => {
     if (!game || !user) return;
     const uid = user.id;
-
     const { data: ownedRows, error: ownedErr } = await withDbRetry(() =>
       supabase.from("collection_entries").select("card_id, language").eq("user_id", uid).eq("game", game),
     );
@@ -163,7 +161,6 @@ export default function MasterSets() {
     } catch (_) {}
   };
 
-  // ─── Carica ultime 30 carte inserite ────────────────────────────────────────
   const refreshRecent = async () => {
     if (!game || !user) return;
     setLoadingRecent(true);
@@ -185,7 +182,6 @@ export default function MasterSets() {
         .in("id", cardIds);
 
       const cardsMap = new Map((cards ?? []).map((c) => [c.id, c]));
-
       setRecentEntries(
         entries.map((e) => {
           const card = cardsMap.get(e.card_id);
@@ -206,24 +202,13 @@ export default function MasterSets() {
   };
 
   const removeRecentEntry = async (entryId: string, cardId: string) => {
-    const { error } = await supabase
-      .from("collection_entries")
-      .delete()
-      .eq("id", entryId);
-
+    const { error } = await supabase.from("collection_entries").delete().eq("id", entryId);
     if (error) { toast.error(error.message); return; }
-
     setRecentEntries((prev) => prev.filter((e) => e.entryId !== entryId));
     toast.success("Carta rimossa");
-
-    // Aggiorna owned se la carta non ha più entries
     const { data: remain } = await supabase
-      .from("collection_entries")
-      .select("id")
-      .eq("card_id", cardId)
-      .eq("user_id", user!.id)
-      .limit(1);
-
+      .from("collection_entries").select("id")
+      .eq("card_id", cardId).eq("user_id", user!.id).limit(1);
     if (!remain?.length) {
       setOwnedCardIds((prev) => { const n = new Set(prev); n.delete(cardId); return n; });
     }
@@ -293,20 +278,12 @@ export default function MasterSets() {
 
   useEffect(() => {
     if (!game || !user) return;
-
     const refreshTimeout = { current: null as ReturnType<typeof setTimeout> | null };
     const debouncedRefresh = () => {
       if (refreshTimeout.current) clearTimeout(refreshTimeout.current);
-      refreshTimeout.current = setTimeout(() => {
-        refreshOwned();
-        refreshRecent();
-      }, 400);
+      refreshTimeout.current = setTimeout(() => { refreshOwned(); refreshRecent(); }, 400);
     };
-
-    const onVisible = () => {
-      if (document.visibilityState === "visible") debouncedRefresh();
-    };
-
+    const onVisible = () => { if (document.visibilityState === "visible") debouncedRefresh(); };
     const offChange = onCollectionChanged((detail) => {
       if (!detail?.game || detail.game === game) {
         if (detail.card && detail.cardId && !ownedCardIds.has(detail.cardId)) {
@@ -320,10 +297,8 @@ export default function MasterSets() {
         refreshRecent();
       }
     });
-
     window.addEventListener("focus", debouncedRefresh);
     document.addEventListener("visibilitychange", onVisible);
-
     return () => {
       if (refreshTimeout.current) clearTimeout(refreshTimeout.current);
       window.removeEventListener("focus", debouncedRefresh);
@@ -358,7 +333,6 @@ export default function MasterSets() {
   const quickAdd = async (c: CardRow) => {
     if (!game || !user || quickAddBusy.has(c.id)) return;
     const uid = user.id;
-
     setQuickAddBusy((prev) => new Set(prev).add(c.id));
     const wasOwned = ownedCardIds.has(c.id);
     const nextIds = new Set(ownedCardIds).add(c.id);
@@ -373,7 +347,6 @@ export default function MasterSets() {
     setOwnedLangByCard(nextLangs);
     setOwnedBySet(nextCounts);
     writeOwnedCache(nextCounts, nextIds, nextLangs);
-
     try {
       const { data: existing } = await supabase
         .from("collection_entries").select("id, quantity")
@@ -428,7 +401,6 @@ export default function MasterSets() {
     if (!picked || !game || !user || savingCard) return;
     const uid = user.id;
     setSavingCard(true);
-
     const savedId = picked.id;
     const savedSetId = setIdForCard(game, picked);
     const wasOwned = ownedCardIds.has(savedId);
@@ -441,7 +413,6 @@ export default function MasterSets() {
     setOwnedBySet(nextCounts);
     writeOwnedCache(nextCounts, nextIds, nextLangs);
     setPicked(null);
-
     try {
       const { data: existing } = await supabase
         .from("collection_entries").select("id, quantity")
@@ -455,7 +426,8 @@ export default function MasterSets() {
         ({ error } = await withDbRetry(() =>
           supabase.from("collection_entries").insert({
             user_id: uid, card_id: savedId, game,
-            rarity: rarity || null, language, quantity,
+            rarity: rarity === "__none__" ? null : rarity || null,
+            language, quantity,
           })
         ));
       }
@@ -479,7 +451,6 @@ export default function MasterSets() {
   const removeOne = async () => {
     if (!picked || !game || !user) return;
     const uid = user.id;
-    // Prende solo l'entry più recente — non tocca i doppioni
     const { data: rows } = await supabase
       .from("collection_entries").select("id")
       .eq("user_id", uid).eq("card_id", picked.id)
@@ -508,7 +479,6 @@ export default function MasterSets() {
   };
 
   if (!game) return null;
-
   const gameRarities = RARITIES[game] ?? [];
 
   return (
@@ -528,26 +498,12 @@ export default function MasterSets() {
       ) : (
         <>
           <div className="flex items-center gap-1 mb-6 rounded-lg border bg-muted p-1 w-fit">
-            <button
-              type="button"
-              onClick={() => setSearchMode("sets")}
-              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                searchMode === "sets"
-                  ? "bg-background shadow text-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
+            <button type="button" onClick={() => setSearchMode("sets")}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${searchMode === "sets" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
               Espansioni
             </button>
-            <button
-              type="button"
-              onClick={() => setSearchMode("cards")}
-              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                searchMode === "cards"
-                  ? "bg-background shadow text-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
+            <button type="button" onClick={() => setSearchMode("cards")}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${searchMode === "cards" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
               Cerca carte
             </button>
           </div>
@@ -557,11 +513,7 @@ export default function MasterSets() {
               <div className="relative mb-6 max-w-md">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder={
-                    game === "onepiece" ? "Search by name or code (e.g. Azure Sea Seven, OP14, ST21)"
-                    : game === "yugioh" ? "Search by name or code (e.g. Legend of Blue Eyes, LOB, MRD)"
-                    : "Search by name or code (e.g. Crown Zenith, sv1, swsh12)"
-                  }
+                  placeholder={game === "onepiece" ? "Search by name or code (e.g. Azure Sea Seven, OP14, ST21)" : game === "yugioh" ? "Search by name or code (e.g. Legend of Blue Eyes, LOB, MRD)" : "Search by name or code (e.g. Crown Zenith, sv1, swsh12)"}
                   className="pl-9" value={query} onChange={(e) => setQuery(e.target.value)}
                 />
               </div>
@@ -570,29 +522,19 @@ export default function MasterSets() {
                   <TabsTrigger value="all">All Expansions ({visibleSets.length})</TabsTrigger>
                   <TabsTrigger value="mine">My Master Sets ({ownedSets.length})</TabsTrigger>
                   <TabsTrigger value="recent">
-                    <Clock className="h-3.5 w-3.5 mr-1" />
-                    Ultime aggiunte
+                    <Clock className="h-3.5 w-3.5 mr-1" />Ultime aggiunte
                   </TabsTrigger>
                 </TabsList>
-
                 <TabsContent value="all" className="mt-6">
                   {loadingSets && sets.length === 0 ? <SetGridSkeleton /> : <SetGrid sets={visibleSets} ownedBySet={ownedBySet} onOpen={setActiveSet} />}
                 </TabsContent>
-
                 <TabsContent value="mine" className="mt-6">
-                  {loadingSets && sets.length === 0 ? <SetGridSkeleton />
-                   : ownedSets.length === 0 ? (
+                  {loadingSets && sets.length === 0 ? <SetGridSkeleton /> : ownedSets.length === 0 ? (
                     <p className="text-muted-foreground text-center py-12">You don't own any cards yet. Open an expansion and start building.</p>
-                   ) : <SetGrid sets={ownedSets} ownedBySet={ownedBySet} onOpen={setActiveSet} />}
+                  ) : <SetGrid sets={ownedSets} ownedBySet={ownedBySet} onOpen={setActiveSet} />}
                 </TabsContent>
-
                 <TabsContent value="recent" className="mt-6">
-                  <RecentCards
-                    entries={recentEntries}
-                    loading={loadingRecent}
-                    game={game}
-                    onRemove={removeRecentEntry}
-                  />
+                  <RecentCards entries={recentEntries} loading={loadingRecent} game={game} onRemove={removeRecentEntry} />
                 </TabsContent>
               </Tabs>
             </>
@@ -602,7 +544,6 @@ export default function MasterSets() {
         </>
       )}
 
-      {/* Dialog aggiungi/modifica carta */}
       <Dialog open={!!picked} onOpenChange={(o) => !o && setPicked(null)}>
         <DialogContent onKeyDown={(e) => { if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "TEXTAREA") { e.preventDefault(); saveCard(); } }}>
           <DialogHeader>
@@ -616,17 +557,13 @@ export default function MasterSets() {
                   <p className="font-semibold">{picked.name}</p>
                   <p className="text-xs text-muted-foreground">{picked.code} · {picked.set_name}</p>
                 </div>
-
-                {/* Rarità — dropdown per gioco */}
                 <div>
                   <Label>Rarity</Label>
                   {gameRarities.length > 0 ? (
-                    <Select value={rarity} onValueChange={setRarity}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Seleziona rarità" />
-                      </SelectTrigger>
+                    <Select value={rarity || "__none__"} onValueChange={(v) => setRarity(v === "__none__" ? "" : v)}>
+                      <SelectTrigger><SelectValue placeholder="Seleziona rarità" /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">— Nessuna —</SelectItem>
+                        <SelectItem value="__none__">— Nessuna —</SelectItem>
                         {gameRarities.map((r) => (
                           <SelectItem key={r} value={r}>{r}</SelectItem>
                         ))}
@@ -636,7 +573,6 @@ export default function MasterSets() {
                     <Input value={rarity} onChange={(e) => setRarity(e.target.value)} placeholder="e.g. Rare Holo" />
                   )}
                 </div>
-
                 <div>
                   <Label>Language</Label>
                   <Select value={language} onValueChange={setLanguage}>
@@ -664,12 +600,8 @@ export default function MasterSets() {
 }
 
 // ─── RecentCards ─────────────────────────────────────────────────────────────
-function RecentCards({
-  entries, loading, game, onRemove,
-}: {
-  entries: RecentEntry[];
-  loading: boolean;
-  game: Game;
+function RecentCards({ entries, loading, game, onRemove }: {
+  entries: RecentEntry[]; loading: boolean; game: Game;
   onRemove: (entryId: string, cardId: string) => void;
 }) {
   if (loading) {
@@ -678,30 +610,19 @@ function RecentCards({
         {Array.from({ length: 6 }).map((_, i) => (
           <Card key={i} className="flex items-center gap-3 px-3 py-2 bg-gradient-card">
             <Skeleton className="h-10 w-8 rounded" />
-            <div className="flex-1 space-y-1.5">
-              <Skeleton className="h-4 w-1/2" />
-              <Skeleton className="h-3 w-1/4" />
-            </div>
+            <div className="flex-1 space-y-1.5"><Skeleton className="h-4 w-1/2" /><Skeleton className="h-3 w-1/4" /></div>
           </Card>
         ))}
       </div>
     );
   }
-
-  if (!entries.length) {
-    return <p className="text-muted-foreground text-center py-12">Nessuna carta aggiunta ancora.</p>;
-  }
-
+  if (!entries.length) return <p className="text-muted-foreground text-center py-12">Nessuna carta aggiunta ancora.</p>;
   return (
     <div className="flex flex-col gap-1.5">
-      <p className="text-xs text-muted-foreground mb-3">
-        Ultime {entries.length} carte aggiunte — clicca 🗑 per rimuovere un'aggiunta per errore.
-      </p>
+      <p className="text-xs text-muted-foreground mb-3">Ultime {entries.length} carte aggiunte — clicca 🗑 per rimuovere un'aggiunta per errore.</p>
       {entries.map((e) => {
         const imgSrc = e.imageSmall ? proxiedImage(e.imageSmall) : null;
-        const date = new Date(e.addedAt).toLocaleString("it-IT", {
-          day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
-        });
+        const date = new Date(e.addedAt).toLocaleString("it-IT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
         return (
           <Card key={e.entryId} className="flex items-center gap-3 px-3 py-2 bg-gradient-card">
             {imgSrc ? (
@@ -715,12 +636,7 @@ function RecentCards({
               <p className="text-sm font-semibold truncate">{e.cardName}</p>
               <p className="text-xs text-muted-foreground">{e.cardCode ?? "—"} · {date}</p>
             </div>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-8 w-8 shrink-0 hover:bg-destructive/10 hover:text-destructive"
-              onClick={() => onRemove(e.entryId, e.cardId)}
-            >
+            <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0 hover:bg-destructive/10 hover:text-destructive" onClick={() => onRemove(e.entryId, e.cardId)}>
               <Trash2 className="h-4 w-4" />
             </Button>
           </Card>
@@ -807,13 +723,9 @@ function SetViewSkeleton() {
 }
 
 interface CreateBinderDialogProps {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-  game: Game;
-  set: SetInfo;
-  cards: CardRow[];
-  ownedCardIds: Set<string>;
-  onCreated: (binderId: string) => void;
+  open: boolean; onOpenChange: (o: boolean) => void;
+  game: Game; set: SetInfo; cards: CardRow[];
+  ownedCardIds: Set<string>; onCreated: (binderId: string) => void;
 }
 
 function CreateBinderDialog({ open, onOpenChange, game, set, cards, ownedCardIds, onCreated }: CreateBinderDialogProps) {
@@ -835,22 +747,14 @@ function CreateBinderDialog({ open, onOpenChange, game, set, cards, ownedCardIds
     try {
       const binderId = crypto.randomUUID();
       const { error: binderErr } = await withDbRetry(() =>
-        supabase.from("binders").insert({
-          id: binderId, user_id: userData.user!.id, game,
-          name: name.trim(), cols, rows, pages: pagesNeeded,
-        } as any)
+        supabase.from("binders").insert({ id: binderId, user_id: userData.user!.id, game, name: name.trim(), cols, rows, pages: pagesNeeded } as any)
       );
       if (binderErr) { toast.error(binderErr.message); return; }
       if (cardsToPlace.length > 0) {
-        const slots = cardsToPlace.map((c, i) => ({
-          binder_id: binderId, user_id: userData.user!.id,
-          position: i, card_id: c.id, is_wanted: !ownedCardIds.has(c.id),
-        }));
+        const slots = cardsToPlace.map((c, i) => ({ binder_id: binderId, user_id: userData.user!.id, position: i, card_id: c.id, is_wanted: !ownedCardIds.has(c.id) }));
         const BATCH = 50;
         for (let i = 0; i < slots.length; i += BATCH) {
-          const { error: slotErr } = await withDbRetry(() =>
-            supabase.from("binder_slots").insert(slots.slice(i, i + BATCH) as any)
-          );
+          const { error: slotErr } = await withDbRetry(() => supabase.from("binder_slots").insert(slots.slice(i, i + BATCH) as any));
           if (slotErr) { toast.error(`Slots insert failed: ${slotErr.message}`); break; }
         }
       }
@@ -956,102 +860,123 @@ function SetView({
             <BookOpen className="h-4 w-4 mr-1" /> Crea binder
           </Button>
         )}
-
-        {/* Toggle solo possedute */}
-        {!loading && cards.length > 0 && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <span>{ownedCount}/{cards.length}</span>
           <button
             type="button"
             onClick={() => setShowOnlyOwned((v) => !v)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium border transition-colors ${
-              showOnlyOwned
-                ? "bg-primary text-primary-foreground border-primary"
-                : "bg-muted text-muted-foreground border-border hover:text-foreground"
-            }`}
+            className={`px-2 py-1 rounded text-xs border transition-colors ${showOnlyOwned ? "bg-primary text-primary-foreground border-primary" : "border-border hover:bg-muted"}`}
           >
-            <span>{showOnlyOwned ? "✓" : ""} Solo possedute</span>
+            {showOnlyOwned ? "Tutte" : "Solo mie"}
           </button>
-        )}
-
-        <div className="flex items-center gap-1 rounded-md border bg-muted p-0.5">
-          <Button type="button" size="sm" variant={view === "grid" ? "default" : "ghost"} className="h-7 w-7 p-0" onClick={() => setView("grid")}><LayoutGrid className="h-4 w-4" /></Button>
-          <Button type="button" size="sm" variant={view === "list" ? "default" : "ghost"} className="h-7 w-7 p-0" onClick={() => setView("list")}><List className="h-4 w-4" /></Button>
         </div>
-        <Badge variant="default" className="text-sm">{ownedCount}/{cards.length || set.total || "?"}</Badge>
+        <div className="flex items-center gap-1">
+          <Button variant={view === "grid" ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => setView("grid")}>
+            <LayoutGrid className="h-4 w-4" />
+          </Button>
+          <Button variant={view === "list" ? "secondary" : "ghost"} size="icon" className="h-8 w-8" onClick={() => setView("list")}>
+            <List className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
-      {binderDialogOpen && (
-        <CreateBinderDialog open={binderDialogOpen} onOpenChange={setBinderDialogOpen}
-          game={game} set={set} cards={cards} ownedCardIds={ownedCardIds} onCreated={onBinderCreated} />
-      )}
-
-      {loading ? <SetViewSkeleton /> : visibleCards.length === 0 ? (
+      {loading ? (
+        <SetViewSkeleton />
+      ) : visibleCards.length === 0 ? (
         <p className="text-muted-foreground text-center py-12">
-          {showOnlyOwned ? "Non possiedi ancora carte di questo set." : "No cards available for this expansion yet."}
+          {showOnlyOwned ? "Nessuna carta posseduta in questo set." : "Nessuna carta trovata."}
         </p>
       ) : view === "grid" ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           {visibleCards.map((c) => {
             const owned = ownedCardIds.has(c.id);
             const wanted = wantedCardIds.has(c.id);
-            const lang = ownedLangByCard.get(c.id);
             const busy = quickAddBusy.has(c.id);
             return (
-              <Card key={c.id} className="overflow-hidden bg-gradient-card cursor-pointer hover:shadow-card transition-shadow group relative" onClick={() => onPickCard(c)}>
-                <button type="button" onClick={(e) => { e.stopPropagation(); onToggleWanted(c); }}
-                  className="absolute top-2 left-2 z-10 p-1.5 rounded-full bg-background/90 shadow hover:bg-background transition-colors"
-                  title={wanted ? "Remove from wishlist" : "Add to wishlist"}>
-                  <Heart className={`h-4 w-4 ${wanted ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
-                </button>
-                {owned && lang && <div className="absolute top-2 right-2 z-10 bg-background/90 rounded px-1.5 py-0.5 text-xs shadow">{LANG_FLAG[lang] ?? lang}</div>}
-                {!owned && (
-                  <Button size="sm" variant="secondary" disabled={busy}
-                    className="absolute bottom-12 right-2 z-10 h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                    onClick={(e) => { e.stopPropagation(); onQuickAdd(c); }}>
-                    {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-4 w-4" />}
-                  </Button>
-                )}
-                <CardImg card={c} alt={c.name} className={`w-full card-aspect object-cover transition-all ${owned ? "" : "opacity-60 grayscale"}`} />
+              <Card
+                key={c.id}
+                className="overflow-hidden bg-gradient-card cursor-pointer hover:shadow-card transition-shadow"
+                onClick={() => onPickCard(c)}
+              >
+                <div className="relative">
+                  <CardImg card={c} className="w-full card-aspect object-cover" alt={c.name ?? ""} />
+                  {owned && (
+                    <div className="absolute top-1 left-1 bg-primary text-primary-foreground text-[10px] font-bold px-1.5 py-0.5 rounded-full">✓</div>
+                  )}
+                  <div className="absolute top-1 right-1 flex flex-col gap-1">
+                    <Button
+                      size="icon" variant="secondary" className="h-7 w-7"
+                      onClick={(e) => { e.stopPropagation(); onQuickAdd(c); }}
+                      disabled={busy}
+                    >
+                      {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant={wanted ? "default" : "secondary"}
+                      className="h-7 w-7"
+                      onClick={(e) => { e.stopPropagation(); onToggleWanted(c); }}
+                    >
+                      <Heart className={`h-3 w-3 ${wanted ? "fill-current" : ""}`} />
+                    </Button>
+                  </div>
+                </div>
                 <div className="p-2">
-                  <p className="text-sm font-semibold truncate">{c.name}</p>
-                  <p className="text-xs text-muted-foreground truncate">{c.code}{c.rarity ? ` · ${c.rarity}` : ""}</p>
+                  <p className="text-xs font-semibold truncate">{c.name}</p>
+                  <p className="text-[10px] text-muted-foreground">{c.code}</p>
                 </div>
               </Card>
             );
           })}
         </div>
       ) : (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-2">
           {visibleCards.map((c) => {
             const owned = ownedCardIds.has(c.id);
             const wanted = wantedCardIds.has(c.id);
-            const lang = ownedLangByCard.get(c.id);
             const busy = quickAddBusy.has(c.id);
             return (
-              <Card key={c.id} className={`flex items-center gap-3 px-3 py-2 bg-gradient-card cursor-pointer hover:shadow-card transition-shadow ${owned ? "" : "opacity-70"}`} onClick={() => onPickCard(c)}>
-                <div className="font-mono text-xs text-muted-foreground w-20 shrink-0 truncate">{c.code ?? "—"}</div>
+              <Card
+                key={c.id}
+                className="flex items-center gap-3 px-3 py-2 bg-gradient-card cursor-pointer hover:shadow-card transition-shadow"
+                onClick={() => onPickCard(c)}
+              >
+                <CardImg card={c} className="h-12 w-9 object-cover rounded shrink-0" alt={c.name ?? ""} />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold truncate">{c.name}</p>
-                  {c.rarity && <p className="text-xs text-muted-foreground truncate">{c.rarity}</p>}
+                  <p className="text-xs text-muted-foreground">{c.code}{c.rarity ? ` · ${c.rarity}` : ""}</p>
                 </div>
-                {owned && lang && <Badge variant="secondary" className="text-xs shrink-0">{LANG_FLAG[lang] ?? lang}</Badge>}
-                <div className="flex items-center gap-1 shrink-0">
-                  <Button type="button" size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={(e) => { e.stopPropagation(); onToggleWanted(c); }}>
-                    <Heart className={`h-4 w-4 ${wanted ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
-                  </Button>
-                  <Button type="button" size="sm" variant="ghost" className="h-8 w-8 p-0" disabled={busy} onClick={(e) => { e.stopPropagation(); onQuickAdd(c); }}>
-                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                  </Button>
-                  {owned && (
-                    <Button type="button" size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={(e) => { e.stopPropagation(); onPickCard(c); }}>
-                      <Minus className="h-4 w-4" />
-                    </Button>
-                  )}
-                </div>
+                {owned && <span className="text-primary text-xs font-bold shrink-0">✓</span>}
+                <Button
+                  size="icon" variant="secondary" className="h-8 w-8 shrink-0"
+                  onClick={(e) => { e.stopPropagation(); onQuickAdd(c); }}
+                  disabled={busy}
+                >
+                  {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                </Button>
+                <Button
+                  size="icon"
+                  variant={wanted ? "default" : "ghost"}
+                  className="h-8 w-8 shrink-0"
+                  onClick={(e) => { e.stopPropagation(); onToggleWanted(c); }}
+                >
+                  <Heart className={`h-3 w-3 ${wanted ? "fill-current" : ""}`} />
+                </Button>
               </Card>
             );
           })}
         </div>
       )}
+
+      <CreateBinderDialog
+        open={binderDialogOpen}
+        onOpenChange={setBinderDialogOpen}
+        game={game}
+        set={set}
+        cards={cards}
+        ownedCardIds={ownedCardIds}
+        onCreated={onBinderCreated}
+      />
     </div>
   );
 }
