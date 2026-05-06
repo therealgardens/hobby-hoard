@@ -82,12 +82,19 @@ function parseOnePiece(raw: string): ParsedDeckEntry[] {
 
 // ─── YU-GI-OH PARSER ─────────────────────────────────────────────────────────
 // Gestisce:
-//   "3 Crystal Bond"        — quantità + nome
-//   "3 LEDE-EN001"          — quantità + codice testuale
+//   "3 Crystal Bond"         — quantità + nome
+//   "3 LEDE-EN001"           — quantità + codice testuale
 //   "3 Gandora (LEDE-EN001)" — quantità + nome + codice
 // Ignora: == MONSTER CARDS (58 cards) == e simili
+// Blocca: formato JSON ["Exported from ..."]
 function parseYugioh(raw: string): ParsedDeckEntry[] {
   const results: ParsedDeckEntry[] = [];
+
+  // Blocca esplicitamente il formato JSON YGOPRODeck
+  if (raw.trim().startsWith("[")) {
+    toast.error('Formato non supportato. Usa il formato testo: "3 Crystal Bond" oppure "3 LEDE-EN001"');
+    return [];
+  }
 
   const YGO_CODE = /\b([A-Z]{2,8}-(?:[A-Z]{0,3})?\d{2,4})\b/i;
   const SECTION = /^==.*==\s*$/;
@@ -122,6 +129,54 @@ function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
   return [];
 }
 
+// ─── API ESTERNA YGOPRODECK ───────────────────────────────────────────────────
+async function fetchYgoApiByName(name: string, game: Game): Promise<MatchedCard | null> {
+  try {
+    const res = await fetch(
+      `https://db.ygoprodeck.com/api/v7/cardinfo.php?name=${encodeURIComponent(name)}`
+    );
+    if (!res.ok) return null;
+    const json = await res.json();
+    const card = json?.data?.[0];
+    if (!card) return null;
+    return {
+      id: null,
+      code: String(card.id),
+      name: card.name,
+      image_small: card.card_images?.[0]?.image_url_small ?? null,
+      game,
+      external_id: String(card.id),
+      _fromApi: true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchYgoApiByCode(code: string, game: Game): Promise<MatchedCard | null> {
+  try {
+    // Cerca per nome del set (fuzzy) — YGOPRODeck non ha ricerca per codice set diretto
+    const res = await fetch(
+      `https://db.ygoprodeck.com/api/v7/cardinfo.php?cardset=${encodeURIComponent(code)}`
+    );
+    if (!res.ok) return null;
+    const json = await res.json();
+    const card = json?.data?.[0];
+    if (!card) return null;
+    return {
+      id: null,
+      code: String(card.id),
+      name: card.name,
+      image_small: card.card_images?.[0]?.image_url_small ?? null,
+      game,
+      external_id: String(card.id),
+      _fromApi: true,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ─── BATCH LOOKUP ─────────────────────────────────────────────────────────────
 async function batchLookupCards(
   entries: { id: string; code: string | null; name: string | null; copies: number }[],
@@ -136,7 +191,7 @@ async function batchLookupCards(
         .from("cards")
         .select("id, code, name, image_small, game, external_id")
         .eq("game", game)
-        .in(game === "yugioh" ? "external_id" : "code", codes)
+        .in("code", codes)
     : { data: [] };
 
   // Query per nomi (solo YGO senza codice)
@@ -150,32 +205,55 @@ async function batchLookupCards(
 
   const allFound = [...(byCode ?? []), ...(byName ?? [])];
 
+  // Per YGO: per le carte non trovate nel DB, chiama l'API esterna
+  const apiCache = new Map<string, MatchedCard>();
+
+  if (game === "yugioh") {
+    for (const e of entries) {
+      const alreadyFound = e.code
+        ? allFound.some((c) => c.code?.toUpperCase() === e.code!.toUpperCase())
+        : allFound.some((c) => c.name?.toLowerCase() === e.name?.toLowerCase());
+
+      if (!alreadyFound) {
+        const key = e.code ?? e.name ?? "";
+        if (key && !apiCache.has(key)) {
+          const result = e.name
+            ? await fetchYgoApiByName(e.name, game)
+            : e.code
+            ? await fetchYgoApiByCode(e.code, game)
+            : null;
+          if (result) apiCache.set(key, result);
+        }
+      }
+    }
+  }
+
   return entries.map((e) => {
     const matched = e.code
-      ? allFound.find((c) =>
-          game === "yugioh"
-            ? c.external_id === e.code || c.code?.toUpperCase() === e.code!.toUpperCase()
-            : c.code?.toUpperCase() === e.code!.toUpperCase()
-        )
-      : allFound.find((c) =>
-          c.name?.toLowerCase() === e.name?.toLowerCase()
-        );
+      ? allFound.find((c) => c.code?.toUpperCase() === e.code!.toUpperCase())
+      : allFound.find((c) => c.name?.toLowerCase() === e.name?.toLowerCase());
+
+    const fromApi = !matched
+      ? apiCache.get(e.code ?? e.name ?? "")
+      : null;
+
+    const effective = matched ?? fromApi ?? null;
 
     const imageCode =
-      matched?.external_id ??
-      matched?.code ??
+      effective?.external_id ??
+      effective?.code ??
       e.code ??
       null;
 
     return {
       key: e.id,
-      code: matched?.code ?? e.code ?? "UNKNOWN",
+      code: effective?.code ?? e.code ?? "UNKNOWN",
       copies: e.copies,
       have: 0,
       cardId: matched?.id ?? undefined,
-      name: matched?.name ?? e.name ?? e.code ?? "Carta",
-      imageSmall: matched?.image_small ?? null,
-      game: matched?.game ?? game,
+      name: effective?.name ?? e.name ?? e.code ?? "Carta",
+      imageSmall: effective?.image_small ?? null,
+      game: effective?.game ?? game,
       _imageCode: imageCode,
       _fromApi: !matched,
     };
@@ -188,24 +266,13 @@ async function lookupSingleCard(
   game: Game
 ): Promise<MatchedCard | null> {
   if (entry.code) {
-    const col = game === "yugioh" && /^\d+$/.test(entry.code) ? "external_id" : "code";
     const { data } = await supabase
       .from("cards")
       .select("id, code, name, image_small, game, external_id")
       .eq("game", game)
-      .ilike(col, entry.code)
+      .ilike("code", entry.code)
       .maybeSingle();
     if (data) return data;
-
-    if (game === "yugioh" && !/^\d+$/.test(entry.code)) {
-      const { data: data2 } = await supabase
-        .from("cards")
-        .select("id, code, name, image_small, game, external_id")
-        .eq("game", game)
-        .ilike("external_id", entry.code)
-        .maybeSingle();
-      if (data2) return data2;
-    }
   }
 
   if (entry.name) {
