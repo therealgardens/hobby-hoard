@@ -25,9 +25,6 @@ supabase.auth.onAuthStateChange((_event, session) => {
   cachedAccessToken = session?.access_token ?? null;
 });
 
-// Solo gli host con CORS davvero permissivo possono essere caricati diretti.
-// Tutti gli altri (incluso onepiece-cardgame.com e ygoprodeck quando manda
-// Cross-Origin-Resource-Policy: same-site) passano dal nostro image-proxy.
 const DIRECT_HOSTS = [
   "optcgapi.com",
   ".supabase.co",
@@ -48,15 +45,32 @@ export function proxiedImage(url?: string | null): string | undefined {
     : base;
 }
 
+// Costruisce l'URL immagine YGO da ID numerico (es. "10938846")
+function ygoImageUrl(idOrCode: string): string {
+  // Se è un ID puramente numerico usa l'API YGOPRODeck
+  if (/^\d+$/.test(idOrCode)) {
+    return `https://images.ygoprodeck.com/images/cards_small/${idOrCode}.jpg`;
+  }
+  // Altrimenti è un codice testuale (es. LEDE-EN001) — niente fallback URL disponibile
+  return "";
+}
+
 export function cardImage(
   game: Game | string | null | undefined,
   code: string | null | undefined,
   imageUrl?: string | null,
 ): string | undefined {
   if (imageUrl) return proxiedImage(imageUrl);
+
   if (game === "onepiece" && code) {
     return proxiedImage(`https://en.onepiece-cardgame.com/images/cardlist/card/${code}.png`);
   }
+
+  if (game === "yugioh" && code) {
+    const url = ygoImageUrl(code);
+    if (url) return proxiedImage(url);
+  }
+
   return undefined;
 }
 
@@ -67,9 +81,16 @@ export function cardImageCandidates(
 ): string[] {
   const urls: string[] = [];
   if (imageUrl) urls.push(imageUrl);
+
   if (game === "onepiece" && code) {
     urls.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${code}.png`);
     urls.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${code.replace(/_p\d+$/i, "")}.png`);
   }
+
+  if (game === "yugioh" && code) {
+    const url = ygoImageUrl(code);
+    if (url) urls.push(url);
+  }
+
   return Array.from(new Set(urls)).map((url) => proxiedImage(url)).filter(Boolean) as string[];
 }
