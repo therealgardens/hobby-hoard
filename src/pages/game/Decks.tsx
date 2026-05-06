@@ -167,12 +167,12 @@ export default function Decks() {
       }
 
       const {
-         { session },
+        data: { session },
       } = await supabase.auth.getSession();
 
       const userId = session?.user?.id ?? null;
 
-      const {  deck, error } = await supabase
+      const { data: deck, error } = await supabase
         .from("decks")
         .insert({
           user_id: userId,
@@ -221,7 +221,7 @@ export default function Decks() {
       setActive(deck);
       setCards([]);
 
-      const {  dcards, error } = await supabase
+      const { data: dcards, error } = await supabase
         .from("deck_cards")
         .select("id, code, name, copies")
         .eq("deck_id", deck.id);
@@ -281,7 +281,7 @@ export default function Decks() {
       const haveMap = new Map<string, number>();
 
       if (cardIds.length) {
-        const {  entries } = await supabase
+        const { data: entries } = await supabase
           .from("collection_entries")
           .select("card_id, quantity")
           .in("card_id", cardIds);
@@ -306,7 +306,7 @@ export default function Decks() {
   const addOne = async (card: DeckCard) => {
     try {
       const {
-         { session },
+        data: { session },
       } = await supabase.auth.getSession();
 
       const userId = session?.user?.id ?? null;
@@ -373,13 +373,13 @@ export default function Decks() {
       if (card.have <= 0 || !card.cardId) return;
 
       const {
-         { session },
+        data: { session },
       } = await supabase.auth.getSession();
 
       const userId = session?.user?.id ?? null;
       if (!userId) return;
 
-      const {  rows } = await supabase
+      const { data: rows } = await supabase
         .from("collection_entries")
         .select("id")
         .eq("user_id", userId)
