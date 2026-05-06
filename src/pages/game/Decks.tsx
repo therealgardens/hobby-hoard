@@ -53,51 +53,39 @@ function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
       continue;
     }
 
-    // Supporta One Piece / Yu-Gi-Oh codice:
-    // 1 Boa Hancock (OP14-041)
-    // 4 Nami (EB03-053)
-    // 1xOP15-002
-    // 4xOP15-053
-    // 3 Gandora (LEDE-EN001)
-    const compactCode = t.match(/^(\d+)\s*[xX]\s*([A-Z]{2,5}\d{0,2}-(?:[A-Z]{0,3})?\d{2,4}[A-Za-z0-9_-]*)$/i);
-    if (compactCode) {
+    // Formato compatto: 1xOP15-002
+    const compact = t.match(/^(\d+)\s*[xX]\s*([A-Z]{2,5}\d{0,2}-(?:[A-Z]{0,3})?\d{2,4}[A-Za-z0-9_-]*)$/i);
+    if (compact) {
       results.push({
-        copies: Math.max(1, parseInt(compactCode[1], 10)),
-        code: compactCode[2].toUpperCase(),
+        copies: Math.max(1, parseInt(compact[1], 10)),
+        code: compact[2].toUpperCase(),
       });
       continue;
     }
 
+    // Formato classico con codice presente nella riga
     const codeMatch = t.match(CODE_RE);
     if (codeMatch) {
       const code = codeMatch[1].toUpperCase();
       let copies = 1;
 
-      const qtyPatterns = [
-        /^(\d+)\s*[xX]?\s*/,
-        /(?:^|[\s(])(\d+)(?:[xX\)\s]|$)/,
-        /[xX](\d+)/,
-      ];
-
-      for (const pattern of qtyPatterns) {
-        const m = t.match(pattern);
-        if (m) {
-          copies = Math.max(1, parseInt(m[1], 10));
-          break;
-        }
+      const qtyMatch = t.match(/^(\d+)/);
+      if (qtyMatch) {
+        copies = Math.max(1, parseInt(qtyMatch[1], 10));
       }
 
       results.push({ copies, code });
       continue;
     }
 
-    // Yu-Gi-Oh per nome: "3 Crystal Bond"
+    // Yu-Gi-Oh per nome: 3 Crystal Bond
     if (game === "yugioh") {
       const byName = t.match(/^(\d+)\s+(.+)$/);
       if (byName) {
-        const copies = Math.max(1, parseInt(byName[1], 10));
-        const name = byName[2].trim();
-        if (name) results.push({ copies, name });
+        results.push({
+          copies: Math.max(1, parseInt(byName[1], 10)),
+          name: byName[2].trim(),
+        });
       }
     }
   }
@@ -193,21 +181,12 @@ export default function Decks() {
 
     if (!dcards?.length) return;
 
-    const entries = dcards.map((d) => {
-      let code = d.code?.toUpperCase() ?? null;
-
-      if (!code && d.name) {
-        const m = d.name.match(/\b([A-Z]{2,5}\d{0,2}-(?:[A-Z]{0,3})?\d{2,4}[A-Za-z0-9_-]*)\b/i);
-        if (m) code = m[1].toUpperCase();
-      }
-
-      return {
-        key: d.id,
-        code,
-        name: d.name ?? null,
-        copies: d.copies,
-      };
-    });
+    const entries = dcards.map((d) => ({
+      key: d.id,
+      code: d.code?.toUpperCase() ?? null,
+      name: d.name ?? null,
+      copies: d.copies,
+    }));
 
     const codeEntries = entries.filter((e) => !!e.code) as {
       key: string;
