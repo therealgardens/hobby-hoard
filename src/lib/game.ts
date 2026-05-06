@@ -25,20 +25,21 @@ supabase.auth.onAuthStateChange((_event, session) => {
   cachedAccessToken = session?.access_token ?? null;
 });
 
-// Hosts con CORS permissivo o CDN pubblico — carica direttamente senza proxy
+// Solo gli host con CORS davvero permissivo possono essere caricati diretti.
+// Tutti gli altri (incluso onepiece-cardgame.com e ygoprodeck quando manda
+// Cross-Origin-Resource-Policy: same-site) passano dal nostro image-proxy.
 const DIRECT_HOSTS = [
   "optcgapi.com",
-  "images.ygoprodeck.com",
-  "cdn.ygoprodeck.com",
-  "en.onepiece-cardgame.com",
+  ".supabase.co",
+  ".supabase.in",
 ];
 
 export function proxiedImage(url?: string | null): string | undefined {
   if (!url) return undefined;
   try {
     const host = new URL(url).hostname;
-    if (DIRECT_HOSTS.some((h) => host.endsWith(h))) return url;
-  } catch (_) {}
+    if (DIRECT_HOSTS.some((h) => host === h.replace(/^\./, "") || host.endsWith(h))) return url;
+  } catch (_) { return url; }
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
   if (!projectId) return url;
   const base = `https://${projectId}.supabase.co/functions/v1/image-proxy?url=${encodeURIComponent(url)}`;
