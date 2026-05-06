@@ -56,28 +56,20 @@ type MatchedCard = {
 function parseOnePiece(raw: string): ParsedDeckEntry[] {
   const results: ParsedDeckEntry[] = [];
 
-  // Lookbehind/lookahead per non catturare caratteri attaccati (es. la "x" in "4xOP15-040")
-  const OP_CODE = /(?<![A-Z0-9])([A-Z]{2,3}\d{2,3}-\d{3,4})(?![A-Z0-9])/i;
-
   const SECTION = /^(leader|character|event|stage)\b/i;
 
   for (const line of raw.split(/\r?\n/)) {
     const t = line.trim();
     if (!t || t.startsWith("//") || SECTION.test(t)) continue;
 
-    const codeMatch = t.match(OP_CODE);
-    if (!codeMatch) continue;
+    // Estrae quantità e codice in un'unica regex:
+    // Gestisce: 4xOP15-040 / 4x OP15-040 / 4 OP15-040 / 4 Nome (OP15-040)
+    // Il codice è sempre: 2-3 lettere + 2-3 cifre + trattino + 3-4 cifre
+    const m = t.match(/^(\d+)\s*[xX]?\s*(?:[^(]*\()?([A-Z]{2,3}\d{2,3}-\d{3,4})\)?/i);
+    if (!m) continue;
 
-    const code = codeMatch[1].toUpperCase();
-
-    // Quantità: numero iniziale seguito da x/X, oppure numero seguito da spazio
-    const qtyMatch = t.match(/^(\d+)\s*[xX]/);
-    const qtyMatch2 = t.match(/^(\d+)\s+/);
-    const copies = qtyMatch
-      ? Math.max(1, parseInt(qtyMatch[1], 10))
-      : qtyMatch2
-      ? Math.max(1, parseInt(qtyMatch2[1], 10))
-      : 1;
+    const copies = Math.max(1, parseInt(m[1], 10));
+    const code = m[2].toUpperCase();
 
     results.push({ copies, code });
   }
