@@ -68,17 +68,19 @@ export function CardSearch({
     const id = ++reqIdRef.current;
     setLoading(true);
 
+    const SELECT_COLS = "id, code, name, image_small, image_large, set_id, set_name, rarity, game";
+
     if (ownedOnly && ownedCardIds && ownedCardIds.size > 0) {
       const { data: local } = await supabase
         .from("cards")
-        .select("*")
+        .select(SELECT_COLS)
         .eq("game", game)
         .in("id", Array.from(ownedCardIds))
         .or(`name.ilike.%${term}%,code.ilike.%${term}%`)
-        .limit(40);
+        .limit(50);
       if (id !== reqIdRef.current) return;
       setLoading(false);
-      const filtered = local ?? [];
+      const filtered = (local ?? []) as unknown as CardRow[];
       setResults(filtered);
       if (filtered.length > 0) refreshStatus(filtered);
       else toast.info("No owned cards match your search");
@@ -87,10 +89,10 @@ export function CardSearch({
 
     const { data: local } = await supabase
       .from("cards")
-      .select("*")
+      .select(SELECT_COLS)
       .eq("game", game)
       .or(`name.ilike.%${term}%,code.ilike.%${term}%`)
-      .limit(40);
+      .limit(50) as unknown as { data: CardRow[] | null };
     if (id !== reqIdRef.current) return;
 
     const localFiltered = applyOwnedFilter(local ?? []);
