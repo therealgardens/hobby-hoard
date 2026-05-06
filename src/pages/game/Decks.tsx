@@ -52,7 +52,7 @@ function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
       continue;
     }
 
-    // Formato che già funziona: 1xOP12-045 / 4xEB03-053 / 3xLEDE-EN001
+    // Formato già funzionante: 1xOP12-045 / 4xEB03-053 / 3xLEDE-EN001
     let m = t.match(
       /^(\d+)\s*[xX]\s*([A-Z0-9]{2,10}-(?:[A-Z]{0,3})?\d{2,4}[A-Z0-9_-]*)$/i
     );
@@ -64,17 +64,16 @@ function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
       continue;
     }
 
-    // FIX One Piece / Yu-Gi-Oh con nome + codice:
-    // 1 Boa Hancock (OP14-041)
-    // 4 Nami (EB03-053)
-    // 3 Gandora (LEDE-EN001)
-    m = t.match(/^(\d+)\s+(.+?)\s+\\(([A-Z0-9-]+)\\)$/i);
-    if (m) {
-      results.push({
-        copies: Math.max(1, parseInt(m[1], 10)),
-        code: m[3].toUpperCase(),
-      });
-      continue;
+    // FIX SOLO One Piece: 1 Boa Hancock (OP14-041)
+    if (game === "onepiece") {
+      m = t.match(/^(\d+)\s+.*\\(([A-Z]{2}\d{2}-\d{3})\\)$/i);
+      if (m) {
+        results.push({
+          copies: Math.max(1, parseInt(m[1], 10)),
+          code: m[2].toUpperCase(),
+        });
+        continue;
+      }
     }
 
     // Solo codice: OP12-045
@@ -109,7 +108,6 @@ function parseDeckList(raw: string, game: Game): ParsedDeckEntry[] {
 
   return results;
 }
-
 
 type DeckCard = {
   key: string;
@@ -164,12 +162,12 @@ export default function Decks() {
       }
 
       const {
-        data: { session },
+         { session },
       } = await supabase.auth.getSession();
 
       const userId = session?.user?.id ?? null;
 
-      const { data: deck, error } = await supabase
+      const {  deck, error } = await supabase
         .from("decks")
         .insert({
           user_id: userId,
@@ -218,7 +216,7 @@ export default function Decks() {
       setActive(deck);
       setCards([]);
 
-      const { data: dcards, error } = await supabase
+      const {  dcards, error } = await supabase
         .from("deck_cards")
         .select("id, code, name, copies")
         .eq("deck_id", deck.id);
@@ -233,27 +231,27 @@ export default function Decks() {
       const finalCards: DeckCard[] = [];
 
       for (const d of dcards) {
-        const savedCode = d.code?.trim() || "";
-        const savedName = d.name?.trim() || "";
         let matchedCard: any = null;
+        const code = d.code?.toUpperCase() ?? null;
+        const name = d.name ?? null;
 
-        if (savedCode) {
+        if (code) {
           const { data } = await supabase
             .from("cards")
             .select("id, code, name, image_small, game")
             .eq("game", currentGame)
-            .ilike("code", savedCode)
+            .ilike("code", code)
             .maybeSingle();
 
           if (data) matchedCard = data;
         }
 
-        if (!matchedCard && savedName) {
+        if (!matchedCard && name) {
           const { data } = await supabase
             .from("cards")
             .select("id, code, name, image_small, game")
             .eq("game", currentGame)
-            .ilike("name", savedName)
+            .ilike("name", name)
             .maybeSingle();
 
           if (data) matchedCard = data;
@@ -261,11 +259,11 @@ export default function Decks() {
 
         finalCards.push({
           key: d.id,
+          code: matchedCard?.code ?? code ?? "UNKNOWN",
           copies: d.copies,
           have: 0,
           cardId: matchedCard?.id,
-          name: matchedCard?.name ?? savedName ?? savedCode ?? "Carta",
-          code: matchedCard?.code ?? savedCode ?? "",
+          name: matchedCard?.name ?? name ?? code ?? "Carta",
           imageSmall: matchedCard?.image_small ?? null,
           game: matchedCard?.game ?? currentGame,
         });
@@ -278,7 +276,7 @@ export default function Decks() {
       const haveMap = new Map<string, number>();
 
       if (cardIds.length) {
-        const { data: entries } = await supabase
+        const {  entries } = await supabase
           .from("collection_entries")
           .select("card_id, quantity")
           .in("card_id", cardIds);
@@ -303,7 +301,7 @@ export default function Decks() {
   const addOne = async (card: DeckCard) => {
     try {
       const {
-        data: { session },
+         { session },
       } = await supabase.auth.getSession();
 
       const userId = session?.user?.id ?? null;
@@ -311,7 +309,7 @@ export default function Decks() {
 
       let cardId = card.cardId;
 
-      if (!cardId && card.code) {
+      if (!cardId && card.code && card.code !== "UNKNOWN") {
         const { data } = await supabase
           .from("cards")
           .select("id")
@@ -370,13 +368,13 @@ export default function Decks() {
       if (card.have <= 0 || !card.cardId) return;
 
       const {
-        data: { session },
+         { session },
       } = await supabase.auth.getSession();
 
       const userId = session?.user?.id ?? null;
       if (!userId) return;
 
-      const { data: rows } = await supabase
+      const {  rows } = await supabase
         .from("collection_entries")
         .select("id")
         .eq("user_id", userId)
@@ -544,10 +542,9 @@ export default function Decks() {
             {cards.map((card) => {
               const ok = card.have >= card.copies;
               const owned = card.have > 0;
-
               const img =
                 card.imageSmall ||
-                (card.code ? cardImage(card.game ?? currentGame, card.code, card.imageSmall) : null);
+                cardImage(card.game ?? currentGame, card.code, card.imageSmall);
 
               return (
                 <div
@@ -561,8 +558,7 @@ export default function Decks() {
                       loading="lazy"
                       className={`w-full card-aspect object-cover ${owned ? "" : "opacity-40 grayscale"}`}
                       onError={(e) => {
-                        const el = e.currentTarget as HTMLImageElement;
-                        el.style.opacity = "0";
+                        (e.currentTarget as HTMLImageElement).style.opacity = "0";
                       }}
                     />
                   )}
@@ -580,9 +576,7 @@ export default function Decks() {
 
                   <div className="p-2 bg-card space-y-1">
                     <p className="text-xs font-semibold truncate">{card.name}</p>
-                    <p className="text-[10px] text-muted-foreground font-mono">
-                      {card.code || "—"}
-                    </p>
+                    <p className="text-[10px] text-muted-foreground font-mono">{card.code}</p>
 
                     <div className="flex items-center justify-between gap-1 pt-1">
                       <Button
