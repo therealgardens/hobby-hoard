@@ -14,8 +14,10 @@ const ALLOWED_HOSTS = new Set([
   "optcgapi.com",
   "www.apitcg.com",
   "images.pokemontcg.io",
+  "images.scrydex.com",
   "assets.pokemon.com",
   "images.ygoprodeck.com",
+  "cdn.ygoprodeck.com",
   "storage.googleapis.com",
 ]);
 
