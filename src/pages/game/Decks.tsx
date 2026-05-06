@@ -84,25 +84,32 @@ function parseOnePiece(raw: string): ParsedDeckEntry[] {
 function parseYugioh(raw: string): ParsedDeckEntry[] {
   const results: ParsedDeckEntry[] = [];
 
-  const trimmed = raw.trim();
-  if (trimmed.startsWith("[")) {
-    try {
-      const arr: unknown[] = JSON.parse(trimmed);
-      const idCount = new Map<string, number>();
-      for (const item of arr) {
-        if (typeof item !== "string") continue;
-        if (item.startsWith("Exported from") || item.startsWith("http")) continue;
-        if (!/^\d+$/.test(item)) continue;
-        idCount.set(item, (idCount.get(item) ?? 0) + 1);
-      }
-      for (const [id, copies] of idCount) {
-        results.push({ copies, code: id });
-      }
-      return results;
-    } catch {
-      // fallthrough al parser testo
+  const YGO_CODE = /\b([A-Z]{2,8}-(?:[A-Z]{0,3})?\d{2,4})\b/i;
+  const SECTION = /^==.*==\s*$/;
+
+  for (const line of raw.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || t.startsWith("//") || SECTION.test(t)) continue;
+
+    const codeMatch = t.match(YGO_CODE);
+    if (codeMatch) {
+      const code = codeMatch[1].toUpperCase();
+      const qtyMatch = t.match(/^(\d+)\s*/);
+      const copies = qtyMatch ? Math.max(1, parseInt(qtyMatch[1], 10)) : 1;
+      results.push({ copies, code });
+      continue;
+    }
+
+    const nameMatch = t.match(/^(\d+)\s+(.+)$/);
+    if (nameMatch) {
+      const copies = Math.max(1, parseInt(nameMatch[1], 10));
+      const name = nameMatch[2].trim();
+      if (name) results.push({ copies, name });
     }
   }
+
+  return results;
+}
 
   const YGO_CODE = /\b([A-Z]{2,8}-(?:[A-Z]{0,3})?\d{2,4})\b/i;
   const SECTION = /^==.*==\s*$/;
