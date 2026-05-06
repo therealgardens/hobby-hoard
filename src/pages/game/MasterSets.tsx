@@ -48,7 +48,7 @@ const LANG_FLAG: Record<string, string> = {
 
 const RARITIES: Record<Game, string[]> = {
   onepiece: ["C", "UC", "R", "SR", "L", "SEC", "SP", "TR", "AA", "MR", "Promo"],
-  yugioh: ["N", "R", "SR", "UR", "Ultimate Rare", "SEC", "Prismatic SR", "Quarter Century SEC", "Collector's Rare", "Ghost Rare", "Starlight Rare", "Promo"],
+  yugioh: ["N", "R", "SR", "UR", "Ultimate Rare", "SEC", "Prismatic SR", "Quarter Century SEC", "Collectors Rare", "Ghost Rare", "Starlight Rare", "Promo"],
   pokemon: ["Common", "Uncommon", "Rare", "Double Rare", "Illustration Rare", "Ultra Rare", "Special Illustration Rare", "Hyper Rare", "Shiny Rare", "Shiny Ultra Rare", "Ace Spec", "Promo"],
 };
 
