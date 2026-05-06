@@ -49,7 +49,7 @@ const LANG_FLAG: Record<string, string> = {
 // ─── Rarità per gioco ─────────────────────────────────────────────────────────
 const RARITIES: Record<Game, string[]> = {
   onepiece: ["C", "UC", "R", "SR", "L", "SEC", "SP", "TR", "AA", "MR", "Promo"],
-  yugioh: ["N", "R", "SR", "UR", "Ultimate Rare", "SEC", "Prismatic SR", "Quarter Century SEC", "Collectors Rare", "Ghost Rare", "Starlight Rare", "Promo"],
+  yugioh: ["N", "R", "SR", "UR", "Ultimate Rare", "SEC", "Prismatic SR", "Quarter Century SEC", "Collector's Rare", "Ghost Rare", "Starlight Rare", "Promo"],
   pokemon: ["Common", "Uncommon", "Rare", "Double Rare", "Illustration Rare", "Ultra Rare", "Special Illustration Rare", "Hyper Rare", "Shiny Rare", "Shiny Ultra Rare", "Ace Spec", "Promo"],
 };
 
@@ -123,7 +123,7 @@ export default function MasterSets() {
     if (!game || !user) return;
     const uid = user.id;
 
-    const {  ownedRows, error: ownedErr } = await withDbRetry(() =>
+    const { data: ownedRows, error: ownedErr } = await withDbRetry(() =>
       supabase.from("collection_entries").select("card_id, language").eq("user_id", uid).eq("game", game),
     );
     if (ownedErr) { console.warn("refreshOwned failed", ownedErr); return; }
@@ -131,7 +131,7 @@ export default function MasterSets() {
     const cardIds = Array.from(new Set((ownedRows ?? []).map((r: any) => r.card_id).filter(Boolean))) as string[];
     let cardsById = new Map<string, { set_id: string | null; set_name: string | null; code: string | null }>();
     if (cardIds.length) {
-      const {  cards, error: cardsErr } = await withDbRetry(() =>
+      const { data: cards, error: cardsErr } = await withDbRetry(() =>
         supabase.from("cards").select("id, set_id, set_name, code").in("id", cardIds),
       );
       if (cardsErr) { console.warn("refreshOwned cards failed", cardsErr); return; }
@@ -168,7 +168,7 @@ export default function MasterSets() {
     if (!game || !user) return;
     setLoadingRecent(true);
     try {
-      const {  entries } = await supabase
+      const { data: entries } = await supabase
         .from("collection_entries")
         .select("id, card_id, created_at")
         .eq("user_id", user.id)
@@ -179,7 +179,7 @@ export default function MasterSets() {
       if (!entries?.length) { setRecentEntries([]); return; }
 
       const cardIds = entries.map((e) => e.card_id).filter(Boolean) as string[];
-      const {  cards } = await supabase
+      const { data: cards } = await supabase
         .from("cards")
         .select("id, name, code, image_small")
         .in("id", cardIds);
@@ -217,7 +217,7 @@ export default function MasterSets() {
     toast.success("Carta rimossa");
 
     // Aggiorna owned se la carta non ha più entries
-    const {  remain } = await supabase
+    const { data: remain } = await supabase
       .from("collection_entries")
       .select("id")
       .eq("card_id", cardId)
@@ -375,7 +375,7 @@ export default function MasterSets() {
     writeOwnedCache(nextCounts, nextIds, nextLangs);
 
     try {
-      const {  existing } = await supabase
+      const { data: existing } = await supabase
         .from("collection_entries").select("id, quantity")
         .eq("user_id", uid).eq("card_id", c.id).maybeSingle();
       let error;
@@ -443,7 +443,7 @@ export default function MasterSets() {
     setPicked(null);
 
     try {
-      const {  existing } = await supabase
+      const { data: existing } = await supabase
         .from("collection_entries").select("id, quantity")
         .eq("user_id", uid).eq("card_id", savedId).maybeSingle();
       let error;
@@ -480,7 +480,7 @@ export default function MasterSets() {
     if (!picked || !game || !user) return;
     const uid = user.id;
     // Prende solo l'entry più recente — non tocca i doppioni
-    const {  rows } = await supabase
+    const { data: rows } = await supabase
       .from("collection_entries").select("id")
       .eq("user_id", uid).eq("card_id", picked.id)
       .order("created_at", { ascending: false }).limit(1);
@@ -492,7 +492,7 @@ export default function MasterSets() {
     const removedId = picked.id;
     const removedSetId = setIdForCard(game, picked);
     setPicked(null);
-    const {  remain } = await supabase
+    const { data: remain } = await supabase
       .from("collection_entries").select("id")
       .eq("user_id", uid).eq("card_id", removedId).limit(1);
     if (!remain || remain.length === 0) {
@@ -828,7 +828,7 @@ function CreateBinderDialog({ open, onOpenChange, game, set, cards, ownedCardIds
   const pagesNeeded = Math.max(1, Math.ceil(cardsToPlace.length / perPage));
 
   const create = async () => {
-    const {  userData } = await supabase.auth.getUser();
+    const { data: userData } = await supabase.auth.getUser();
     if (!userData.user) return toast.error("Not signed in");
     if (!name.trim() || creating) return;
     setCreating(true);
@@ -926,7 +926,7 @@ function SetView({
       if (error) toast.error(error.message);
       const remote = ((data?.cards as CardRow[]) ?? []);
       const dashed = set.id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
-      const {  local } = await supabase.from("cards").select("*").eq("game", game)
+      const { data: local } = await supabase.from("cards").select("*").eq("game", game)
         .or(game === "pokemon" ? `set_id.eq.${set.id}` : `set_name.ilike.%[${set.id}]%,set_name.ilike.%[${dashed}]%,code.ilike.${set.id}-%`)
         .limit(500);
       const map = new Map<string, CardRow>();
