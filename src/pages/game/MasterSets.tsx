@@ -844,7 +844,9 @@ function SetView({
         .or(game === "pokemon" ? `set_id.eq.${set.id}` : `set_name.ilike.%[${set.id}]%,set_name.ilike.%[${dashed}]%,code.ilike.${set.id}-%`)
         .limit(500);
       const map = new Map<string, CardRow>();
-      for (const c of [...(local ?? []), ...remote]) map.set(c.id, c);
+      for (const c of [...(local ?? []), ...remote]) {
+        map.set(c.id + "_" + (c.rarity ?? ""), c);
+      }
       setCards(Array.from(map.values()).sort((a, b) => (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })));
       setLoading(false);
     })();
