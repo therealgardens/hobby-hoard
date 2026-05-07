@@ -682,13 +682,23 @@ function SetThumb({ s }: { s: SetInfo }) {
   return <img src={src} alt="" className="h-14 w-14 object-contain rounded bg-background/40 p-1 shrink-0" loading="lazy" onError={() => setIdx((i) => i + 1)} />;
 }
 
+// Aggiorna la firma del componente CardImg
 function CardImg({ card, className, alt }: { card: CardRow; className: string; alt: string }) {
-  const candidates = useMemo(() => cardImageCandidates(card.game, card.code, card.image_small ?? card.image_large), [card.game, card.code, card.image_small, card.image_large]);
+  const candidates = useMemo(
+    () => cardImageCandidates(
+      card.game,
+      card.code,
+      card.image_small ?? card.image_large,
+      card.rarity, // ← aggiunto
+    ),
+    [card.game, card.code, card.image_small, card.image_large, card.rarity]
+  );
   const [idx, setIdx] = useState(0);
   const src = candidates[idx];
   if (!src) return <div className="w-full card-aspect bg-muted flex items-center justify-center text-muted-foreground text-xs">No image</div>;
   return <img src={src} alt={alt} loading="lazy" className={className} onError={() => setIdx((i) => i + 1)} />;
 }
+
 
 function SetGrid({ sets, ownedBySet, onOpen }: { sets: SetInfo[]; ownedBySet: Map<string, number>; onOpen: (s: SetInfo) => void }) {
   if (sets.length === 0) return <p className="text-muted-foreground text-center py-12">No expansions match your search.</p>;
