@@ -840,24 +840,48 @@ function SetView({
       if (error) toast.error(error.message);
       const remote = ((data?.cards as CardRow[]) ?? []);
       const dashed = set.id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
-      const { data: local } = await supabase.from("cards").select("*").eq("game", game)
-        .or(game === "pokemon" ? `set_id.eq.${set.id}` : `set_name.ilike.%[${set.id}]%,set_name.ilike.%[${dashed}]%,code.ilike.${set.id}-%,code.ilike.${dashed}-%`)
-        .limit(500);
       const setIdUpper = set.id.toUpperCase();
       const dashedUpper = dashed.toUpperCase();
-      const filtered = (local ?? []).filter((c) =>
-        c.set_id === set.id ||
-        c.set_id === dashed ||
-        (c.code ?? "").toUpperCase().startsWith(setIdUpper + "-") ||
-        (c.code ?? "").toUpperCase().startsWith(dashedUpper + "-")
-      );
+      const orFilter = game === "pokemon"
+        ? `set_id.eq.${set.id}`
+        : [
+            `set_id.ilike.${set.id}`,
+            `set_id.ilike.${dashed}`,
+            `set_id.ilike.${set.id}-%`,
+            `set_id.ilike.%-${set.id}`,
+            `set_id.ilike.${dashed}-%`,
+            `set_id.ilike.%-${dashed}`,
+            `set_name.ilike.%[${set.id}]%`,
+            `set_name.ilike.%[${dashed}]%`,
+            `code.ilike.${set.id}-%`,
+            `code.ilike.${dashed}-%`,
+          ].join(",");
+      const { data: local } = await supabase.from("cards").select("*").eq("game", game)
+        .or(orFilter)
+        .limit(1000);
+      const filtered = game === "pokemon"
+        ? (local ?? [])
+        : (local ?? []).filter((c) => {
+            const sid = (c.set_id ?? "").toUpperCase();
+            const code = (c.code ?? "").toUpperCase();
+            const sname = (c.set_name ?? "").toUpperCase();
+            return (
+              sid === setIdUpper ||
+              sid === dashedUpper ||
+              sid.startsWith(setIdUpper + "-") || sid.endsWith("-" + setIdUpper) ||
+              sid.startsWith(dashedUpper + "-") || sid.endsWith("-" + dashedUpper) ||
+              code.startsWith(setIdUpper + "-") ||
+              code.startsWith(dashedUpper + "-") ||
+              sname.includes("[" + setIdUpper + "]") ||
+              sname.includes("[" + dashedUpper + "]")
+            );
+          });
       const map = new Map<string, CardRow>();
       for (const c of [...filtered, ...remote]) {
-        map.set(c.id + "_" + (c.rarity ?? ""), c);
+        map.set(c.id, c);
       }
       const sorted = Array.from(map.values()).sort((a, b) => (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true }));
       setCards(sorted);
-      console.log("Cards loaded for set", set.id, sorted.map(c => ({ id: c.id, code: c.code, rarity: c.rarity, name: c.name })));
       setLoading(false);
     })();
   }, [game, set.id]);
