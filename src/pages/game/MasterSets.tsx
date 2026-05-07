@@ -77,6 +77,14 @@ function setIdForCard(game: Game, c: { set_id: string | null; set_name: string |
   return fromSetId || extractSetId(c.set_name) || extractSetId(c.code ?? "");
 }
 
+// Restituisce il codice-base senza suffissi di variante (_p1, _p2, _alt, -alt ecc.)
+function baseCode(c: CardRow): string {
+  return (c.code ?? c.id)
+    .replace(/_p\d+$/i, "")
+    .replace(/[-_]alt\d*$/i, "")
+    .replace(/_sp$/i, "");
+}
+
 export default function MasterSets() {
   const { game } = useParams<{ game: Game }>();
   const navigate = useNavigate();
@@ -684,12 +692,7 @@ function SetThumb({ s }: { s: SetInfo }) {
 
 function CardImg({ card, className, alt }: { card: CardRow; className: string; alt: string }) {
   const candidates = useMemo(
-    () => cardImageCandidates(
-      card.game,
-      card.code,
-      card.image_small ?? card.image_large,
-      card.rarity,
-    ),
+    () => cardImageCandidates(card.game, card.code, card.image_small ?? card.image_large, card.rarity),
     [card.game, card.code, card.image_small, card.image_large, card.rarity]
   );
   const [idx, setIdx] = useState(0);
@@ -831,7 +834,6 @@ function SetView({
 
   useEffect(() => { try { localStorage.setItem("masterset.view", view); } catch (_) {} }, [view]);
 
-  // ← UNICO useEffect per caricare le carte — nessun duplicato
   useEffect(() => {
     setLoading(true);
     (async () => {
@@ -839,11 +841,11 @@ function SetView({
       if (error) toast.error(error.message);
       const remote = ((data?.cards as CardRow[]) ?? []);
 
-      const dashed = set.id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
-      const setIdUpper = set.id.toUpperCase();
-      const dashedUpper = dashed.toUpperCase();
+      // Varianti del set id (con e senza trattino): ST10 ↔ ST-10
+      const setIdClean = set.id.toUpperCase().replace(/-/g, "");
+      const setIdDashed = set.id.replace(/^([A-Za-z]+)(\d+)$/, "$1-$2").toUpperCase();
 
-      // Query locale — usa set_id esatto (con e senza trattino)
+      // Query locale: prende entrambe le forme del set_id in un colpo solo
       const { data: local } = await supabase
         .from("cards")
         .select("*")
@@ -851,54 +853,63 @@ function SetView({
         .or(
           game === "pokemon"
             ? `set_id.eq.${set.id}`
-            : `set_id.eq.${set.id},set_id.eq.${dashed}`
+            : `set_id.eq.${set.id},set_id.eq.${setIdDashed},set_id.eq.${setIdClean}`
         )
         .limit(500);
 
-      // Filtra le carte remote per appartenenza certa al set
+      // Filtra le remote che appartengono davvero a questo set
       const remoteFiltered = remote.filter((c) => {
         const code = (c.code ?? "").toUpperCase();
-        const sid = (c.set_id ?? "").toUpperCase();
+        const sid = (c.set_id ?? "").toUpperCase().replace(/-/g, "");
         return (
-          sid === setIdUpper ||
-          sid === dashedUpper ||
-          code.startsWith(setIdUpper + "-") ||
-          code.startsWith(dashedUpper + "-")
+          sid === setIdClean ||
+          code.startsWith(setIdClean + "-") ||
+          code.startsWith(setIdDashed + "-")
         );
       });
 
-      // Deduplicazione per id — la carta locale vince sulle remote
-      const map = new Map<string, CardRow>();
+      // Step 1 — dedup per id (locale vince su remota)
+      const idMap = new Map<string, CardRow>();
       for (const c of [...(local ?? []), ...remoteFiltered]) {
-        if (!map.has(c.id)) map.set(c.id, c);
+        if (!idMap.has(c.id)) idMap.set(c.id, c);
       }
 
-      // Dopo aver costruito la map, aggiungi questo step:
-// Deduplicazione per codice-base — elimina varianti alternative (_p1, _p2, alt)
-const baseCodeMap = new Map<string, CardRow>();
-for (const c of Array.from(map.values())) {
-  // Estrae il codice base togliendo suffissi tipo _p1, _p2, _alt, -alt
-  const baseCode = (c.code ?? c.id)
-    .replace(/_p\d+$/i, "")
-    .replace(/-alt\d*$/i, "")
-    .replace(/_alt\d*$/i, "");
-  
-  const existing = baseCodeMap.get(baseCode);
-  if (!existing) {
-    baseCodeMap.set(baseCode, c);
-  } else {
-    // Preferisci la carta con image_small valorizzata
-    if (!existing.image_small && c.image_small) {
-      baseCodeMap.set(baseCode, c);
-    }
-  }
-}
+      // Step 2 — dedup per codice-base: elimina varianti alternative (_p1, _p2, _alt ecc.)
+      // Per ogni codice-base teniamo solo la carta "principale" (senza suffisso)
+      const baseMap = new Map<string, CardRow>();
+      for (const c of Array.from(idMap.values())) {
+        const bc = (c.code ?? c.id)
+          .toUpperCase()
+          .replace(/_P\d+$/i, "")
+          .replace(/[-_]ALT\d*$/i, "")
+          .replace(/_SP$/i, "");
 
-setCards(
-  Array.from(baseCodeMap.values()).sort((a, b) =>
-    (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })
-  )
-);
+        const existing = baseMap.get(bc);
+        if (!existing) {
+          baseMap.set(bc, c);
+        } else {
+          // Preferisci la carta che ha image_small, o quella senza suffisso nel codice
+          const cHasSuffix = /[_-](P\d+|ALT\d*|SP)$/i.test(c.code ?? "");
+          const exHasSuffix = /[_-](P\d+|ALT\d*|SP)$/i.test(existing.code ?? "");
+          if (exHasSuffix && !cHasSuffix) baseMap.set(bc, c);
+          else if (!exHasSuffix && !cHasSuffix && !existing.image_small && c.image_small) baseMap.set(bc, c);
+        }
+      }
+
+      setCards(
+        Array.from(baseMap.values()).sort((a, b) =>
+          (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })
+        )
+      );
+      setLoading(false);
+    })();
+  }, [game, set.id]);
+
+  const visibleCards = useMemo(
+    () => showOnlyOwned ? cards.filter((c) => ownedCardIds.has(c.id)) : cards,
+    [cards, showOnlyOwned, ownedCardIds]
+  );
+
   const ownedCount = cards.filter((c) => ownedCardIds.has(c.id)).length;
 
   return (
