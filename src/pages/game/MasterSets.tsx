@@ -77,14 +77,6 @@ function setIdForCard(game: Game, c: { set_id: string | null; set_name: string |
   return fromSetId || extractSetId(c.set_name) || extractSetId(c.code ?? "");
 }
 
-// Restituisce il codice-base senza suffissi di variante (_p1, _p2, _alt, -alt ecc.)
-function baseCode(c: CardRow): string {
-  return (c.code ?? c.id)
-    .replace(/_p\d+$/i, "")
-    .replace(/[-_]alt\d*$/i, "")
-    .replace(/_sp$/i, "");
-}
-
 export default function MasterSets() {
   const { game } = useParams<{ game: Game }>();
   const navigate = useNavigate();
@@ -691,10 +683,7 @@ function SetThumb({ s }: { s: SetInfo }) {
 }
 
 function CardImg({ card, className, alt }: { card: CardRow; className: string; alt: string }) {
-  const candidates = useMemo(
-    () => cardImageCandidates(card.game, card.code, card.image_small ?? card.image_large, card.rarity),
-    [card.game, card.code, card.image_small, card.image_large, card.rarity]
-  );
+  const candidates = useMemo(() => cardImageCandidates(card.game, card.code, card.image_small ?? card.image_large), [card.game, card.code, card.image_small, card.image_large]);
   const [idx, setIdx] = useState(0);
   const src = candidates[idx];
   if (!src) return <div className="w-full card-aspect bg-muted flex items-center justify-center text-muted-foreground text-xs">No image</div>;
@@ -840,67 +829,13 @@ function SetView({
       const { data, error } = await supabase.functions.invoke("card-search", { body: { game, setId: set.id } });
       if (error) toast.error(error.message);
       const remote = ((data?.cards as CardRow[]) ?? []);
-
-      // Varianti del set id (con e senza trattino): ST10 ↔ ST-10
-      const setIdClean = set.id.toUpperCase().replace(/-/g, "");
-      const setIdDashed = set.id.replace(/^([A-Za-z]+)(\d+)$/, "$1-$2").toUpperCase();
-
-      // Query locale: prende entrambe le forme del set_id in un colpo solo
-      const { data: local } = await supabase
-        .from("cards")
-        .select("*")
-        .eq("game", game)
-        .or(
-          game === "pokemon"
-            ? `set_id.eq.${set.id}`
-            : `set_id.eq.${set.id},set_id.eq.${setIdDashed},set_id.eq.${setIdClean}`
-        )
+      const dashed = set.id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
+      const { data: local } = await supabase.from("cards").select("*").eq("game", game)
+        .or(game === "pokemon" ? `set_id.eq.${set.id}` : `set_name.ilike.%[${set.id}]%,set_name.ilike.%[${dashed}]%,code.ilike.${set.id}-%`)
         .limit(500);
-
-      // Filtra le remote che appartengono davvero a questo set
-      const remoteFiltered = remote.filter((c) => {
-        const code = (c.code ?? "").toUpperCase();
-        const sid = (c.set_id ?? "").toUpperCase().replace(/-/g, "");
-        return (
-          sid === setIdClean ||
-          code.startsWith(setIdClean + "-") ||
-          code.startsWith(setIdDashed + "-")
-        );
-      });
-
-      // Step 1 — dedup per id (locale vince su remota)
-      const idMap = new Map<string, CardRow>();
-      for (const c of [...(local ?? []), ...remoteFiltered]) {
-        if (!idMap.has(c.id)) idMap.set(c.id, c);
-      }
-
-      // Step 2 — dedup per codice-base: elimina varianti alternative (_p1, _p2, _alt ecc.)
-      // Per ogni codice-base teniamo solo la carta "principale" (senza suffisso)
-      const baseMap = new Map<string, CardRow>();
-      for (const c of Array.from(idMap.values())) {
-        const bc = (c.code ?? c.id)
-          .toUpperCase()
-          .replace(/_P\d+$/i, "")
-          .replace(/[-_]ALT\d*$/i, "")
-          .replace(/_SP$/i, "");
-
-        const existing = baseMap.get(bc);
-        if (!existing) {
-          baseMap.set(bc, c);
-        } else {
-          // Preferisci la carta che ha image_small, o quella senza suffisso nel codice
-          const cHasSuffix = /[_-](P\d+|ALT\d*|SP)$/i.test(c.code ?? "");
-          const exHasSuffix = /[_-](P\d+|ALT\d*|SP)$/i.test(existing.code ?? "");
-          if (exHasSuffix && !cHasSuffix) baseMap.set(bc, c);
-          else if (!exHasSuffix && !cHasSuffix && !existing.image_small && c.image_small) baseMap.set(bc, c);
-        }
-      }
-
-      setCards(
-        Array.from(baseMap.values()).sort((a, b) =>
-          (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })
-        )
-      );
+      const map = new Map<string, CardRow>();
+      for (const c of [...(local ?? []), ...remote]) map.set(c.id, c);
+      setCards(Array.from(map.values()).sort((a, b) => (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })));
       setLoading(false);
     })();
   }, [game, set.id]);
