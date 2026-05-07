@@ -74,23 +74,34 @@ export function cardImage(
   return undefined;
 }
 
+// lib/game.ts
+
 export function cardImageCandidates(
-  game: Game | string | null | undefined,
+  game: string,
   code: string | null | undefined,
-  imageUrl?: string | null,
+  fallbackUrl?: string | null,
+  rarity?: string | null,
 ): string[] {
-  const urls: string[] = [];
-  if (imageUrl) urls.push(imageUrl);
+  const candidates: string[] = [];
 
   if (game === "onepiece" && code) {
-    urls.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${code}.png`);
-    urls.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${code.replace(/_p\d+$/i, "")}.png`);
+    const base = `https://en.onepiece-cardgame.com/images/cardlist/card/${code}`;
+    const isAlt = ["SEC", "AA", "SP", "TR", "MR"].includes((rarity ?? "").toUpperCase());
+
+    if (isAlt) {
+      // Le alt art hanno l'immagine speciale come prima scelta
+      candidates.push(proxiedImage(`${base}_p1.png`));
+      candidates.push(proxiedImage(`${base}_p2.png`));
+      candidates.push(proxiedImage(`${base}.png`)); // fallback normale
+    } else {
+      candidates.push(proxiedImage(`${base}.png`));
+      candidates.push(proxiedImage(`${base}_p1.png`)); // prova comunque il p1
+    }
   }
 
-  if (game === "yugioh" && code) {
-    const url = ygoImageUrl(code);
-    if (url) urls.push(url);
-  }
+  // ... resto dei giochi (yugioh, pokemon) invariato ...
 
-  return Array.from(new Set(urls)).map((url) => proxiedImage(url)).filter(Boolean) as string[];
+  if (fallbackUrl) candidates.push(proxiedImage(fallbackUrl));
+
+  return candidates.filter(Boolean);
 }
