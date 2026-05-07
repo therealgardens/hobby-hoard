@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ArrowLeft, Plus, Search, Trash2, Heart, LayoutGrid, List, Minus, Loader2, BookOpen, Clock } from "lucide-react";
+import { ArrowLeft, Plus, Search, Trash2, Heart, LayoutGrid, List, Loader2, BookOpen, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { cardImageCandidates, proxiedImage, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
@@ -75,14 +75,6 @@ function setIdForCard(game: Game, c: { set_id: string | null; set_name: string |
   if (game === "pokemon" || game === "yugioh") return c.set_id ?? null;
   const fromSetId = c.set_id ? c.set_id.toUpperCase().replace(/-/g, "") : null;
   return fromSetId || extractSetId(c.set_name) || extractSetId(c.code ?? "");
-}
-
-// Restituisce il codice-base senza suffissi di variante (_p1, _p2, _alt, -alt ecc.)
-function baseCode(c: CardRow): string {
-  return (c.code ?? c.id)
-    .replace(/_p\d+$/i, "")
-    .replace(/[-_]alt\d*$/i, "")
-    .replace(/_sp$/i, "");
 }
 
 export default function MasterSets() {
@@ -654,8 +646,6 @@ function RecentCards({ entries, loading, game, onRemove }: {
   );
 }
 
-// ─── Componenti di supporto ───────────────────────────────────────────────────
-
 function SetGridSkeleton() {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -841,11 +831,14 @@ function SetView({
       if (error) toast.error(error.message);
       const remote = ((data?.cards as CardRow[]) ?? []);
 
-      // Varianti del set id (con e senza trattino): ST10 ↔ ST-10
+      // Tutte le forme del set_id: ST10, ST-10, ST010
       const setIdClean = set.id.toUpperCase().replace(/-/g, "");
       const setIdDashed = set.id.replace(/^([A-Za-z]+)(\d+)$/, "$1-$2").toUpperCase();
+      const setIdPadded = set.id.replace(/^([A-Za-z]+)(\d+)$/, (_, p, n) =>
+        p.toUpperCase() + String(n).padStart(3, "0")
+      );
 
-      // Query locale: prende entrambe le forme del set_id in un colpo solo
+      // Query locale con tutte le forme
       const { data: local } = await supabase
         .from("cards")
         .select("*")
@@ -853,11 +846,11 @@ function SetView({
         .or(
           game === "pokemon"
             ? `set_id.eq.${set.id}`
-            : `set_id.eq.${set.id},set_id.eq.${setIdDashed},set_id.eq.${setIdClean}`
+            : `set_id.eq.${set.id},set_id.eq.${setIdDashed},set_id.eq.${setIdClean},set_id.eq.${setIdPadded}`
         )
         .limit(500);
 
-      // Filtra le remote che appartengono davvero a questo set
+      // Filtra remote: solo carte che appartengono esattamente a questo set
       const remoteFiltered = remote.filter((c) => {
         const code = (c.code ?? "").toUpperCase();
         const sid = (c.set_id ?? "").toUpperCase().replace(/-/g, "");
@@ -868,36 +861,14 @@ function SetView({
         );
       });
 
-      // Step 1 — dedup per id (locale vince su remota)
+      // Dedup per id — locale vince su remota, alt art incluse e affiancate
       const idMap = new Map<string, CardRow>();
       for (const c of [...(local ?? []), ...remoteFiltered]) {
         if (!idMap.has(c.id)) idMap.set(c.id, c);
       }
 
-      // Step 2 — dedup per codice-base: elimina varianti alternative (_p1, _p2, _alt ecc.)
-      // Per ogni codice-base teniamo solo la carta "principale" (senza suffisso)
-      const baseMap = new Map<string, CardRow>();
-      for (const c of Array.from(idMap.values())) {
-        const bc = (c.code ?? c.id)
-          .toUpperCase()
-          .replace(/_P\d+$/i, "")
-          .replace(/[-_]ALT\d*$/i, "")
-          .replace(/_SP$/i, "");
-
-        const existing = baseMap.get(bc);
-        if (!existing) {
-          baseMap.set(bc, c);
-        } else {
-          // Preferisci la carta che ha image_small, o quella senza suffisso nel codice
-          const cHasSuffix = /[_-](P\d+|ALT\d*|SP)$/i.test(c.code ?? "");
-          const exHasSuffix = /[_-](P\d+|ALT\d*|SP)$/i.test(existing.code ?? "");
-          if (exHasSuffix && !cHasSuffix) baseMap.set(bc, c);
-          else if (!exHasSuffix && !cHasSuffix && !existing.image_small && c.image_small) baseMap.set(bc, c);
-        }
-      }
-
       setCards(
-        Array.from(baseMap.values()).sort((a, b) =>
+        Array.from(idMap.values()).sort((a, b) =>
           (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })
         )
       );
@@ -957,6 +928,8 @@ function SetView({
             const owned = ownedCardIds.has(c.id);
             const wanted = wantedCardIds.has(c.id);
             const busy = quickAddBusy.has(c.id);
+            // Badge "ALT" per le varianti alternative
+            const isAlt = /[_-](p\d+|alt\d*|sp)$/i.test(c.code ?? "");
             return (
               <Card
                 key={c.id}
@@ -967,6 +940,9 @@ function SetView({
                   <CardImg card={c} className="w-full card-aspect object-cover" alt={c.name ?? ""} />
                   {owned && (
                     <div className="absolute top-1 left-1 bg-primary text-primary-foreground text-[10px] font-bold px-1.5 py-0.5 rounded-full">✓</div>
+                  )}
+                  {isAlt && !owned && (
+                    <div className="absolute top-1 left-1 bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">ALT</div>
                   )}
                   <div className="absolute top-1 right-1 flex flex-col gap-1">
                     <Button
@@ -1000,6 +976,7 @@ function SetView({
             const owned = ownedCardIds.has(c.id);
             const wanted = wantedCardIds.has(c.id);
             const busy = quickAddBusy.has(c.id);
+            const isAlt = /[_-](p\d+|alt\d*|sp)$/i.test(c.code ?? "");
             return (
               <Card
                 key={c.id}
@@ -1008,7 +985,10 @@ function SetView({
               >
                 <CardImg card={c} className="h-12 w-9 object-cover rounded shrink-0" alt={c.name ?? ""} />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold truncate">{c.name}</p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="text-sm font-semibold truncate">{c.name}</p>
+                    {isAlt && <span className="text-[10px] bg-amber-500/20 text-amber-600 dark:text-amber-400 px-1 py-0.5 rounded font-medium shrink-0">ALT</span>}
+                  </div>
                   <p className="text-xs text-muted-foreground">{c.code}{c.rarity ? ` · ${c.rarity}` : ""}</p>
                 </div>
                 {owned && <span className="text-primary text-xs font-bold shrink-0">✓</span>}
