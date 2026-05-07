@@ -847,7 +847,9 @@ function SetView({
       for (const c of [...(local ?? []), ...remote]) {
         map.set(c.id + "_" + (c.rarity ?? ""), c);
       }
-      setCards(Array.from(map.values()).sort((a, b) => (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })));
+      const sorted = Array.from(map.values()).sort((a, b) => (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true }));
+      setCards(sorted);
+      console.log("Cards loaded for set", set.id, sorted.map(c => ({ id: c.id, code: c.code, rarity: c.rarity, name: c.name })));
       setLoading(false);
     })();
   }, [game, set.id]);
