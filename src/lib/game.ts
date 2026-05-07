@@ -74,34 +74,23 @@ export function cardImage(
   return undefined;
 }
 
-// lib/game.ts
-
 export function cardImageCandidates(
-  game: string,
+  game: Game | string | null | undefined,
   code: string | null | undefined,
-  fallbackUrl?: string | null,
-  rarity?: string | null,
+  imageUrl?: string | null,
 ): string[] {
-  const candidates: string[] = [];
+  const urls: string[] = [];
+  if (imageUrl) urls.push(imageUrl);
 
   if (game === "onepiece" && code) {
-    const base = `https://en.onepiece-cardgame.com/images/cardlist/card/${code}`;
-    const isAlt = ["SEC", "AA", "SP", "TR", "MR"].includes((rarity ?? "").toUpperCase());
-
-    if (isAlt) {
-      // Le alt art hanno l'immagine speciale come prima scelta
-      candidates.push(proxiedImage(`${base}_p1.png`));
-      candidates.push(proxiedImage(`${base}_p2.png`));
-      candidates.push(proxiedImage(`${base}.png`)); // fallback normale
-    } else {
-      candidates.push(proxiedImage(`${base}.png`));
-      candidates.push(proxiedImage(`${base}_p1.png`)); // prova comunque il p1
-    }
+    urls.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${code}.png`);
+    urls.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${code.replace(/_p\d+$/i, "")}.png`);
   }
 
-  // ... resto dei giochi (yugioh, pokemon) invariato ...
+  if (game === "yugioh" && code) {
+    const url = ygoImageUrl(code);
+    if (url) urls.push(url);
+  }
 
-  if (fallbackUrl) candidates.push(proxiedImage(fallbackUrl));
-
-  return candidates.filter(Boolean);
+  return Array.from(new Set(urls)).map((url) => proxiedImage(url)).filter(Boolean) as string[];
 }
