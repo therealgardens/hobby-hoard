@@ -841,10 +841,18 @@ function SetView({
       const remote = ((data?.cards as CardRow[]) ?? []);
       const dashed = set.id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
       const { data: local } = await supabase.from("cards").select("*").eq("game", game)
-        .or(game === "pokemon" ? `set_id.eq.${set.id}` : `set_name.ilike.%[${set.id}]%,set_name.ilike.%[${dashed}]%,code.ilike.${set.id}-%`)
+        .or(game === "pokemon" ? `set_id.eq.${set.id}` : `set_name.ilike.%[${set.id}]%,set_name.ilike.%[${dashed}]%,code.ilike.${set.id}-%,code.ilike.${dashed}-%`)
         .limit(500);
+      const setIdUpper = set.id.toUpperCase();
+      const dashedUpper = dashed.toUpperCase();
+      const filtered = (local ?? []).filter((c) =>
+        c.set_id === set.id ||
+        c.set_id === dashed ||
+        (c.code ?? "").toUpperCase().startsWith(setIdUpper + "-") ||
+        (c.code ?? "").toUpperCase().startsWith(dashedUpper + "-")
+      );
       const map = new Map<string, CardRow>();
-      for (const c of [...(local ?? []), ...remote]) {
+      for (const c of [...filtered, ...remote]) {
         map.set(c.id + "_" + (c.rarity ?? ""), c);
       }
       const sorted = Array.from(map.values()).sort((a, b) => (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true }));
