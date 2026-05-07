@@ -682,14 +682,13 @@ function SetThumb({ s }: { s: SetInfo }) {
   return <img src={src} alt="" className="h-14 w-14 object-contain rounded bg-background/40 p-1 shrink-0" loading="lazy" onError={() => setIdx((i) => i + 1)} />;
 }
 
-// Aggiorna la firma del componente CardImg
 function CardImg({ card, className, alt }: { card: CardRow; className: string; alt: string }) {
   const candidates = useMemo(
     () => cardImageCandidates(
       card.game,
       card.code,
       card.image_small ?? card.image_large,
-      card.rarity, // ← aggiunto
+      card.rarity,
     ),
     [card.game, card.code, card.image_small, card.image_large, card.rarity]
   );
@@ -698,7 +697,6 @@ function CardImg({ card, className, alt }: { card: CardRow; className: string; a
   if (!src) return <div className="w-full card-aspect bg-muted flex items-center justify-center text-muted-foreground text-xs">No image</div>;
   return <img src={src} alt={alt} loading="lazy" className={className} onError={() => setIdx((i) => i + 1)} />;
 }
-
 
 function SetGrid({ sets, ownedBySet, onOpen }: { sets: SetInfo[]; ownedBySet: Map<string, number>; onOpen: (s: SetInfo) => void }) {
   if (sets.length === 0) return <p className="text-muted-foreground text-center py-12">No expansions match your search.</p>;
@@ -833,99 +831,53 @@ function SetView({
 
   useEffect(() => { try { localStorage.setItem("masterset.view", view); } catch (_) {} }, [view]);
 
+  // ← UNICO useEffect per caricare le carte — nessun duplicato
   useEffect(() => {
-  setLoading(true);
-  (async () => {
-    const { data, error } = await supabase.functions.invoke("card-search", { body: { game, setId: set.id } });
-    if (error) toast.error(error.message);
-    const remote = ((data?.cards as CardRow[]) ?? []);
-
-    const dashed = set.id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
-
-    // Query locale
-    const { data: local } = await supabase
-      .from("cards")
-      .select("*")
-      .eq("game", game)
-      .or(
-        game === "pokemon"
-          ? `set_id.eq.${set.id}`
-          : `set_id.eq.${set.id},set_id.eq.${dashed}`
-      )
-      .limit(500);
-
-    // Filtra le carte remote che appartengono davvero a questo set
-    const remoteFiltered = remote.filter((c) => {
-      const code = (c.code ?? "").toUpperCase();
-      const sid = set.id.toUpperCase();
-      const dashedUp = dashed.toUpperCase();
-      return (
-        c.set_id === set.id ||
-        c.set_id === dashed ||
-        code.startsWith(sid + "-") ||
-        code.startsWith(dashedUp + "-")
-      );
-    });
-
-    // Deduplicazione per id — la carta con più info vince
-    const map = new Map<string, CardRow>();
-    for (const c of [...(local ?? []), ...remoteFiltered]) {
-      if (!map.has(c.id)) map.set(c.id, c);
-    }
-
-    setCards(
-      Array.from(map.values()).sort((a, b) =>
-        (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })
-      )
-    );
-    setLoading(false);
-  })();
-}, [game, set.id]);
+    setLoading(true);
+    (async () => {
+      const { data, error } = await supabase.functions.invoke("card-search", { body: { game, setId: set.id } });
       if (error) toast.error(error.message);
       const remote = ((data?.cards as CardRow[]) ?? []);
+
       const dashed = set.id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
       const setIdUpper = set.id.toUpperCase();
       const dashedUpper = dashed.toUpperCase();
-      const orFilter = game === "pokemon"
-        ? `set_id.eq.${set.id}`
-        : [
-            `set_id.ilike.${set.id}`,
-            `set_id.ilike.${dashed}`,
-            `set_id.ilike.${set.id}-%`,
-            `set_id.ilike.%-${set.id}`,
-            `set_id.ilike.${dashed}-%`,
-            `set_id.ilike.%-${dashed}`,
-            `set_name.ilike.%[${set.id}]%`,
-            `set_name.ilike.%[${dashed}]%`,
-            `code.ilike.${set.id}-%`,
-            `code.ilike.${dashed}-%`,
-          ].join(",");
-      const { data: local } = await supabase.from("cards").select("*").eq("game", game)
-        .or(orFilter)
-        .limit(1000);
-      const filtered = game === "pokemon"
-        ? (local ?? [])
-        : (local ?? []).filter((c) => {
-            const sid = (c.set_id ?? "").toUpperCase();
-            const code = (c.code ?? "").toUpperCase();
-            const sname = (c.set_name ?? "").toUpperCase();
-            return (
-              sid === setIdUpper ||
-              sid === dashedUpper ||
-              sid.startsWith(setIdUpper + "-") || sid.endsWith("-" + setIdUpper) ||
-              sid.startsWith(dashedUpper + "-") || sid.endsWith("-" + dashedUpper) ||
-              code.startsWith(setIdUpper + "-") ||
-              code.startsWith(dashedUpper + "-") ||
-              sname.includes("[" + setIdUpper + "]") ||
-              sname.includes("[" + dashedUpper + "]")
-            );
-          });
+
+      // Query locale — usa set_id esatto (con e senza trattino)
+      const { data: local } = await supabase
+        .from("cards")
+        .select("*")
+        .eq("game", game)
+        .or(
+          game === "pokemon"
+            ? `set_id.eq.${set.id}`
+            : `set_id.eq.${set.id},set_id.eq.${dashed}`
+        )
+        .limit(500);
+
+      // Filtra le carte remote per appartenenza certa al set
+      const remoteFiltered = remote.filter((c) => {
+        const code = (c.code ?? "").toUpperCase();
+        const sid = (c.set_id ?? "").toUpperCase();
+        return (
+          sid === setIdUpper ||
+          sid === dashedUpper ||
+          code.startsWith(setIdUpper + "-") ||
+          code.startsWith(dashedUpper + "-")
+        );
+      });
+
+      // Deduplicazione per id — la carta locale vince sulle remote
       const map = new Map<string, CardRow>();
-      for (const c of [...filtered, ...remote]) {
-        map.set(c.id, c);
+      for (const c of [...(local ?? []), ...remoteFiltered]) {
+        if (!map.has(c.id)) map.set(c.id, c);
       }
-      const sorted = Array.from(map.values()).sort((a, b) => (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true }));
-      setCards(sorted);
+
+      setCards(
+        Array.from(map.values()).sort((a, b) =>
+          (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })
+        )
+      );
       setLoading(false);
     })();
   }, [game, set.id]);
