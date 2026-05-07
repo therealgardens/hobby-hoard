@@ -834,9 +834,53 @@ function SetView({
   useEffect(() => { try { localStorage.setItem("masterset.view", view); } catch (_) {} }, [view]);
 
   useEffect(() => {
-    setLoading(true);
-    (async () => {
-      const { data, error } = await supabase.functions.invoke("card-search", { body: { game, setId: set.id } });
+  setLoading(true);
+  (async () => {
+    const { data, error } = await supabase.functions.invoke("card-search", { body: { game, setId: set.id } });
+    if (error) toast.error(error.message);
+    const remote = ((data?.cards as CardRow[]) ?? []);
+
+    const dashed = set.id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
+
+    // Query locale
+    const { data: local } = await supabase
+      .from("cards")
+      .select("*")
+      .eq("game", game)
+      .or(
+        game === "pokemon"
+          ? `set_id.eq.${set.id}`
+          : `set_id.eq.${set.id},set_id.eq.${dashed}`
+      )
+      .limit(500);
+
+    // Filtra le carte remote che appartengono davvero a questo set
+    const remoteFiltered = remote.filter((c) => {
+      const code = (c.code ?? "").toUpperCase();
+      const sid = set.id.toUpperCase();
+      const dashedUp = dashed.toUpperCase();
+      return (
+        c.set_id === set.id ||
+        c.set_id === dashed ||
+        code.startsWith(sid + "-") ||
+        code.startsWith(dashedUp + "-")
+      );
+    });
+
+    // Deduplicazione per id — la carta con più info vince
+    const map = new Map<string, CardRow>();
+    for (const c of [...(local ?? []), ...remoteFiltered]) {
+      if (!map.has(c.id)) map.set(c.id, c);
+    }
+
+    setCards(
+      Array.from(map.values()).sort((a, b) =>
+        (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })
+      )
+    );
+    setLoading(false);
+  })();
+}, [game, set.id]);
       if (error) toast.error(error.message);
       const remote = ((data?.cards as CardRow[]) ?? []);
       const dashed = set.id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
