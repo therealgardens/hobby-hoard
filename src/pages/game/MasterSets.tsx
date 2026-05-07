@@ -873,20 +873,32 @@ function SetView({
         if (!map.has(c.id)) map.set(c.id, c);
       }
 
-      setCards(
-        Array.from(map.values()).sort((a, b) =>
-          (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })
-        )
-      );
-      setLoading(false);
-    })();
-  }, [game, set.id]);
+      // Dopo aver costruito la map, aggiungi questo step:
+// Deduplicazione per codice-base — elimina varianti alternative (_p1, _p2, alt)
+const baseCodeMap = new Map<string, CardRow>();
+for (const c of Array.from(map.values())) {
+  // Estrae il codice base togliendo suffissi tipo _p1, _p2, _alt, -alt
+  const baseCode = (c.code ?? c.id)
+    .replace(/_p\d+$/i, "")
+    .replace(/-alt\d*$/i, "")
+    .replace(/_alt\d*$/i, "");
+  
+  const existing = baseCodeMap.get(baseCode);
+  if (!existing) {
+    baseCodeMap.set(baseCode, c);
+  } else {
+    // Preferisci la carta con image_small valorizzata
+    if (!existing.image_small && c.image_small) {
+      baseCodeMap.set(baseCode, c);
+    }
+  }
+}
 
-  const visibleCards = useMemo(
-    () => showOnlyOwned ? cards.filter((c) => ownedCardIds.has(c.id)) : cards,
-    [cards, showOnlyOwned, ownedCardIds]
-  );
-
+setCards(
+  Array.from(baseCodeMap.values()).sort((a, b) =>
+    (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })
+  )
+);
   const ownedCount = cards.filter((c) => ownedCardIds.has(c.id)).length;
 
   return (
