@@ -71,20 +71,55 @@ Deno.serve(async (req) => {
     // Browse a whole set.
     if (setId && !query) {
       const id = setId.toUpperCase().replace(/-/g, "");
+      const dashed = id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
+      // Match cards by either set_id (canonical or dashed, including dual ids
+      // like "OP14-EB04" or "EB-03"), code prefix, or set_name tag — this
+      // ensures alt art / SEC / SP variants stored under sibling set_ids are
+      // returned along with the base set.
+      const orFilter = [
+        `set_id.ilike.${id}`,
+        `set_id.ilike.${dashed}`,
+        `set_id.ilike.${id}-%`,
+        `set_id.ilike.%-${id}`,
+        `set_id.ilike.${dashed}-%`,
+        `set_id.ilike.%-${dashed}`,
+        `set_name.ilike.%[${id}]%`,
+        `set_name.ilike.%[${dashed}]%`,
+        `code.ilike.${id}-%`,
+        `code.ilike.${dashed}-%`,
+      ].join(",");
       const { data, error } = await admin
         .from("cards")
         .select("*")
         .eq("game", body.game)
-        .or(`set_id.ilike.${id},code.ilike.${id}-%,code.ilike.${id}%`)
+        .or(orFilter)
         .order("code", { ascending: true })
-        .limit(500);
+        .limit(1000);
       if (error) {
         console.error("set browse error", error);
         return new Response(JSON.stringify({ cards: [] }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      return new Response(JSON.stringify({ cards: data ?? [] }), {
+      // Strict client-side filter to avoid neighbour-set bleed (e.g. ST1 vs ST10).
+      const idU = id.toUpperCase();
+      const dashedU = dashed.toUpperCase();
+      const filtered = (data ?? []).filter((c: any) => {
+        const sid = String(c.set_id ?? "").toUpperCase();
+        const code = String(c.code ?? "").toUpperCase();
+        const sname = String(c.set_name ?? "").toUpperCase();
+        return (
+          sid === idU ||
+          sid === dashedU ||
+          sid.startsWith(idU + "-") || sid.endsWith("-" + idU) ||
+          sid.startsWith(dashedU + "-") || sid.endsWith("-" + dashedU) ||
+          code.startsWith(idU + "-") ||
+          code.startsWith(dashedU + "-") ||
+          sname.includes("[" + idU + "]") ||
+          sname.includes("[" + dashedU + "]")
+        );
+      });
+      return new Response(JSON.stringify({ cards: filtered }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
