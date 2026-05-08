@@ -830,11 +830,22 @@ function SetView({
       if (error) toast.error(error.message);
       const remote = ((data?.cards as CardRow[]) ?? []);
       const dashed = set.id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
+      const setIdClean = set.id.toUpperCase().replace(/-/g, "");
+      const setIdDashed = dashed.toUpperCase();
       const { data: local } = await supabase.from("cards").select("*").eq("game", game)
         .or(game === "pokemon" ? `set_id.eq.${set.id}` : `set_name.ilike.%[${set.id}]%,set_name.ilike.%[${dashed}]%,code.ilike.${set.id}-%`)
         .limit(500);
+      const remoteFiltered = game === "pokemon" ? remote : remote.filter((c) => {
+        const code = (c.code ?? "").toUpperCase();
+        const sid = (c.set_id ?? "").toUpperCase().replace(/-/g, "");
+        return (
+          sid === setIdClean ||
+          code.startsWith(setIdClean + "-") ||
+          code.startsWith(setIdDashed + "-")
+        );
+      });
       const map = new Map<string, CardRow>();
-      for (const c of [...(local ?? []), ...remote]) map.set(c.id, c);
+      for (const c of [...(local ?? []), ...remoteFiltered]) map.set(c.id, c);
       setCards(Array.from(map.values()).sort((a, b) => (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })));
       setLoading(false);
     })();
