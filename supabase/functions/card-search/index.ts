@@ -21,7 +21,6 @@ const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
 function escapePgPattern(s: string) {
-  // Escape the PostgREST/PostgREST `or` filter special chars and SQL LIKE wildcards.
   return s.replace(/[%_,()]/g, (m) => `\\${m}`);
 }
 
@@ -30,7 +29,6 @@ Deno.serve(async (req) => {
     return new Response("ok", { headers: corsHeaders });
   }
   try {
-    // Require an authenticated caller.
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -61,7 +59,6 @@ Deno.serve(async (req) => {
     const query = (body.query || "").trim();
     const setId = body.setId?.trim();
 
-    // No criteria — return empty.
     if (!query && !setId) {
       return new Response(JSON.stringify({ cards: [] }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -71,13 +68,26 @@ Deno.serve(async (req) => {
     // Browse a whole set.
     if (setId && !query) {
       const id = setId.toUpperCase().replace(/-/g, "");
-      const { data, error } = await admin
+      const dashed = id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
+
+      let dbQuery = admin
         .from("cards")
         .select("*")
         .eq("game", body.game)
-        .or(`set_id.ilike.${id},code.ilike.${id}-%,code.ilike.${id}%`)
         .order("code", { ascending: true })
         .limit(500);
+
+      if (body.game === "onepiece") {
+        // Per One Piece usa SOLO il code — il set_id non è affidabile per
+        // alternate art e reprint che conservano il set_id del set originale
+        dbQuery = dbQuery.or(`code.ilike.${id}-%,code.ilike.${dashed}-%`);
+      } else {
+        dbQuery = dbQuery.or(
+          `set_id.ilike.${id},set_id.ilike.${dashed},code.ilike.${id}-%,code.ilike.${dashed}-%`
+        );
+      }
+
+      const { data, error } = await dbQuery;
       if (error) {
         console.error("set browse error", error);
         return new Response(JSON.stringify({ cards: [] }), {
@@ -89,8 +99,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Free-text search by name OR code (ilike). The FTS index keeps this fast,
-    // and the lower(name)/lower(code) indexes accelerate prefix matches.
+    // Free-text search by name OR code.
     const term = escapePgPattern(query);
     let q = admin
       .from("cards")
@@ -102,7 +111,12 @@ Deno.serve(async (req) => {
 
     if (setId) {
       const id = setId.toUpperCase().replace(/-/g, "");
-      q = q.or(`set_id.ilike.${id},code.ilike.${id}-%`);
+      const dashed = id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
+      if (body.game === "onepiece") {
+        q = q.or(`code.ilike.${id}-%,code.ilike.${dashed}-%`);
+      } else {
+        q = q.or(`set_id.ilike.${id},set_id.ilike.${dashed},code.ilike.${id}-%,code.ilike.${dashed}-%`);
+      }
     }
 
     const { data, error } = await q;
@@ -120,10 +134,7 @@ Deno.serve(async (req) => {
     console.error(e);
     return new Response(
       JSON.stringify({ error: e instanceof Error ? e.message : "unknown" }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
 });
