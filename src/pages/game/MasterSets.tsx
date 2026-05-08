@@ -701,17 +701,20 @@ function SetGrid({ sets, ownedBySet, onOpen }: { sets: SetInfo[]; ownedBySet: Ma
   if (sets.length === 0) return <p className="text-muted-foreground text-center py-12">No expansions match your search.</p>;
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-      {sets.map((s) => (
+      {sets.map((s) => {
+        const count = ownedBySet.get(s.id) ?? ownedBySet.get(s.id.toUpperCase().replace(/-/g, "")) ?? 0;
+        return (
         <Card key={s.id} className="p-4 cursor-pointer hover:shadow-card transition-shadow bg-gradient-card" onClick={() => onOpen(s)}>
           <div className="flex items-start gap-3">
             <SetThumb s={s} />
             <div className="flex-1 min-w-0">
               <p className="font-semibold truncate">{s.name}</p>
-              <p className="text-xs text-muted-foreground truncate">{s.id}{s.releaseDate ? ` · ${s.releaseDate}` : ""}</p>
+              <p className="text-xs text-muted-foreground truncate">{s.id}{s.releaseDate ? ` · ${s.releaseDate}` : ""}{count > 0 ? ` · ${count} owned` : ""}</p>
             </div>
           </div>
         </Card>
-      ))}
+        );
+      })}
     </div>
   );
 }
