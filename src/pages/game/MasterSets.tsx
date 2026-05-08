@@ -318,7 +318,14 @@ export default function MasterSets() {
   }, [sets, query]);
 
   const ownedSets = useMemo(
-    () => visibleSets.filter((s) => (ownedBySet.get(s.id) ?? 0) > 0),
+    () => visibleSets.filter((s) => {
+      const normalizedId = s.id.toUpperCase().replace(/-/g, "");
+      return (
+        (ownedBySet.get(s.id) ?? 0) > 0 ||
+        (ownedBySet.get(normalizedId) ?? 0) > 0 ||
+        (ownedBySet.get(s.id.replace(/-/g, "")) ?? 0) > 0
+      );
+    }),
     [visibleSets, ownedBySet],
   );
 
@@ -694,17 +701,20 @@ function SetGrid({ sets, ownedBySet, onOpen }: { sets: SetInfo[]; ownedBySet: Ma
   if (sets.length === 0) return <p className="text-muted-foreground text-center py-12">No expansions match your search.</p>;
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-      {sets.map((s) => (
+      {sets.map((s) => {
+        const count = ownedBySet.get(s.id) ?? ownedBySet.get(s.id.toUpperCase().replace(/-/g, "")) ?? 0;
+        return (
         <Card key={s.id} className="p-4 cursor-pointer hover:shadow-card transition-shadow bg-gradient-card" onClick={() => onOpen(s)}>
           <div className="flex items-start gap-3">
             <SetThumb s={s} />
             <div className="flex-1 min-w-0">
               <p className="font-semibold truncate">{s.name}</p>
-              <p className="text-xs text-muted-foreground truncate">{s.id}{s.releaseDate ? ` · ${s.releaseDate}` : ""}</p>
+              <p className="text-xs text-muted-foreground truncate">{s.id}{s.releaseDate ? ` · ${s.releaseDate}` : ""}{count > 0 ? ` · ${count} owned` : ""}</p>
             </div>
           </div>
         </Card>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -830,11 +840,22 @@ function SetView({
       if (error) toast.error(error.message);
       const remote = ((data?.cards as CardRow[]) ?? []);
       const dashed = set.id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
+      const setIdClean = set.id.toUpperCase().replace(/-/g, "");
+      const setIdDashed = dashed.toUpperCase();
       const { data: local } = await supabase.from("cards").select("*").eq("game", game)
         .or(game === "pokemon" ? `set_id.eq.${set.id}` : `set_name.ilike.%[${set.id}]%,set_name.ilike.%[${dashed}]%,code.ilike.${set.id}-%`)
         .limit(500);
+      const remoteFiltered = game === "pokemon" ? remote : remote.filter((c) => {
+        const code = (c.code ?? "").toUpperCase();
+        const sid = (c.set_id ?? "").toUpperCase().replace(/-/g, "");
+        return (
+          sid === setIdClean ||
+          code.startsWith(setIdClean + "-") ||
+          code.startsWith(setIdDashed + "-")
+        );
+      });
       const map = new Map<string, CardRow>();
-      for (const c of [...(local ?? []), ...remote]) map.set(c.id, c);
+      for (const c of [...(local ?? []), ...remoteFiltered]) map.set(c.id, c);
       setCards(Array.from(map.values()).sort((a, b) => (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })));
       setLoading(false);
     })();
