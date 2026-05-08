@@ -73,8 +73,13 @@ function extractSetId(s: string | null | undefined): string | null {
 
 function setIdForCard(game: Game, c: { set_id: string | null; set_name: string | null; code: string | null }): string | null {
   if (game === "pokemon" || game === "yugioh") return c.set_id ?? null;
-  const fromSetId = c.set_id ? c.set_id.toUpperCase().replace(/-/g, "") : null;
-  return fromSetId || extractSetId(c.set_name) || extractSetId(c.code ?? "");
+  if (c.set_id) {
+    const raw = c.set_id.toUpperCase();
+    // FIX: se l'id è composito tipo "OP14-EB04", prendi solo la prima parte
+    const primary = raw.split("-EB")[0].split("-OP")[0].replace(/-/g, "");
+    if (primary) return primary;
+  }
+  return extractSetId(c.set_name) || extractSetId(c.code ?? "");
 }
 
 export default function MasterSets() {
@@ -458,22 +463,20 @@ export default function MasterSets() {
   const removeOne = async () => {
     if (!picked || !game || !user) return;
     const uid = user.id;
-    const { data: rows } = await supabase
-      .from("collection_entries").select("id")
-      .eq("user_id", uid).eq("card_id", picked.id)
-      .order("created_at", { ascending: false }).limit(1);
-    const target = rows?.[0]?.id;
-    if (!target) { toast.info("No entry found to remove"); return; }
-    const { error } = await supabase.from("collection_entries").delete().eq("id", target);
-    if (error) return toast.error(error.message);
-    toast.success(`Removed one ${picked.name}`);
     const removedId = picked.id;
     const removedSetId = setIdForCard(game, picked);
+    const { data: rows } = await supabase
+      .from("collection_entries").select("id")
+      .eq("user_id", uid).eq("card_id", removedId);
+    if (!rows?.length) { toast.error("Not in collection"); return; }
+    const { error } = await supabase.from("collection_entries").delete().eq("id", rows[0].id);
+    if (error) { toast.error(error.message); return; }
+    toast.success(`Removed one ${picked.name}`);
     setPicked(null);
     const { data: remain } = await supabase
       .from("collection_entries").select("id")
-      .eq("user_id", uid).eq("card_id", removedId).limit(1);
-    if (!remain || remain.length === 0) {
+      .eq("card_id", removedId).eq("user_id", uid).limit(1);
+    if (!remain?.length) {
       const nextIds = new Set(ownedCardIds); nextIds.delete(removedId);
       const nextLangs = new Map(ownedLangByCard); nextLangs.delete(removedId);
       const nextCounts = new Map(ownedBySet);
@@ -676,7 +679,6 @@ function SetThumb({ s }: { s: SetInfo }) {
     if (s.logo) list.push(s.logo);
     const id = s.id.toUpperCase();
     list.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${id}-001.png`);
-    list.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${id}-001_p1.png`);
     list.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${id}-002.png`);
     list.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${id}-003.png`);
     list.push(`https://www.apitcg.com/images/sets/one-piece/${id}-logo.png`);
@@ -839,12 +841,20 @@ function SetView({
       const { data, error } = await supabase.functions.invoke("card-search", { body: { game, setId: set.id } });
       if (error) toast.error(error.message);
       const remote = ((data?.cards as CardRow[]) ?? []);
-      const dashed = set.id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
+
       const setIdClean = set.id.toUpperCase().replace(/-/g, "");
+      const dashed = set.id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
       const setIdDashed = dashed.toUpperCase();
+
       const { data: local } = await supabase.from("cards").select("*").eq("game", game)
-        .or(game === "pokemon" ? `set_id.eq.${set.id}` : `set_name.ilike.%[${set.id}]%,set_name.ilike.%[${dashed}]%,code.ilike.${set.id}-%`)
+        .or(
+          game === "pokemon"
+            ? `set_id.eq.${set.id}`
+            // FIX: cerca sia il formato senza trattino (ST22) che con trattino (ST-22) in set_name e code
+            : `set_name.ilike.%[${setIdClean}]%,set_name.ilike.%[${setIdDashed}]%,code.ilike.${setIdClean}-%,code.ilike.${setIdDashed}-%`
+        )
         .limit(500);
+
       const remoteFiltered = game === "pokemon" ? remote : remote.filter((c) => {
         const code = (c.code ?? "").toUpperCase();
         const sid = (c.set_id ?? "").toUpperCase().replace(/-/g, "");
@@ -901,11 +911,15 @@ function SetView({
         </div>
       </div>
 
-      {loading ? (
-        <SetViewSkeleton />
-      ) : visibleCards.length === 0 ? (
+      <CreateBinderDialog
+        open={binderDialogOpen} onOpenChange={setBinderDialogOpen}
+        game={game} set={set} cards={cards} ownedCardIds={ownedCardIds}
+        onCreated={onBinderCreated}
+      />
+
+      {loading ? <SetViewSkeleton /> : visibleCards.length === 0 ? (
         <p className="text-muted-foreground text-center py-12">
-          {showOnlyOwned ? "Nessuna carta posseduta in questo set." : "Nessuna carta trovata."}
+          {showOnlyOwned ? "Non possiedi ancora nessuna carta di questo set." : "No cards found for this set."}
         </p>
       ) : view === "grid" ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
@@ -914,90 +928,61 @@ function SetView({
             const wanted = wantedCardIds.has(c.id);
             const busy = quickAddBusy.has(c.id);
             return (
-              <Card
-                key={c.id}
-                className="overflow-hidden bg-gradient-card cursor-pointer hover:shadow-card transition-shadow"
-                onClick={() => onPickCard(c)}
-              >
+              <Card key={c.id} className={`overflow-hidden cursor-pointer bg-gradient-card transition-all hover:shadow-card ${owned ? "ring-2 ring-primary/60" : ""}`} onClick={() => onPickCard(c)}>
                 <div className="relative">
-                  <CardImg card={c} className="w-full card-aspect object-cover" alt={c.name ?? ""} />
-                  {owned && (
-                    <div className="absolute top-1 left-1 bg-primary text-primary-foreground text-[10px] font-bold px-1.5 py-0.5 rounded-full">✓</div>
-                  )}
-                  <div className="absolute top-1 right-1 flex flex-col gap-1">
-                    <Button
-                      size="icon" variant="secondary" className="h-7 w-7"
-                      onClick={(e) => { e.stopPropagation(); onQuickAdd(c); }}
-                      disabled={busy}
-                    >
-                      {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant={wanted ? "default" : "secondary"}
-                      className="h-7 w-7"
-                      onClick={(e) => { e.stopPropagation(); onToggleWanted(c); }}
-                    >
-                      <Heart className={`h-3 w-3 ${wanted ? "fill-current" : ""}`} />
-                    </Button>
-                  </div>
+                  <CardImg card={c} className="w-full card-aspect object-cover" alt={c.name} />
+                  {owned && <Badge className="absolute top-1 right-1 text-[10px] px-1 py-0 bg-primary/90">✓</Badge>}
+                  {!owned && wanted && <Badge variant="outline" className="absolute top-1 right-1 text-[10px] px-1 py-0 border-yellow-400 text-yellow-500">♡</Badge>}
                 </div>
                 <div className="p-2">
                   <p className="text-xs font-semibold truncate">{c.name}</p>
-                  <p className="text-[10px] text-muted-foreground">{c.code}</p>
+                  <p className="text-[10px] text-muted-foreground truncate">{c.code}</p>
+                  <div className="flex gap-1 mt-1.5">
+                    <Button size="icon" variant="ghost" className="h-6 w-6 hover:bg-primary/10 hover:text-primary" disabled={busy}
+                      onClick={(e) => { e.stopPropagation(); onQuickAdd(c); }}>
+                      {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                    </Button>
+                    <Button size="icon" variant="ghost" className={`h-6 w-6 ${wanted ? "text-yellow-500 hover:text-yellow-600" : "hover:text-yellow-500"}`}
+                      onClick={(e) => { e.stopPropagation(); onToggleWanted(c); }}>
+                      <Heart className="h-3 w-3" fill={wanted ? "currentColor" : "none"} />
+                    </Button>
+                  </div>
                 </div>
               </Card>
             );
           })}
         </div>
       ) : (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-1">
           {visibleCards.map((c) => {
             const owned = ownedCardIds.has(c.id);
             const wanted = wantedCardIds.has(c.id);
             const busy = quickAddBusy.has(c.id);
+            const lang = ownedLangByCard.get(c.id);
             return (
-              <Card
-                key={c.id}
-                className="flex items-center gap-3 px-3 py-2 bg-gradient-card cursor-pointer hover:shadow-card transition-shadow"
-                onClick={() => onPickCard(c)}
-              >
-                <CardImg card={c} className="h-12 w-9 object-cover rounded shrink-0" alt={c.name ?? ""} />
+              <Card key={c.id} className={`flex items-center gap-3 px-3 py-2 cursor-pointer bg-gradient-card hover:shadow-card transition-all ${owned ? "ring-1 ring-primary/40" : ""}`} onClick={() => onPickCard(c)}>
+                <CardImg card={c} className="h-10 w-8 object-cover rounded shrink-0" alt="" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold truncate">{c.name}</p>
-                  <p className="text-xs text-muted-foreground">{c.code}{c.rarity ? ` · ${c.rarity}` : ""}</p>
+                  <p className="text-xs text-muted-foreground truncate">{c.code}{c.rarity ? ` · ${c.rarity}` : ""}</p>
                 </div>
-                {owned && <span className="text-primary text-xs font-bold shrink-0">✓</span>}
-                <Button
-                  size="icon" variant="secondary" className="h-8 w-8 shrink-0"
-                  onClick={(e) => { e.stopPropagation(); onQuickAdd(c); }}
-                  disabled={busy}
-                >
-                  {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
-                </Button>
-                <Button
-                  size="icon"
-                  variant={wanted ? "default" : "ghost"}
-                  className="h-8 w-8 shrink-0"
-                  onClick={(e) => { e.stopPropagation(); onToggleWanted(c); }}
-                >
-                  <Heart className={`h-3 w-3 ${wanted ? "fill-current" : ""}`} />
-                </Button>
+                {owned && <Badge className="text-[10px] shrink-0">{lang ? `${LANG_FLAG[lang] ?? ""} ${lang}` : "✓"}</Badge>}
+                {!owned && wanted && <Badge variant="outline" className="text-[10px] border-yellow-400 text-yellow-500 shrink-0">Wanted</Badge>}
+                <div className="flex gap-1 shrink-0">
+                  <Button size="icon" variant="ghost" className="h-7 w-7 hover:bg-primary/10 hover:text-primary" disabled={busy}
+                    onClick={(e) => { e.stopPropagation(); onQuickAdd(c); }}>
+                    {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                  </Button>
+                  <Button size="icon" variant="ghost" className={`h-7 w-7 ${wanted ? "text-yellow-500 hover:text-yellow-600" : "hover:text-yellow-500"}`}
+                    onClick={(e) => { e.stopPropagation(); onToggleWanted(c); }}>
+                    <Heart className="h-3 w-3" fill={wanted ? "currentColor" : "none"} />
+                  </Button>
+                </div>
               </Card>
             );
           })}
         </div>
       )}
-
-      <CreateBinderDialog
-        open={binderDialogOpen}
-        onOpenChange={setBinderDialogOpen}
-        game={game}
-        set={set}
-        cards={cards}
-        ownedCardIds={ownedCardIds}
-        onCreated={onBinderCreated}
-      />
     </div>
   );
 }
