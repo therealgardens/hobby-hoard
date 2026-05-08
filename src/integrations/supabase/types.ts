@@ -541,6 +541,7 @@ export type Database = {
     Functions: {
       are_friends: { Args: { _a: string; _b: string }; Returns: boolean }
       cancel_trade: { Args: { _message_id: string }; Returns: undefined }
+      cleanup_stuck_sync_jobs: { Args: never; Returns: undefined }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
