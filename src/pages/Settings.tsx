@@ -69,8 +69,13 @@ export default function Settings() {
         .maybeSingle();
       if (data) {
         const j = data as unknown as SyncJob;
-        setJob(j);
-        if (j.status === "running") startPolling(j.id);
+        // ✅ FIX: se il job è "running" da più di 10 minuti, è stuck — non avviare il polling
+        if (j.status === "running" && Date.now() - new Date(j.started_at).getTime() > 10 * 60 * 1000) {
+          setJob({ ...j, status: "failed", error: "Sync timed out (stale job — restarted automatically)" });
+        } else {
+          setJob(j);
+          if (j.status === "running") startPolling(j.id);
+        }
       }
     })();
     return () => stopPolling();
@@ -280,35 +285,27 @@ export default function Settings() {
 
         <Card className="p-6 border-destructive/50">
           <h2 className="text-2xl font-display mb-2 text-destructive">{t("settings.dangerZone")}</h2>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium">{t("settings.deleteAccount")}</p>
-              <p className="text-sm text-muted-foreground">{t("settings.deleteAccountDesc")}</p>
-            </div>
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="destructive" disabled={busy}>
-                  <Trash2 className="h-4 w-4 mr-2" />
+          <p className="text-muted-foreground text-sm mb-4">{t("settings.deleteDesc")}</p>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="destructive" disabled={busy}>
+                <Trash2 className="h-4 w-4 mr-2" />
+                {t("settings.deleteAccount")}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{t("settings.deleteTitle")}</AlertDialogTitle>
+                <AlertDialogDescription>{t("settings.deleteConfirm")}</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+                <AlertDialogAction onClick={deleteAccount} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
                   {t("settings.deleteAccount")}
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>{t("settings.confirmDelete")}</AlertDialogTitle>
-                  <AlertDialogDescription>{t("settings.confirmDeleteDesc")}</AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={deleteAccount}
-                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                  >
-                    {t("settings.deleteAccount")}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </div>
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </Card>
       </main>
     </div>
