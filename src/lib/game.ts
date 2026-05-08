@@ -17,14 +17,6 @@ export const GAME_LABEL: Record<Game, string> = {
 
 import { supabase } from "@/integrations/supabase/client";
 
-let cachedAccessToken: string | null = null;
-supabase.auth.getSession().then(({ data }) => {
-  cachedAccessToken = data.session?.access_token ?? null;
-});
-supabase.auth.onAuthStateChange((_event, session) => {
-  cachedAccessToken = session?.access_token ?? null;
-});
-
 const DIRECT_HOSTS = [
   "optcgapi.com",
   ".supabase.co",
@@ -39,19 +31,20 @@ export function proxiedImage(url?: string | null): string | undefined {
   } catch (_) { return url; }
   const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
   if (!projectId) return url;
+  // FIX: legge il token al momento dell'uso invece di cacheare manualmente —
+  // Supabase mantiene già la sessione in-memory, questa chiamata è sincrona e gratuita
+  const session = (supabase as any)._session ?? null;
+  const token = session?.access_token ?? null;
   const base = `https://${projectId}.supabase.co/functions/v1/image-proxy?url=${encodeURIComponent(url)}`;
-  return cachedAccessToken
-    ? `${base}&access_token=${encodeURIComponent(cachedAccessToken)}`
+  return token
+    ? `${base}&access_token=${encodeURIComponent(token)}`
     : base;
 }
 
-// Costruisce l'URL immagine YGO da ID numerico (es. "10938846")
 function ygoImageUrl(idOrCode: string): string {
-  // Se è un ID puramente numerico usa l'API YGOPRODeck
   if (/^\d+$/.test(idOrCode)) {
     return `https://images.ygoprodeck.com/images/cards_small/${idOrCode}.jpg`;
   }
-  // Altrimenti è un codice testuale (es. LEDE-EN001) — niente fallback URL disponibile
   return "";
 }
 
