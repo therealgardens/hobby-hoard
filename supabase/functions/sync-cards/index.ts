@@ -1,20 +1,4 @@
 // sync-cards: refreshes the card catalog for Pokémon, One Piece and Yu-Gi-Oh!.
-//
-// This function is designed to work around Supabase Edge Function execution
-// limits by processing the catalog in small chunks. Each HTTP invocation does
-// one "step" (one API page or one yugioh slice), checkpoints progress into
-// public.sync_jobs, then fires a follow-up HTTP request to itself for the next
-// step. This avoids the previous behaviour where EdgeRuntime.waitUntil could
-// be killed mid-run, leaving jobs stuck in `running` forever.
-//
-// Request shapes:
-//   POST {}                         → start a new job (admin only)
-//   POST { action: "start" }        → same as above
-//   POST { action: "step", jobId, game, cursor } → internal continuation
-//
-// Progress is reported in sync_jobs.summary as:
-//   { pokemon: <upserted>, onepiece: <upserted>, yugioh: <upserted>,
-//     _stage: "pokemon" | "onepiece" | "yugioh" | "done" }
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.95.0";
 
 const corsHeaders = {
@@ -37,7 +21,6 @@ const STEP_BUDGET_MS = 60_000;
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// ---------------------------------------------------------------- DB helpers
 async function upsertBatch(rows: any[]) {
   if (rows.length === 0) return 0;
   const seen = new Set<string>();
@@ -85,7 +68,6 @@ async function finishJob(jobId: string, status: "succeeded" | "failed", error: s
   }).eq("id", jobId);
 }
 
-// ------------------------------------------------------------- Self-chaining
 function chainStep(body: Record<string, unknown>) {
   const url = `${SUPABASE_URL}/functions/v1/sync-cards`;
   fetch(url, {
@@ -98,8 +80,6 @@ function chainStep(body: Record<string, unknown>) {
     body: JSON.stringify(body),
   }).catch((e) => console.error("[sync-cards] chain failed", e));
 }
-
-// ------------------------------------------------------------ Per-game steps
 
 async function stepPokemon(cursor: number, deadline: number) {
   let page = Math.max(1, cursor);
@@ -153,9 +133,8 @@ async function stepOnePiece(cursor: number, deadline: number) {
     if (data.length === 0) return { done: true, count, cursor: page };
     const rows = data.map((c: any) => {
       const code: string = c.code ?? c.id ?? "";
-      // FIX: deriva set_id sempre dal prefisso del code (es. "OP10-045" → "OP10",
-      // "ST22-001" → "ST22"). Questo corregge le alternate art che dall'API
-      // ricevono il set_id del set originale invece di quello corretto.
+      // FIX: deriva set_id dal prefisso del code per correggere le alternate art
+      // che dall'API ricevono il set_id del set originale invece di quello corretto
       const derivedSetId =
         code.match(/^([A-Z]{1,4}\d{1,3}[A-Z]?)-/i)?.[1]?.toUpperCase() ??
         c.set?.id ??
@@ -235,7 +214,6 @@ async function stepYugioh(cursor: number, deadline: number) {
   return { done, count, cursor: pos };
 }
 
-// ----------------------------------------------------------- Step dispatcher
 async function runStep(jobId: string, game: Game, cursor: number) {
   const deadline = Date.now() + STEP_BUDGET_MS;
   let result: { done: boolean; count: number; cursor: number };
@@ -269,7 +247,6 @@ async function runStep(jobId: string, game: Game, cursor: number) {
   }
 }
 
-// ------------------------------------------------------------ HTTP entrypoint
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -333,16 +310,10 @@ Deno.serve(async (req) => {
     }
 
     // action === "start"
-    // Mark any stuck running jobs as failed before starting a new one
-    await admin
-      .from("sync_jobs")
-      .update({
-        status: "failed",
-        error: "Timed out — superseded by new sync",
-        finished_at: new Date().toISOString(),
-      })
-      .eq("status", "running")
-      .lt("started_at", new Date(Date.now() - 15 * 60 * 1000).toISOString());
+    // FIX: usa la funzione SQL già presente nel DB invece di una query inline
+    await admin.rpc("cleanup_stuck_sync_jobs").catch((e) =>
+      console.warn("[sync-cards] cleanup rpc failed", e)
+    );
 
     const jobId = crypto.randomUUID();
     const { error: insertErr } = await admin.from("sync_jobs").insert({
@@ -350,6 +321,7 @@ Deno.serve(async (req) => {
       status: "running",
       triggered_by: triggeredBy,
       started_at: new Date().toISOString(),
+      games: ["pokemon", "onepiece", "yugioh"],  // FIX: campo obbligatorio
       summary: { pokemon: 0, onepiece: 0, yugioh: 0, _stage: "pokemon" },
     });
     if (insertErr) {
