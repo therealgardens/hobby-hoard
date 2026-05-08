@@ -549,6 +549,10 @@ export type Database = {
         }
         Returns: boolean
       }
+      increment_sync_summary: {
+        Args: { delta: number; game_key: string; job_id: string }
+        Returns: undefined
+      }
       is_blocked: { Args: { _a: string; _b: string }; Returns: boolean }
       mark_message_read: { Args: { _message_id: string }; Returns: undefined }
       mark_thread_read: { Args: { _friend_id: string }; Returns: undefined }
