@@ -22,18 +22,18 @@ export default function Duplicates() {
 
     setLoading(true);
     (async () => {
+      // FIX: filtra gt("quantity",1) direttamente nel DB invece di scaricare tutto e filtrare client-side
       const { data: entries } = await withDbRetry(() =>
         supabase
           .from("collection_entries")
           .select("*")
           .eq("game", game)
-          .eq("user_id", user.id),
+          .eq("user_id", user.id)
+          .gt("quantity", 1),
       );
 
-      const filtered = (entries ?? []).filter((e: any) => (e.quantity ?? 0) > 1);
-
       const cardIds = Array.from(
-        new Set(filtered.map((e: any) => e.card_id).filter(Boolean)),
+        new Set((entries ?? []).map((e: any) => e.card_id).filter(Boolean)),
       ) as string[];
 
       let cardsById = new Map<string, Tables<"cards">>();
@@ -45,7 +45,7 @@ export default function Duplicates() {
       }
 
       setDupes(
-        filtered.map((e: any) => ({ ...e, card: cardsById.get(e.card_id) ?? null })),
+        (entries ?? []).map((e: any) => ({ ...e, card: cardsById.get(e.card_id) ?? null })),
       );
       setLoading(false);
     })();
