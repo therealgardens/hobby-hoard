@@ -108,7 +108,7 @@ export default function MasterSets() {
   const [pickedOwned, setPickedOwned] = useState(false);
   const [rarity, setRarity] = useState("");
   const [language, setLanguage] = useState("EN");
-  const [quantity, setQuantity] = useState(1);
+  const [quantity, setQuantity] = useState<number | "">(1);
   const [savingCard, setSavingCard] = useState(false);
 
   const writeOwnedCache = (counts: Map<string, number>, ids: Set<string>, langs: Map<string, string>) => {
@@ -432,14 +432,14 @@ export default function MasterSets() {
       let error;
       if (existing) {
         ({ error } = await withDbRetry(() =>
-          supabase.from("collection_entries").update({ quantity: existing.quantity + quantity }).eq("id", existing.id)
+          supabase.from("collection_entries").update({ quantity: existing.quantity + (Number(quantity) || 1) }).eq("id", existing.id)
         ));
       } else {
         ({ error } = await withDbRetry(() =>
           supabase.from("collection_entries").insert({
             user_id: uid, card_id: savedId, game,
             rarity: rarity === "__none__" ? null : rarity || null,
-            language, quantity,
+            language, quantity: Number(quantity) || 1,
           })
         ));
       }
@@ -452,7 +452,7 @@ export default function MasterSets() {
         writeOwnedCache(ownedBySet, rollbackIds, ownedLangByCard);
         return toast.error(error.message);
       }
-      toast.success(`Added ${picked?.name ?? "card"} ×${quantity}`);
+      toast.success(`Added ${picked?.name ?? "card"} ×${Number(quantity) || 1}`);
       emitCollectionChanged({ game, cardId: savedId });
       await refreshRecent();
     } finally {
@@ -590,7 +590,7 @@ export default function MasterSets() {
                     <SelectContent>{LANGS.map(l => <SelectItem key={l} value={l}>{LANG_FLAG[l]} {l}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-                <div><Label>Quantity</Label><Input type="number" min={1} value={quantity} onChange={(e) => setQuantity(parseInt(e.target.value) || 1)} /></div>
+                <div><Label>Quantity</Label><Input type="number" min={1} value={quantity} onChange={(e) => setQuantity(e.target.value === "" ? "" : parseInt(e.target.value) || 1)} onBlur={() => setQuantity((q) => !q || Number(q) < 1 ? 1 : Number(q))} /></div>
                 <Button className="w-full" onClick={saveCard} disabled={savingCard}>
                   {savingCard ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                   {pickedOwned ? `Add ${quantity} more` : "Add to collection"}
