@@ -33,8 +33,6 @@ const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 type Game = "pokemon" | "onepiece" | "yugioh";
 const GAMES: Game[] = ["pokemon", "onepiece", "yugioh"];
 
-// Per-step soft budget. We stop the current invocation and chain another
-// step once we've spent this much time, so we never bump into the hard limit.
 const STEP_BUDGET_MS = 60_000;
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -88,8 +86,6 @@ async function finishJob(jobId: string, status: "succeeded" | "failed", error: s
 }
 
 // ------------------------------------------------------------- Self-chaining
-// Fire a follow-up step without awaiting it. We deliberately do not await the
-// fetch so the current invocation can return immediately.
 function chainStep(body: Record<string, unknown>) {
   const url = `${SUPABASE_URL}/functions/v1/sync-cards`;
   fetch(url, {
@@ -104,13 +100,8 @@ function chainStep(body: Record<string, unknown>) {
 }
 
 // ------------------------------------------------------------ Per-game steps
-//
-// Each step function processes work until either it runs out of pages or it
-// exhausts its time budget. It returns either { done: true, count } or
-// { done: false, cursor, count } so the caller can chain the next step.
 
 async function stepPokemon(cursor: number, deadline: number) {
-  // pokemontcg.io: page-based, 250/page (~25 pages today).
   let page = Math.max(1, cursor);
   let count = 0;
   const PAGE_SIZE = 250;
@@ -119,7 +110,6 @@ async function stepPokemon(cursor: number, deadline: number) {
     const res = await fetch(url);
     if (!res.ok) {
       console.error("[sync-cards] pokemon page", page, "status", res.status);
-      // Treat as transient; finish for now.
       return { done: true, count, cursor: page };
     }
     const json = await res.json();
@@ -161,20 +151,31 @@ async function stepOnePiece(cursor: number, deadline: number) {
     const json = await res.json();
     const data = json.data || [];
     if (data.length === 0) return { done: true, count, cursor: page };
-    const rows = data.map((c: any) => ({
-      game: "onepiece",
-      external_id: c.id ?? c.code,
-      code: c.code ?? c.id,
-      name: c.name,
-      set_id: c.set?.id ?? c.set_id ?? null,
-      set_name: c.set?.name ?? null,
-      number: c.number ?? null,
-      rarity: c.rarity ?? null,
-      image_small: c.images?.small ?? c.image ?? null,
-      image_large: c.images?.large ?? c.image ?? null,
-      pokedex_number: null,
-      data: c,
-    }));
+    const rows = data.map((c: any) => {
+      const code: string = c.code ?? c.id ?? "";
+      // FIX: deriva set_id sempre dal prefisso del code (es. "OP10-045" → "OP10",
+      // "ST22-001" → "ST22"). Questo corregge le alternate art che dall'API
+      // ricevono il set_id del set originale invece di quello corretto.
+      const derivedSetId =
+        code.match(/^([A-Z]{1,4}\d{1,3}[A-Z]?)-/i)?.[1]?.toUpperCase() ??
+        c.set?.id ??
+        c.set_id ??
+        null;
+      return {
+        game: "onepiece",
+        external_id: c.id ?? code,
+        code,
+        name: c.name,
+        set_id: derivedSetId,
+        set_name: c.set?.name ?? null,
+        number: c.number ?? null,
+        rarity: c.rarity ?? null,
+        image_small: c.images?.small ?? c.image ?? null,
+        image_large: c.images?.large ?? c.image ?? null,
+        pokedex_number: null,
+        data: c,
+      };
+    });
     count += await upsertBatch(rows);
     if (data.length < LIMIT) return { done: true, count, cursor: page + 1 };
     page++;
@@ -183,13 +184,8 @@ async function stepOnePiece(cursor: number, deadline: number) {
   return { done: false, count, cursor: page };
 }
 
-// Yu-Gi-Oh! has no pagination — the API returns the full list in one shot.
-// We cache the fetched + flattened rows in the sync_jobs row (`error` column
-// is unused here so we use a dedicated jsonb column? No — keep it simple:
-// fetch fresh each step but only upsert the slice for this step. The list is
-// stable enough within a single sync that re-fetching is fine.
 async function stepYugioh(cursor: number, deadline: number) {
-  const SLICE = 4000; // rows per step
+  const SLICE = 4000;
   const url = "https://db.ygoprodeck.com/api/v7/cardinfo.php";
   const res = await fetch(url);
   if (!res.ok) {
@@ -199,7 +195,6 @@ async function stepYugioh(cursor: number, deadline: number) {
   const json = await res.json();
   const cards = json?.data ?? [];
 
-  // Flatten card → printings into our row shape.
   const rows: any[] = [];
   for (const c of cards) {
     const printings = Array.isArray(c.card_sets) ? c.card_sets : [];
@@ -254,7 +249,6 @@ async function runStep(jobId: string, game: Game, cursor: number) {
     return;
   }
 
-  // Read current count for this game and add what we just upserted.
   const { data } = await admin.from("sync_jobs").select("summary").eq("id", jobId).maybeSingle();
   const prev = ((data?.summary as any) ?? {}) as Record<string, unknown>;
   const prevCount = Number(prev[game] ?? 0);
@@ -266,7 +260,6 @@ async function runStep(jobId: string, game: Game, cursor: number) {
     return;
   }
 
-  // Move to the next game, or finish.
   const idx = GAMES.indexOf(game);
   const next = GAMES[idx + 1];
   if (next) {
@@ -316,7 +309,6 @@ Deno.serve(async (req) => {
     const action = body?.action ?? "start";
 
     if (action === "step") {
-      // Internal continuation. Must be a service call to avoid abuse.
       if (!isServiceCall) {
         return new Response(JSON.stringify({ error: "Forbidden" }), {
           status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -324,71 +316,55 @@ Deno.serve(async (req) => {
       }
       const { jobId, game, cursor } = body;
       if (!jobId || !GAMES.includes(game)) {
-        return new Response(JSON.stringify({ error: "Bad step payload" }), {
+        return new Response(JSON.stringify({ error: "invalid step params" }), {
           status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      // Run synchronously so the runtime keeps us alive until done; chaining
-      // is fire-and-forget right at the end of runStep.
-      // @ts-ignore - EdgeRuntime is provided by Supabase edge runtime.
-      EdgeRuntime.waitUntil(runStep(jobId, game as Game, Number(cursor) || 0));
+      const { data: job } = await admin.from("sync_jobs").select("status").eq("id", jobId).maybeSingle();
+      if (!job || job.status !== "running") {
+        return new Response(JSON.stringify({ ok: false, reason: "job not running" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      await runStep(jobId, game as Game, Number(cursor ?? 0));
       return new Response(JSON.stringify({ ok: true }), {
-        status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // action === "start": reject overlapping runs and create a new job row.
-    const { data: existing } = await admin
-      .from("sync_jobs")
-      .select("id, started_at")
-      .eq("status", "running")
-      .gte("started_at", new Date(Date.now() - 30 * 60 * 1000).toISOString())
-      .order("started_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    // Auto-mark stale "running" jobs (older than 30 min with no finish) as
-    // failed so the UI doesn't get stuck.
+    // action === "start"
+    // Mark any stuck running jobs as failed before starting a new one
     await admin
       .from("sync_jobs")
-      .update({ status: "failed", error: "Timed out — no progress for 30 minutes", finished_at: new Date().toISOString() })
-      .eq("status", "running")
-      .lt("started_at", new Date(Date.now() - 30 * 60 * 1000).toISOString());
-
-    if (existing) {
-      return new Response(
-        JSON.stringify({ ok: true, accepted: true, jobId: existing.id, message: "A sync is already in progress." }),
-        { status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-
-    const { data: job, error: jobError } = await admin
-      .from("sync_jobs")
-      .insert({
-        status: "running",
-        games: GAMES,
-        triggered_by: triggeredBy,
-        summary: { _stage: "pokemon", pokemon: 0, onepiece: 0, yugioh: 0 },
+      .update({
+        status: "failed",
+        error: "Timed out — superseded by new sync",
+        finished_at: new Date().toISOString(),
       })
-      .select("id")
-      .single();
-    if (jobError || !job) {
-      return new Response(JSON.stringify({ error: jobError?.message ?? "Failed to create job" }), {
+      .eq("status", "running")
+      .lt("started_at", new Date(Date.now() - 15 * 60 * 1000).toISOString());
+
+    const jobId = crypto.randomUUID();
+    const { error: insertErr } = await admin.from("sync_jobs").insert({
+      id: jobId,
+      status: "running",
+      triggered_by: triggeredBy,
+      started_at: new Date().toISOString(),
+      summary: { pokemon: 0, onepiece: 0, yugioh: 0, _stage: "pokemon" },
+    });
+    if (insertErr) {
+      return new Response(JSON.stringify({ error: insertErr.message }), {
         status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    chainStep({ action: "step", jobId: job.id, game: "pokemon", cursor: 0 });
+    chainStep({ action: "step", jobId, game: GAMES[0], cursor: 0 });
 
-    return new Response(
-      JSON.stringify({
-        ok: true, accepted: true, jobId: job.id,
-        message: "Sync started. Progress is updated per game in sync_jobs.",
-      }),
-      { status: 202, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return new Response(JSON.stringify({ ok: true, jobId }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   } catch (e) {
-    console.error("[sync-cards] fatal", e);
+    console.error("[sync-cards] top-level error", e);
     return new Response(
       JSON.stringify({ error: e instanceof Error ? e.message : "unknown" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
