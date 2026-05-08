@@ -109,6 +109,7 @@ export default function MasterSets() {
   const [rarity, setRarity] = useState("");
   const [language, setLanguage] = useState("EN");
   const [quantity, setQuantity] = useState<number | "">(1);
+  const [pickedTotalCopies, setPickedTotalCopies] = useState(0);
   const [savingCard, setSavingCard] = useState(false);
 
   const writeOwnedCache = (counts: Map<string, number>, ids: Set<string>, langs: Map<string, string>) => {
@@ -334,12 +335,21 @@ export default function MasterSets() {
     [visibleSets, ownedBySet],
   );
 
-  const openCard = (c: CardRow) => {
+  const openCard = async (c: CardRow) => {
     setPicked(c);
     setPickedOwned(ownedCardIds.has(c.id));
     setRarity(c.rarity ?? "");
     setLanguage(ownedLangByCard.get(c.id) ?? "EN");
     setQuantity(1);
+    setPickedTotalCopies(0);
+    // Carica il totale copie possedute per questa carta
+    if (ownedCardIds.has(c.id)) {
+      const { data } = await supabase
+        .from("collection_entries").select("quantity")
+        .eq("card_id", c.id).eq("user_id", (await supabase.auth.getUser()).data.user?.id ?? "");
+      const total = (data ?? []).reduce((sum: number, r: any) => sum + (r.quantity ?? 1), 0);
+      setPickedTotalCopies(total);
+    }
   };
 
   const quickAdd = async (c: CardRow) => {
@@ -465,18 +475,27 @@ export default function MasterSets() {
     const uid = user.id;
     const removedId = picked.id;
     const removedSetId = setIdForCard(game, picked);
+    // Leggi la riga con quantity
     const { data: rows } = await supabase
-      .from("collection_entries").select("id")
+      .from("collection_entries").select("id, quantity")
       .eq("user_id", uid).eq("card_id", removedId);
     if (!rows?.length) { toast.error("Not in collection"); return; }
-    const { error } = await supabase.from("collection_entries").delete().eq("id", rows[0].id);
+    const row = rows[0] as { id: string; quantity: number };
+    const currentQty = row.quantity ?? 1;
+    let error: any = null;
+    if (currentQty > 1) {
+      // Decrementa di 1 senza cancellare la riga
+      ({ error } = await supabase.from("collection_entries").update({ quantity: currentQty - 1 }).eq("id", row.id));
+    } else {
+      // Era l'ultima copia: cancella la riga
+      ({ error } = await supabase.from("collection_entries").delete().eq("id", row.id));
+    }
     if (error) { toast.error(error.message); return; }
-    toast.success(`Removed one ${picked.name}`);
-    setPicked(null);
-    const { data: remain } = await supabase
-      .from("collection_entries").select("id")
-      .eq("card_id", removedId).eq("user_id", uid).limit(1);
-    if (!remain?.length) {
+    const newTotal = currentQty - 1;
+    setPickedTotalCopies(newTotal);
+    toast.success(`Removed one ${picked.name}${newTotal > 0 ? ` (${newTotal} remaining)` : ""}`);
+    if (newTotal <= 0) {
+      setPicked(null);
       const nextIds = new Set(ownedCardIds); nextIds.delete(removedId);
       const nextLangs = new Map(ownedLangByCard); nextLangs.delete(removedId);
       const nextCounts = new Map(ownedBySet);
@@ -566,6 +585,11 @@ export default function MasterSets() {
                 <div>
                   <p className="font-semibold">{picked.name}</p>
                   <p className="text-xs text-muted-foreground">{picked.code} · {picked.set_name}</p>
+                  {pickedOwned && pickedTotalCopies > 0 && (
+                    <p className="text-xs mt-1 font-medium text-primary">
+                      Hai {pickedTotalCopies} {pickedTotalCopies === 1 ? "copia" : "copie"} in collezione
+                    </p>
+                  )}
                 </div>
                 <div>
                   <Label>Rarity</Label>
