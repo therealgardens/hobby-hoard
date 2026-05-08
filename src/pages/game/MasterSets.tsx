@@ -318,7 +318,14 @@ export default function MasterSets() {
   }, [sets, query]);
 
   const ownedSets = useMemo(
-    () => visibleSets.filter((s) => (ownedBySet.get(s.id) ?? 0) > 0),
+    () => visibleSets.filter((s) => {
+      const normalizedId = s.id.toUpperCase().replace(/-/g, "");
+      return (
+        (ownedBySet.get(s.id) ?? 0) > 0 ||
+        (ownedBySet.get(normalizedId) ?? 0) > 0 ||
+        (ownedBySet.get(s.id.replace(/-/g, "")) ?? 0) > 0
+      );
+    }),
     [visibleSets, ownedBySet],
   );
 
