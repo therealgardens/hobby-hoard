@@ -23,14 +23,14 @@ export default function GameLayout() {
   }
 
   const links = [
-    { to: ``,           label: "Home",        icon: Library,    end: true },
-    { to: `master`,     label: "Master Sets", icon: Layers },
-    { to: `binders`,    label: "Binders",     icon: BookOpen },
-    { to: `wanted`,     label: "Wanted",      icon: Heart },
-    { to: `duplicates`, label: "Duplicates",  icon: Copy },
-    ...(game === "pokemon" ? [{ to: `pokedex`, label: "Pokédex", icon: ListChecks }] : []),
-    ...(game === "onepiece" || game === "yugioh" ? [{ to: `decks`, label: "Decks", icon: Swords }] : []),
-  ];
+  { to: `/${game}`,             label: "Home",        icon: Library,    end: true },
+  { to: `/${game}/master`,      label: "Master Sets", icon: Layers },
+  { to: `/${game}/binders`,     label: "Binders",     icon: BookOpen },
+  { to: `/${game}/wanted`,      label: "Wanted",      icon: Heart },
+  { to: `/${game}/duplicates`,  label: "Duplicates",  icon: Copy },
+  ...(game === "pokemon" ? [{ to: `/${game}/pokedex`, label: "Pokédex", icon: ListChecks }] : []),
+  ...(game === "onepiece" || game === "yugioh" ? [{ to: `/${game}/decks`, label: "Decks", icon: Swords }] : []),
+];
 
   const accent =
     game === "pokemon"   ? "bg-gradient-pokemon"
