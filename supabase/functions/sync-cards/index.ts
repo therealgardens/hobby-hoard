@@ -191,18 +191,20 @@ async function runStep(jobId: string, game: Game, cursor: number, prevCount: num
   // FIX CRITICO: usa increment_sync_summary (funzione SQL atomica) invece di
   // read-modify-write — questo evita che i contatori rimangano a 0 nella UI
   const newCount = prevCount + result.count;
-  await admin.rpc("increment_sync_summary", {
-    job_id: jobId,
-    game_key: game,
-    delta: result.count,
-  }).catch(async () => {
+  try {
+    await admin.rpc("increment_sync_summary", {
+      job_id: jobId,
+      game_key: game,
+      delta: result.count,
+    });
+  } catch (_) {
     // Fallback se la funzione SQL non esiste ancora
     const { data } = await admin.from("sync_jobs").select("summary").eq("id", jobId).maybeSingle();
     const s = (data?.summary as any) ?? {};
     await admin.from("sync_jobs").update({
       summary: { ...s, [game]: newCount, _stage: game },
     }).eq("id", jobId);
-  });
+  }
 
   if (!result.done) {
     chainStep({ action: "step", jobId, game, cursor: result.cursor, prevCount: newCount });
@@ -280,7 +282,7 @@ Deno.serve(async (req) => {
     }
 
     // action === "start" — cleanup job stuck + avvio nuovo job
-    await admin.rpc("cleanup_stuck_sync_jobs").catch(() => {});
+    try { await admin.rpc("cleanup_stuck_sync_jobs"); } catch (_) {}
 
     const jobId = crypto.randomUUID();
     const { error: insertErr } = await admin.from("sync_jobs").insert({
