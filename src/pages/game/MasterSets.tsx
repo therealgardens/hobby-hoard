@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -85,6 +85,7 @@ function setIdForCard(game: Game, c: { set_id: string | null; set_name: string |
 export default function MasterSets() {
   const { game } = useParams<{ game: Game }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
 
   const cachedOwned = game ? _ownedCache.get(game) : undefined;
@@ -220,6 +221,13 @@ export default function MasterSets() {
     }
     emitCollectionChanged({ game, cardId });
   };
+
+  // Reset alla lista set quando si naviga su questa pagina
+  useEffect(() => {
+    setActiveSet(null);
+    setQuery("");
+    setSearchMode("sets");
+  }, [location.pathname]);
 
   useEffect(() => {
     if (!game || !user) return;
