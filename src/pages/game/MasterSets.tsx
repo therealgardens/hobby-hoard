@@ -864,6 +864,9 @@ function SetView({
   });
   const [showOnlyOwned, setShowOnlyOwned] = useState(false);
   const [binderDialogOpen, setBinderDialogOpen] = useState(false);
+  // Codici (UPPER) di carte possedute il cui code matcha il prefisso di questo set —
+  // fallback per carte il cui set_id era stato salvato in modo errato.
+  const [ownedCodes, setOwnedCodes] = useState<Set<string>>(new Set());
 
   useEffect(() => { try { localStorage.setItem("masterset.view", view); } catch (_) {} }, [view]);
 
@@ -896,19 +899,56 @@ function SetView({
           code.startsWith(setIdDashed + "-")
         );
       });
+      // Dedup per (id + rarity) così le varianti alt-art (stessa carta base, rarità diversa)
+      // sono trattate come entry distinte invece di essere collassate.
       const map = new Map<string, CardRow>();
-      for (const c of [...(local ?? []), ...remoteFiltered]) map.set(c.id, c);
+      for (const c of [...(local ?? []), ...remoteFiltered]) {
+        const key = `${c.id}_${c.rarity ?? "normal"}`;
+        if (!map.has(key)) map.set(key, c);
+      }
       setCards(Array.from(map.values()).sort((a, b) => (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })));
       setLoading(false);
+
+      // Fallback "owned by code prefix": prendi tutte le entries dell'utente per questo
+      // gioco, fai join con cards.code, e raccogli i codici che matchano il prefisso del set.
+      try {
+        const { data: u } = await supabase.auth.getUser();
+        if (u.user) {
+          const { data: ownedRows } = await supabase
+            .from("collection_entries")
+            .select("card_id")
+            .eq("user_id", u.user.id)
+            .eq("game", game);
+          const ids = Array.from(new Set((ownedRows ?? []).map((r: any) => r.card_id).filter(Boolean))) as string[];
+          if (ids.length) {
+            const { data: ownedCards } = await supabase
+              .from("cards").select("code").in("id", ids);
+            const codes = new Set<string>();
+            for (const oc of ownedCards ?? []) {
+              const code = String((oc as any).code ?? "").toUpperCase();
+              if (!code) continue;
+              if (code.startsWith(setIdClean + "-") || code.startsWith(setIdDashed + "-")) {
+                codes.add(code);
+              }
+            }
+            setOwnedCodes(codes);
+          } else {
+            setOwnedCodes(new Set());
+          }
+        }
+      } catch (_) { /* best-effort */ }
     })();
-  }, [game, set.id]);
+  }, [game, set.id, ownedCardIds.size]);
+
+  const isOwned = (c: CardRow) =>
+    ownedCardIds.has(c.id) || ownedCodes.has(String(c.code ?? "").toUpperCase());
 
   const visibleCards = useMemo(
-    () => showOnlyOwned ? cards.filter((c) => ownedCardIds.has(c.id)) : cards,
-    [cards, showOnlyOwned, ownedCardIds]
+    () => showOnlyOwned ? cards.filter(isOwned) : cards,
+    [cards, showOnlyOwned, ownedCardIds, ownedCodes]
   );
 
-  const ownedCount = cards.filter((c) => ownedCardIds.has(c.id)).length;
+  const ownedCount = cards.filter(isOwned).length;
 
   return (
     <div>
