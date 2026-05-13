@@ -996,11 +996,11 @@ function SetView({
       ) : view === "grid" ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           {visibleCards.map((c) => {
-            const owned = ownedCardIds.has(c.id);
+            const owned = isOwned(c);
             const wanted = wantedCardIds.has(c.id);
             const busy = quickAddBusy.has(c.id);
             return (
-              <Card key={c.id} className={`overflow-hidden cursor-pointer bg-gradient-card transition-all hover:shadow-card ${owned ? "ring-2 ring-primary/60" : ""}`} onClick={() => onPickCard(c)}>
+              <Card key={`${c.id}_${c.rarity ?? "normal"}`} className={`overflow-hidden cursor-pointer bg-gradient-card transition-all hover:shadow-card ${owned ? "ring-2 ring-primary/60" : ""}`} onClick={() => onPickCard(c)}>
                 <div className="relative">
                   <CardImg card={c} className="w-full card-aspect object-cover" alt={c.name} />
                   {owned && <Badge className="absolute top-1 right-1 text-[10px] px-1 py-0 bg-primary/90">✓</Badge>}
@@ -1008,7 +1008,7 @@ function SetView({
                 </div>
                 <div className="p-2">
                   <p className="text-xs font-semibold truncate">{c.name}</p>
-                  <p className="text-[10px] text-muted-foreground truncate">{c.code}</p>
+                  <p className="text-[10px] text-muted-foreground truncate">{c.code}{c.rarity ? ` · ${c.rarity}` : ""}</p>
                   <div className="flex gap-1 mt-1.5">
                     <Button size="icon" variant="ghost" className="h-6 w-6 hover:bg-primary/10 hover:text-primary" disabled={busy}
                       onClick={(e) => { e.stopPropagation(); onQuickAdd(c); }}>
@@ -1027,12 +1027,12 @@ function SetView({
       ) : (
         <div className="flex flex-col gap-1">
           {visibleCards.map((c) => {
-            const owned = ownedCardIds.has(c.id);
+            const owned = isOwned(c);
             const wanted = wantedCardIds.has(c.id);
             const busy = quickAddBusy.has(c.id);
             const lang = ownedLangByCard.get(c.id);
             return (
-              <Card key={c.id} className={`flex items-center gap-3 px-3 py-2 cursor-pointer bg-gradient-card hover:shadow-card transition-all ${owned ? "ring-1 ring-primary/40" : ""}`} onClick={() => onPickCard(c)}>
+              <Card key={`${c.id}_${c.rarity ?? "normal"}`} className={`flex items-center gap-3 px-3 py-2 cursor-pointer bg-gradient-card hover:shadow-card transition-all ${owned ? "ring-1 ring-primary/40" : ""}`} onClick={() => onPickCard(c)}>
                 <CardImg card={c} className="h-10 w-8 object-cover rounded shrink-0" alt="" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold truncate">{c.name}</p>
