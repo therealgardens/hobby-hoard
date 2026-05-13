@@ -90,16 +90,54 @@ async function stepPokemon(cursor: number, deadline: number) {
   return { done: false, count, cursor: page };
 }
 
+// Hard-timeout fetch helper — secondary sources must never hang the chain.
+async function fetchWithTimeout(url: string, ms = 8000, init?: RequestInit) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// Map an optcgapi card object to a `cards` row. Falls back to the alternate
+// art image when no normal image is available so we still capture the card.
+function mapOptcgCard(c: any) {
+  const code: string = c.id ?? c.set_id ?? "";
+  if (!code) return null;
+  const derivedSetId =
+    code.match(/^([A-Z]{1,4}\d{1,3}[A-Z]?)-/i)?.[1]?.toUpperCase() ?? null;
+  const normalImg = c.images?.small ?? c.images?.large ?? c.image_url ?? null;
+  const altImg = c.images?.alternate ?? c.alternate_art_url ?? null;
+  const image = normalImg ?? altImg;
+  return {
+    game: "onepiece",
+    external_id: code,
+    code,
+    name: c.name,
+    set_id: derivedSetId,
+    set_name: c.set_name ?? null,
+    number: c.card_number ?? null,
+    rarity: c.rarity ?? null,
+    image_small: image,
+    image_large: image,
+    pokedex_number: null,
+    data: c,
+  };
+}
+
 async function stepOnePiece(cursor: number, deadline: number) {
   let page = Math.max(1, cursor);
   let count = 0;
   const LIMIT = 100;
   while (Date.now() < deadline) {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `https://www.apitcg.com/api/one-piece/cards?limit=${LIMIT}&page=${page}`,
+      8000,
       { headers: { "x-api-key": APITCG_KEY } }
-    );
-    if (!res.ok) return { done: true, count, cursor: page };
+    ).catch(() => null);
+    if (!res || !res.ok) return { done: true, count, cursor: page };
     const json = await res.json();
     const data = json.data || [];
     if (data.length === 0) return { done: true, count, cursor: page };
@@ -126,11 +164,54 @@ async function stepOnePiece(cursor: number, deadline: number) {
       };
     });
     count += await upsertBatch(rows);
-    if (data.length < LIMIT) return { done: true, count, cursor: page + 1 };
+    if (data.length < LIMIT) {
+      // Final page reached — try to augment from optcgapi for old sets / alt art
+      // that apitcg sometimes misses. Best-effort, never blocks completion.
+      try {
+        count += await augmentOnePieceFromOptcg(deadline);
+      } catch (e) { console.warn("[sync-cards] optcg augment failed", e); }
+      return { done: true, count, cursor: page + 1 };
+    }
     page++;
     await wait(150);
   }
   return { done: false, count, cursor: page };
+}
+
+// Pull every known set from optcgapi /allSets/, then for each one fetch the
+// per-set card list and upsert anything that wasn't covered by apitcg.
+async function augmentOnePieceFromOptcg(deadline: number): Promise<number> {
+  const allRes = await fetchWithTimeout("https://optcgapi.com/api/allSets/", 8000).catch(() => null);
+  if (!allRes || !allRes.ok) return 0;
+  const sets: any[] = await allRes.json().catch(() => []);
+  const setIds = Array.from(new Set(
+    (sets || [])
+      .map((s) => String(s.set_id || "").toUpperCase())
+      .filter(Boolean)
+      .map((raw) => raw.split("-EB")[0].split("-OP")[0]),
+  ));
+  let count = 0;
+  for (const sid of setIds) {
+    if (Date.now() > deadline) break;
+    // Try /sets/ first, fall back to /decks/ for ST starters.
+    const urls = /^ST/.test(sid)
+      ? [`https://optcgapi.com/api/decks/${sid}/`, `https://optcgapi.com/api/sets/${sid}/`]
+      : [`https://optcgapi.com/api/sets/${sid}/`, `https://optcgapi.com/api/decks/${sid}/`];
+    let cards: any[] = [];
+    for (const url of urls) {
+      try {
+        const r = await fetchWithTimeout(url, 6000);
+        if (!r.ok) continue;
+        const j = await r.json();
+        if (Array.isArray(j) && j.length) { cards = j; break; }
+      } catch (_) { /* try next */ }
+    }
+    if (!cards.length) continue;
+    const rows = cards.map(mapOptcgCard).filter(Boolean) as any[];
+    count += await upsertBatch(rows);
+    await wait(80);
+  }
+  return count;
 }
 
 async function stepYugioh(cursor: number, deadline: number) {

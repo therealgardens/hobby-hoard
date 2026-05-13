@@ -17,11 +17,65 @@ interface SearchBody {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+const POKEMONTCG_API_KEY = Deno.env.get("POKEMONTCG_API_KEY") ?? "";
 
 const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
 function escapePgPattern(s: string) {
   return s.replace(/[%_,()]/g, (m) => `\\${m}`);
+}
+
+// Fetch with hard timeout — secondary sources must never hang the function.
+async function fetchWithTimeout(url: string, ms = 8000, init?: RequestInit) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// Heuristic: a One Piece card is "alt art" if its code carries a parallel
+// suffix (e.g. "OP01-001_p1") or its rarity is one of the alt-art markers.
+function isOpAltArt(c: any): boolean {
+  const code = String(c?.code ?? "").toUpperCase();
+  if (/_P\d+$/.test(code)) return true;
+  const rarity = String(c?.rarity ?? "").toUpperCase();
+  return rarity === "AA" || rarity === "SP" || rarity === "MR";
+}
+
+// Live fallback to pokemontcg.io for vintage / un-synced Pokémon cards.
+async function pokemonLiveSearch(name: string): Promise<any[]> {
+  try {
+    const safe = name.replace(/"/g, "").trim();
+    if (!safe) return [];
+    const url = `https://api.pokemontcg.io/v2/cards?q=${encodeURIComponent(`name:"${safe}*"`)}&pageSize=60&orderBy=-set.releaseDate`;
+    const headers: Record<string, string> = {};
+    if (POKEMONTCG_API_KEY) headers["X-Api-Key"] = POKEMONTCG_API_KEY;
+    const res = await fetchWithTimeout(url, 8000, { headers });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return (json.data ?? []).map((c: any) => ({
+      // Use the upstream id as a STRING — frontend treats this as live-only data.
+      id: c.id,
+      external_id: c.id,
+      code: c.id,
+      name: c.name,
+      game: "pokemon",
+      set_id: c.set?.id ?? null,
+      set_name: c.set?.name ?? null,
+      number: c.number ?? null,
+      rarity: c.rarity ?? null,
+      image_small: c.images?.small ?? null,
+      image_large: c.images?.large ?? null,
+      pokedex_number: Array.isArray(c.nationalPokedexNumbers) ? c.nationalPokedexNumbers[0] : null,
+      data: c,
+    }));
+  } catch (e) {
+    console.warn("pokemonLiveSearch failed", e);
+    return [];
+  }
 }
 
 Deno.serve(async (req) => {
@@ -127,7 +181,23 @@ Deno.serve(async (req) => {
       });
     }
 
-    return new Response(JSON.stringify({ cards: data ?? [] }), {
+    let cards = data ?? [];
+    let only_alt_available = false;
+
+    // Pokémon: if local DB has nothing, fall back to a live query against
+    // pokemontcg.io so vintage / un-synced sets remain searchable.
+    if (body.game === "pokemon" && cards.length === 0 && query) {
+      const live = await pokemonLiveSearch(query);
+      if (live.length) cards = live as any;
+    }
+
+    // One Piece: if every result is alt-art, still return them (don't pretend
+    // the search was empty) and flag the response so the UI can show a badge.
+    if (body.game === "onepiece" && cards.length > 0 && cards.every(isOpAltArt)) {
+      only_alt_available = true;
+    }
+
+    return new Response(JSON.stringify({ cards, only_alt_available }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
