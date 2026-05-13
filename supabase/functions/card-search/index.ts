@@ -181,7 +181,23 @@ Deno.serve(async (req) => {
       });
     }
 
-    return new Response(JSON.stringify({ cards: data ?? [] }), {
+    let cards = data ?? [];
+    let only_alt_available = false;
+
+    // Pokémon: if local DB has nothing, fall back to a live query against
+    // pokemontcg.io so vintage / un-synced sets remain searchable.
+    if (body.game === "pokemon" && cards.length === 0 && query) {
+      const live = await pokemonLiveSearch(query);
+      if (live.length) cards = live as any;
+    }
+
+    // One Piece: if every result is alt-art, still return them (don't pretend
+    // the search was empty) and flag the response so the UI can show a badge.
+    if (body.game === "onepiece" && cards.length > 0 && cards.every(isOpAltArt)) {
+      only_alt_available = true;
+    }
+
+    return new Response(JSON.stringify({ cards, only_alt_available }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
