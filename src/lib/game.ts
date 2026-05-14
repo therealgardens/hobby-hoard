@@ -12,6 +12,8 @@ const GAME_ROUTE_SEGMENTS: Record<Game, string> = {
   yugioh: "yugioh",
 };
 
+const ACTIVE_GAME_KEY = "active_game";
+
 function clean(value: string | null | undefined): string {
   return String(value ?? "").trim();
 }
@@ -37,6 +39,39 @@ function onePieceDashedSetId(value: string | null | undefined): string {
   return `${m[1]}-${m[2]}`;
 }
 
+function onePieceCodeVariants(value: string | null | undefined): string[] {
+  const raw = normalizeCardCode(value);
+  if (!raw) return [];
+
+  const variants: string[] = [];
+  const push = (v: string) => {
+    const x = clean(v);
+    if (x && !variants.includes(x)) variants.push(x);
+  };
+
+  push(raw);
+
+  const noSpaces = raw.replace(/\s+/g, "");
+  push(noSpaces);
+
+  if (/^[A-Z]+\d+-\d+[A-Z]?$/i.test(noSpaces)) {
+    push(noSpaces.replace(/^([A-Z]+)(\d+)-(\d+[A-Z]?)$/i, "$1-$2-$3"));
+  }
+
+  if (/^[A-Z]+-\d+-\d+[A-Z]?$/i.test(noSpaces)) {
+    push(noSpaces.replace(/^([A-Z]+)-(\d+)-(\d+[A-Z]?)$/i, "$1$2-$3"));
+  }
+
+  const compactNoDash = noSpaces.replace(/-/g, "");
+  const m = compactNoDash.match(/^([A-Z]+)(\d{1,3}[A-Z]?)(\d{3}[A-Z]?)$/i);
+  if (m) {
+    push(`${m[1]}${m[2]}-${m[3]}`);
+    push(`${m[1]}-${m[2]}-${m[3]}`);
+  }
+
+  return variants;
+}
+
 function extractSetId(source: string | null | undefined): string | null {
   const s = upper(source);
   if (!s) return null;
@@ -59,8 +94,6 @@ export function gameLabel(game: Game): string {
   return GAME_LABELS[game];
 }
 
-const ACTIVE_GAME_KEY = "active_game";
-
 export function setActiveGame(game: Game): void {
   try {
     if (typeof window !== "undefined") {
@@ -81,27 +114,51 @@ export function getActiveGame(): Game | null {
   }
 }
 
-export function cardImage(
-  game: string | null | undefined,
-  code: string | null | undefined,
-  image: string | null | undefined,
-): string {
-  return cardImageCandidates(game, code, image)[0] ?? "";
+export function isValidGame(value: string | null | undefined): value is Game {
+  return value === "onepiece" || value === "pokemon" || value === "yugioh";
 }
 
 export function gameRouteSegment(game: Game): string {
   return GAME_ROUTE_SEGMENTS[game];
 }
 
-export function isValidGame(value: string | null | undefined): value is Game {
-  return value === "onepiece" || value === "pokemon" || value === "yugioh";
-}
-
 export function proxiedImage(url: string | null | undefined): string {
   const src = clean(url);
   if (!src) return "";
   if (src.startsWith("data:") || src.startsWith("blob:")) return src;
-  return src;
+
+  try {
+    const parsed = new URL(src);
+
+    if (
+      typeof window !== "undefined" &&
+      parsed.origin === window.location.origin
+    ) {
+      return src;
+    }
+
+    if (parsed.hostname.endsWith(".supabase.co")) {
+      return src;
+    }
+
+    const projectId =
+      import.meta.env.VITE_SUPABASE_PROJECT_ID ||
+      import.meta.env.VITE_SUPABASEPROJECTID;
+
+    if (!projectId) return src;
+
+    return `https://${projectId}.supabase.co/functions/v1/image-proxy?url=${encodeURIComponent(src)}`;
+  } catch {
+    return src;
+  }
+}
+
+export function cardImage(
+  game: string | null | undefined,
+  code: string | null | undefined,
+  image: string | null | undefined,
+): string {
+  return cardImageCandidates(game, code, image)[0] ?? "";
 }
 
 export function cardImageCandidates(
@@ -115,9 +172,10 @@ export function cardImageCandidates(
 
   const candidates: string[] = [];
   const push = (value: string | null | undefined) => {
-    const v = proxiedImage(value);
-    if (!v) return;
-    if (!candidates.includes(v)) candidates.push(v);
+    const raw = clean(value);
+    if (!raw) return;
+    const proxied = proxiedImage(raw);
+    if (proxied && !candidates.includes(proxied)) candidates.push(proxied);
   };
 
   push(imageUrl);
@@ -125,19 +183,16 @@ export function cardImageCandidates(
   if (!normalizedCode) return candidates;
 
   if (normalizedGame === "onepiece") {
-    const dashed = normalizedCode.includes("-")
-      ? normalizedCode
-      : normalizedCode.replace(/^([A-Z]+)(\d+[A-Z]?)-(\d+)$/i, "$1-$2-$3");
+    for (const variant of onePieceCodeVariants(normalizedCode)) {
+      push(`https://en.onepiece-cardgame.com/images/cardlist/card/${variant}.png`);
+      push(`https://www.apitcg.com/images/cards/one-piece/${variant}.jpg`);
+      push(`https://www.apitcg.com/images/cards/one-piece/${variant}.png`);
+    }
 
-    const compact = normalizedCode.replace(/\s+/g, "");
-    const setPrefix = compact.split("-").slice(0, 2).join("-");
+    const primary = onePieceCodeVariants(normalizedCode)[0] ?? normalizedCode;
+    const setPrefix = primary.split("-").slice(0, 2).join("-");
     const setCompact = normalizeSetId(setPrefix);
     const setDashed = onePieceDashedSetId(setCompact);
-
-    push(`https://en.onepiece-cardgame.com/images/cardlist/card/${compact}.png`);
-    push(`https://en.onepiece-cardgame.com/images/cardlist/card/${dashed}.png`);
-    push(`https://www.apitcg.com/images/cards/one-piece/${compact}.jpg`);
-    push(`https://www.apitcg.com/images/cards/one-piece/${compact}.png`);
 
     if (setCompact) {
       push(`https://en.onepiece-cardgame.com/images/cardlist/card/${setCompact}-001.png`);
@@ -163,9 +218,10 @@ export function cardImageCandidates(
 export function setImageCandidates(game: Game, setId: string, logo?: string | null): string[] {
   const candidates: string[] = [];
   const push = (value: string | null | undefined) => {
-    const v = proxiedImage(value);
-    if (!v) return;
-    if (!candidates.includes(v)) candidates.push(v);
+    const raw = clean(value);
+    if (!raw) return;
+    const proxied = proxiedImage(raw);
+    if (proxied && !candidates.includes(proxied)) candidates.push(proxied);
   };
 
   const cleanId = normalizeSetId(setId);
