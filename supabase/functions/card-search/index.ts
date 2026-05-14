@@ -1,11 +1,9 @@
-// card-search: searches the local cards table only. The catalog is kept fresh
-// by the daily sync-cards job (and the manual sync button in Settings).
+// supabase/functions/card-search/index.ts
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.95.0";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
 interface SearchBody {
@@ -21,11 +19,64 @@ const POKEMONTCG_API_KEY = Deno.env.get("POKEMONTCG_API_KEY") ?? "";
 
 const admin = createClient(SUPABASE_URL, SERVICE_KEY);
 
+function clean(value: string | null | undefined): string {
+  return String(value ?? "").trim();
+}
+
+function upper(value: string | null | undefined): string {
+  return clean(value).toUpperCase();
+}
+
+function normalizeSetId(value: string | null | undefined): string {
+  return upper(value).replace(/[^A-Z0-9]/g, "");
+}
+
+function normalizeCardCode(value: string | null | undefined): string {
+  return upper(value).replace(/\s+/g, "");
+}
+
+function setCodePrefixes(setId: string): string[] {
+  const normalized = normalizeSetId(setId);
+  if (!normalized) return [];
+  const variants = new Set<string>([normalized]);
+
+  const m = normalized.match(/^([A-Z]+)(\d+[A-Z]?)$/);
+  if (m) {
+    variants.add(`${m[1]}-${m[2]}`);
+  }
+
+  return Array.from(variants);
+}
+
+function cardBelongsToSet(
+  game: "pokemon" | "onepiece" | "yugioh",
+  card: { set_id?: string | null; set_name?: string | null; code?: string | null },
+  setId: string
+): boolean {
+  const target = normalizeSetId(setId);
+  if (!target) return false;
+
+  const cardSetId = normalizeSetId(card.set_id);
+  const code = normalizeCardCode(card.code);
+  const codePrefix = code.split("-")[0];
+  const compactPrefixMatch = code.startsWith(target);
+  const dashedPrefixMatch = !!codePrefix && normalizeSetId(codePrefix) === target;
+
+  if (game === "onepiece") {
+    return dashedPrefixMatch || compactPrefixMatch;
+  }
+
+  if (cardSetId === target) return true;
+  if (dashedPrefixMatch || compactPrefixMatch) return true;
+
+  const setName = upper(card.set_name);
+  return setName.includes(target);
+}
+
 function escapePgPattern(s: string) {
   return s.replace(/[%_,()]/g, (m) => `\\${m}`);
 }
 
-// Fetch with hard timeout — secondary sources must never hang the function.
 async function fetchWithTimeout(url: string, ms = 8000, init?: RequestInit) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
@@ -36,8 +87,6 @@ async function fetchWithTimeout(url: string, ms = 8000, init?: RequestInit) {
   }
 }
 
-// Heuristic: a One Piece card is "alt art" if its code carries a parallel
-// suffix (e.g. "OP01-001_p1") or its rarity is one of the alt-art markers.
 function isOpAltArt(c: any): boolean {
   const code = String(c?.code ?? "").toUpperCase();
   if (/_P\d+$/.test(code)) return true;
@@ -45,7 +94,6 @@ function isOpAltArt(c: any): boolean {
   return rarity === "AA" || rarity === "SP" || rarity === "MR";
 }
 
-// Live fallback to pokemontcg.io for vintage / un-synced Pokémon cards.
 async function pokemonLiveSearch(name: string): Promise<any[]> {
   try {
     const safe = name.replace(/"/g, "").trim();
@@ -56,8 +104,8 @@ async function pokemonLiveSearch(name: string): Promise<any[]> {
     const res = await fetchWithTimeout(url, 8000, { headers });
     if (!res.ok) return [];
     const json = await res.json();
+
     return (json.data ?? []).map((c: any) => ({
-      // Use the upstream id as a STRING — frontend treats this as live-only data.
       id: c.id,
       external_id: c.id,
       code: c.id,
@@ -82,6 +130,7 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
+
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
@@ -90,11 +139,14 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
     const userClient = createClient(SUPABASE_URL, ANON_KEY, {
       global: { headers: { Authorization: authHeader } },
     });
+
     const token = authHeader.replace("Bearer ", "");
     const { data: claims, error: authError } = await userClient.auth.getClaims(token);
+
     if (authError || !claims?.claims?.sub) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
@@ -110,8 +162,8 @@ Deno.serve(async (req) => {
       });
     }
 
-    const query = (body.query || "").trim();
-    const setId = body.setId?.trim();
+    const query = clean(body.query);
+    const setId = clean(body.setId);
 
     if (!query && !setId) {
       return new Response(JSON.stringify({ cards: [] }), {
@@ -119,61 +171,43 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Browse a whole set.
     if (setId && !query) {
-      const id = setId.toUpperCase().replace(/-/g, "");
-      const dashed = id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
+      const prefixes = setCodePrefixes(setId);
 
-      let dbQuery = admin
+      const { data, error } = await admin
         .from("cards")
         .select("*")
         .eq("game", body.game)
         .order("code", { ascending: true })
-        .limit(500);
+        .limit(3000);
 
-      if (body.game === "onepiece") {
-        // Per One Piece usa SOLO il code — il set_id non è affidabile per
-        // alternate art e reprint che conservano il set_id del set originale
-        dbQuery = dbQuery.or(`code.ilike.${id}-%,code.ilike.${dashed}-%`);
-      } else {
-        dbQuery = dbQuery.or(
-          `set_id.ilike.${id},set_id.ilike.${dashed},code.ilike.${id}-%,code.ilike.${dashed}-%`
-        );
-      }
-
-      const { data, error } = await dbQuery;
       if (error) {
         console.error("set browse error", error);
         return new Response(JSON.stringify({ cards: [] }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      return new Response(JSON.stringify({ cards: data ?? [] }), {
+
+      const cards = (data ?? []).filter((card: any) => {
+        if (cardBelongsToSet(body.game, card, setId)) return true;
+        const code = normalizeCardCode(card.code);
+        return prefixes.some((prefix) => code.startsWith(prefix));
+      });
+
+      return new Response(JSON.stringify({ cards }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Free-text search by name OR code.
     const term = escapePgPattern(query);
-    let q = admin
+    const { data, error } = await admin
       .from("cards")
       .select("*")
       .eq("game", body.game)
       .or(`name.ilike.%${term}%,code.ilike.%${term}%`)
       .order("name", { ascending: true })
-      .limit(60);
+      .limit(300);
 
-    if (setId) {
-      const id = setId.toUpperCase().replace(/-/g, "");
-      const dashed = id.replace(/^([A-Z]+)(\d+)$/, "$1-$2");
-      if (body.game === "onepiece") {
-        q = q.or(`code.ilike.${id}-%,code.ilike.${dashed}-%`);
-      } else {
-        q = q.or(`set_id.ilike.${id},set_id.ilike.${dashed},code.ilike.${id}-%,code.ilike.${dashed}-%`);
-      }
-    }
-
-    const { data, error } = await q;
     if (error) {
       console.error("search error", error);
       return new Response(JSON.stringify({ cards: [] }), {
@@ -181,18 +215,36 @@ Deno.serve(async (req) => {
       });
     }
 
-    let cards = data ?? [];
-    let only_alt_available = false;
+    let cards = (data ?? []) as any[];
 
-    // Pokémon: if local DB has nothing, fall back to a live query against
-    // pokemontcg.io so vintage / un-synced sets remain searchable.
-    if (body.game === "pokemon" && cards.length === 0 && query) {
-      const live = await pokemonLiveSearch(query);
-      if (live.length) cards = live as any;
+    if (setId) {
+      cards = cards.filter((card) => cardBelongsToSet(body.game, card, setId));
     }
 
-    // One Piece: if every result is alt-art, still return them (don't pretend
-    // the search was empty) and flag the response so the UI can show a badge.
+    let only_alt_available = false;
+
+    if (body.game === "pokemon" && query) {
+      const live = await pokemonLiveSearch(query);
+      const merged = [...cards];
+
+      for (const card of live) {
+        const exists = merged.some((existing) => {
+          const existingId = clean(existing.external_id || existing.id);
+          const incomingId = clean(card.external_id || card.id);
+          if (existingId && incomingId && existingId === incomingId) return true;
+
+          return (
+            normalizeCardCode(existing.code) === normalizeCardCode(card.code) &&
+            normalizeSetId(existing.set_id) === normalizeSetId(card.set_id)
+          );
+        });
+
+        if (!exists) merged.push(card);
+      }
+
+      cards = setId ? merged.filter((card) => cardBelongsToSet("pokemon", card, setId)) : merged;
+    }
+
     if (body.game === "onepiece" && cards.length > 0 && cards.every(isOpAltArt)) {
       only_alt_available = true;
     }
@@ -202,9 +254,9 @@ Deno.serve(async (req) => {
     });
   } catch (e) {
     console.error(e);
-    return new Response(
-      JSON.stringify({ error: e instanceof Error ? e.message : "unknown" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "unknown" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });
