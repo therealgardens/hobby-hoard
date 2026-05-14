@@ -14,6 +14,58 @@ export type Database = {
   }
   public: {
     Tables: {
+      binder_entries: {
+        Row: {
+          binder_id: string
+          created_at: string
+          id: string
+          is_wanted: boolean
+          position: number
+          printing_id: string | null
+          user_id: string
+        }
+        Insert: {
+          binder_id: string
+          created_at?: string
+          id?: string
+          is_wanted?: boolean
+          position: number
+          printing_id?: string | null
+          user_id: string
+        }
+        Update: {
+          binder_id?: string
+          created_at?: string
+          id?: string
+          is_wanted?: boolean
+          position?: number
+          printing_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "binder_entries_binder_id_fkey"
+            columns: ["binder_id"]
+            isOneToOne: false
+            referencedRelation: "binders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "binder_entries_printing_id_fkey"
+            columns: ["printing_id"]
+            isOneToOne: false
+            referencedRelation: "card_printings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "binder_entries_printing_id_fkey"
+            columns: ["printing_id"]
+            isOneToOne: false
+            referencedRelation: "user_owned_cards"
+            referencedColumns: ["printing_id"]
+          },
+        ]
+      }
       binder_slots: {
         Row: {
           binder_id: string
@@ -88,6 +140,65 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      card_printings: {
+        Row: {
+          card_id: string
+          created_at: string
+          data: Json | null
+          finish: string | null
+          id: string
+          image_large: string | null
+          image_small: string | null
+          language: string
+          printing_code: string
+          rarity: string | null
+          source: string
+          source_id: string | null
+          updated_at: string
+          variant_type: string
+        }
+        Insert: {
+          card_id: string
+          created_at?: string
+          data?: Json | null
+          finish?: string | null
+          id?: string
+          image_large?: string | null
+          image_small?: string | null
+          language?: string
+          printing_code: string
+          rarity?: string | null
+          source?: string
+          source_id?: string | null
+          updated_at?: string
+          variant_type?: string
+        }
+        Update: {
+          card_id?: string
+          created_at?: string
+          data?: Json | null
+          finish?: string | null
+          id?: string
+          image_large?: string | null
+          image_small?: string | null
+          language?: string
+          printing_code?: string
+          rarity?: string | null
+          source?: string
+          source_id?: string | null
+          updated_at?: string
+          variant_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "card_printings_card_id_fkey"
+            columns: ["card_id"]
+            isOneToOne: false
+            referencedRelation: "cards"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       cards: {
         Row: {
@@ -372,6 +483,57 @@ export type Database = {
         }
         Relationships: []
       }
+      ownership: {
+        Row: {
+          condition: string
+          created_at: string
+          id: string
+          language: string
+          notes: string | null
+          printing_id: string
+          quantity: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          condition?: string
+          created_at?: string
+          id?: string
+          language?: string
+          notes?: string | null
+          printing_id: string
+          quantity?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          condition?: string
+          created_at?: string
+          id?: string
+          language?: string
+          notes?: string | null
+          printing_id?: string
+          quantity?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ownership_printing_id_fkey"
+            columns: ["printing_id"]
+            isOneToOne: false
+            referencedRelation: "card_printings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ownership_printing_id_fkey"
+            columns: ["printing_id"]
+            isOneToOne: false
+            referencedRelation: "user_owned_cards"
+            referencedColumns: ["printing_id"]
+          },
+        ]
+      }
       pokedex_entries: {
         Row: {
           created_at: string
@@ -423,6 +585,48 @@ export type Database = {
           display_name?: string | null
           id?: string
           username?: string | null
+        }
+        Relationships: []
+      }
+      sync_conflicts: {
+        Row: {
+          created_at: string
+          field: string
+          game: string
+          id: string
+          printing_code: string | null
+          resolved_by_rule: string | null
+          resolved_to: string | null
+          source_a: string
+          source_b: string
+          value_a: string | null
+          value_b: string | null
+        }
+        Insert: {
+          created_at?: string
+          field: string
+          game: string
+          id?: string
+          printing_code?: string | null
+          resolved_by_rule?: string | null
+          resolved_to?: string | null
+          source_a: string
+          source_b: string
+          value_a?: string | null
+          value_b?: string | null
+        }
+        Update: {
+          created_at?: string
+          field?: string
+          game?: string
+          id?: string
+          printing_code?: string | null
+          resolved_by_rule?: string | null
+          resolved_to?: string | null
+          source_a?: string
+          source_b?: string
+          value_a?: string | null
+          value_b?: string | null
         }
         Relationships: []
       }
@@ -536,7 +740,39 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      masterset_progress: {
+        Row: {
+          game: string | null
+          owned_printings: number | null
+          set_id: string | null
+          set_name: string | null
+          total_printings: number | null
+          user_id: string | null
+        }
+        Relationships: []
+      }
+      user_owned_cards: {
+        Row: {
+          card_id: string | null
+          code: string | null
+          game: string | null
+          printing_code: string | null
+          printing_id: string | null
+          quantity: number | null
+          set_id: string | null
+          user_id: string | null
+          variant_type: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "card_printings_card_id_fkey"
+            columns: ["card_id"]
+            isOneToOne: false
+            referencedRelation: "cards"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
       are_friends: { Args: { _a: string; _b: string }; Returns: boolean }

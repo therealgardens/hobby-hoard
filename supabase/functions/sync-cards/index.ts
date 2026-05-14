@@ -73,7 +73,12 @@ async function stepPokemon(cursor: number, deadline: number) {
     if (!res.ok) return { done: true, count, cursor: page };
     const json = await res.json();
     const data = json.data || [];
-    if (data.length === 0) return { done: true, count, cursor: page };
+    if (data.length === 0) {
+      // Final page reached — augment from TCGdex for legacy sets pokemontcg.io misses
+      try { count += await augmentPokemonFromTcgdex(deadline); }
+      catch (e) { console.warn("[sync-cards] tcgdex augment failed", e); }
+      return { done: true, count, cursor: page };
+    }
     const rows = data.map((c: any) => ({
       game: "pokemon", external_id: c.id, code: c.id, name: c.name,
       set_id: c.set?.id ?? null, set_name: c.set?.name ?? null,
@@ -83,11 +88,55 @@ async function stepPokemon(cursor: number, deadline: number) {
       data: c,
     }));
     count += await upsertBatch(rows);
-    if (data.length < PAGE_SIZE) return { done: true, count, cursor: page + 1 };
+    if (data.length < PAGE_SIZE) {
+      try { count += await augmentPokemonFromTcgdex(deadline); }
+      catch (e) { console.warn("[sync-cards] tcgdex augment failed", e); }
+      return { done: true, count, cursor: page + 1 };
+    }
     page++;
     await wait(150);
   }
   return { done: false, count, cursor: page };
+}
+
+// TCGdex fallback: enumerates every set, fetches each set, upserts cards
+// not already covered by pokemontcg.io. Best-effort, never blocks completion.
+async function augmentPokemonFromTcgdex(deadline: number): Promise<number> {
+  const setsRes = await fetchWithTimeout("https://api.tcgdex.net/v2/en/sets", 8000).catch(() => null);
+  if (!setsRes || !setsRes.ok) return 0;
+  const sets: any[] = await setsRes.json().catch(() => []);
+  let count = 0;
+  for (const s of sets) {
+    if (Date.now() > deadline) break;
+    const setId = String(s.id || "").toLowerCase();
+    if (!setId) continue;
+    const r = await fetchWithTimeout(`https://api.tcgdex.net/v2/en/sets/${setId}`, 6000).catch(() => null);
+    if (!r || !r.ok) continue;
+    const setData: any = await r.json().catch(() => null);
+    if (!setData?.cards?.length) continue;
+    const rows = setData.cards.map((c: any) => {
+      const externalId = `tcgdex-${setId}-${c.localId ?? c.id}`;
+      const img = c.image ? `${c.image}/low.png` : null;
+      const imgLarge = c.image ? `${c.image}/high.png` : null;
+      return {
+        game: "pokemon",
+        external_id: externalId,
+        code: externalId,
+        name: c.name,
+        set_id: setId,
+        set_name: setData.name ?? s.name ?? null,
+        number: String(c.localId ?? ""),
+        rarity: c.rarity ?? null,
+        image_small: img,
+        image_large: imgLarge,
+        pokedex_number: null,
+        data: { ...c, _source: "tcgdex", _set: { id: setId, name: setData.name } },
+      };
+    });
+    count += await upsertBatch(rows);
+    await wait(60);
+  }
+  return count;
 }
 
 // Hard-timeout fetch helper — secondary sources must never hang the chain.
