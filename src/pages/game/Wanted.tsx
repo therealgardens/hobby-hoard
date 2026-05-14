@@ -166,7 +166,7 @@ export default function Wanted() {
 
       <Card className="p-4 bg-gradient-card">
         <h3 className="font-display text-2xl mb-3">Add to wishlist</h3>
-        {game && <CardSearch game={game} onPick={add} pickLabel="Want" />}
+        {game && <CardSearch game={game} />}
       </Card>
 
       {items.length > 0 && (

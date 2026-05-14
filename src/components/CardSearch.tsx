@@ -63,9 +63,9 @@ function searchIndex(card: CardRow): string {
     card.rarity ?? "",
     card.set_name ?? "",
     card.set_id ?? "",
-    card.type ?? "",
-    card.attribute ?? "",
-    card.color ?? "",
+    (card.data as any)?.type ?? "",
+    (card.data as any)?.attribute ?? "",
+    (card.data as any)?.color ?? "",
   ]
     .join(" ")
     .toLowerCase();
