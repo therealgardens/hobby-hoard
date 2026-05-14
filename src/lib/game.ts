@@ -53,8 +53,40 @@ function extractSetId(source: string | null | undefined): string | null {
   return null;
 }
 
+export const GAME_LABEL = GAME_LABELS;
+
 export function gameLabel(game: Game): string {
   return GAME_LABELS[game];
+}
+
+const ACTIVE_GAME_KEY = "active_game";
+
+export function setActiveGame(game: Game): void {
+  try {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(ACTIVE_GAME_KEY, game);
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function getActiveGame(): Game | null {
+  try {
+    if (typeof window === "undefined") return null;
+    const v = window.localStorage.getItem(ACTIVE_GAME_KEY);
+    return isValidGame(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function cardImage(
+  game: string | null | undefined,
+  code: string | null | undefined,
+  image: string | null | undefined,
+): string {
+  return cardImageCandidates(game, code, image)[0] ?? "";
 }
 
 export function gameRouteSegment(game: Game): string {
