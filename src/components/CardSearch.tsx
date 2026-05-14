@@ -1,565 +1,325 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Card } from "@/components/ui/card";
+import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Plus, Heart, Loader2 } from "lucide-react";
+import { Card } from "@/components/ui/card";
+import { Search, Plus, Loader2, Heart, Check } from "lucide-react";
 import { toast } from "sonner";
 import { cardImageCandidates, type Game } from "@/lib/game";
 import type { Tables } from "@/integrations/supabase/types";
-import { addWishlist, listWishlist, removeWishlistByCard } from "@/lib/wishlist";
 import { withDbRetry } from "@/lib/supabaseRetry";
+import { addWishlist, removeWishlistByCard, wishlistStatus } from "@/lib/wishlist";
 import { emitCollectionChanged } from "@/lib/collectionEvents";
-import { useAuth } from "@/hooks/useAuth";
 
 type CardRow = Tables<"cards">;
 
-const LANGS = ["EN", "JP", "IT", "FR", "DE", "ES", "PT"];
-const LANG_FLAG: Record<string, string> = {
-  EN: "🇬🇧",
-  JP: "🇯🇵",
-  IT: "🇮🇹",
-  FR: "🇫🇷",
-  DE: "🇩🇪",
-  ES: "🇪🇸",
-  PT: "🇵🇹",
-};
-
-const RARITIES: Record<Game, string[]> = {
-  onepiece: ["C", "UC", "R", "SR", "L", "SEC", "SP", "TR", "AA", "MR", "Promo"],
-  yugioh: ["N", "R", "SR", "UR", "Ultimate Rare", "SEC", "Prismatic SR", "Quarter Century SEC", "Collectors Rare", "Ghost Rare", "Starlight Rare", "Promo"],
-  pokemon: ["Common", "Uncommon", "Rare", "Double Rare", "Illustration Rare", "Ultra Rare", "Special Illustration Rare", "Hyper Rare", "Shiny Rare", "Shiny Ultra Rare", "Ace Spec", "Promo"],
-};
-
-function normalizeSetId(value: string | null | undefined): string {
-  return String(value ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+interface Props {
+  game: Game;
+  onPick?: (card: CardRow) => void;
+  pickLabel?: string;
+  autoLoad?: boolean;
+  ownedOnly?: boolean;
+  ownedCardIds?: Set<string>;
 }
 
-function extractSetId(s: string | null | undefined): string | null {
-  if (!s) return null;
+export function CardSearch({
+  game,
+  onPick,
+  pickLabel = "Add",
+  autoLoad = false,
+  ownedOnly = false,
+  ownedCardIds,
+}: Props) {
+  const { user, loading: authLoading } = useAuth();
+  const [q, setQ] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [results, setResults] = useState<CardRow[]>([]);
+  const [qty, setQty] = useState<Record<string, number>>({});
+  const [ownedIds, setOwnedIds] = useState<Set<string>>(new Set());
+  const [wantedIds, setWantedIds] = useState<Set<string>>(new Set());
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  const reqIdRef = useRef(0);
 
-  const mBracket = s.match(/\[([A-Z]{1,4}-?\d{1,3}[A-Z]?)\]/i);
-  if (mBracket) return normalizeSetId(mBracket[1]);
+  const setBusy = (id: string, busy: boolean) =>
+    setBusyIds((prev) => { const n = new Set(prev); busy ? n.add(id) : n.delete(id); return n; });
 
-  const mCode = s.match(/\b(OP|ST|EB|PRB|GC)-?(\d{1,3}[A-Z]?)\b/i);
-  if (mCode) return normalizeSetId(`${mCode[1]}${mCode[2]}`);
+  const applyOwnedFilter = (cards: CardRow[]): CardRow[] => {
+    if (!ownedOnly || !ownedCardIds) return cards;
+    return cards.filter((c) => ownedCardIds.has(c.id));
+  };
 
-  const mPokemon = s.match(/\b([A-Z]{2,5}\d{1,3})\b/i);
-  if (mPokemon) return normalizeSetId(mPokemon[1]);
+  const refreshStatus = async (cards: CardRow[]) => {
+    if (!user || cards.length === 0) return;
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const ids = cards.map((c) => c.id).filter((id) => uuidRe.test(id));
+    if (ids.length === 0) return;
+    const [{ data: owned, error: ownedError }, wanted] = await Promise.all([
+      withDbRetry(() =>
+        supabase.from("collection_entries").select("card_id").eq("user_id", user.id).in("card_id", ids)
+      ),
+      wishlistStatus(ids).catch(() => null),
+    ]);
+    if (!ownedError) setOwnedIds(new Set((owned ?? []).map((r: any) => r.card_id)));
+    if (wanted) setWantedIds(wanted);
+  };
 
-  return null;
-}
+  const runSearch = async (term: string) => {
+    const id = ++reqIdRef.current;
+    setLoading(true);
 
-function searchIndex(card: CardRow): string {
-  return [
-    card.name ?? "",
-    card.code ?? "",
-    card.number ?? "",
-    card.rarity ?? "",
-    card.set_name ?? "",
-    card.set_id ?? "",
-    (card.data as any)?.type ?? "",
-    (card.data as any)?.attribute ?? "",
-    (card.data as any)?.color ?? "",
-  ]
-    .join(" ")
-    .toLowerCase();
-}
+    const SELECT_COLS = "id, code, name, image_small, image_large, set_id, set_name, rarity, game";
 
-function cardDedupKey(card: CardRow): string {
-  return [
-    card.game ?? "",
-    (card.code ?? "").toUpperCase(),
-    (card.rarity ?? "").toUpperCase(),
-    normalizeSetId(card.set_id),
-    (card.image_small ?? card.image_large ?? "").trim(),
-  ].join("::");
-}
-
-function CardImg({ card, className, alt }: { card: CardRow; className: string; alt: string }) {
-  const candidates = useMemo(
-    () => cardImageCandidates(card.game, card.code, card.image_small ?? card.image_large),
-    [card.game, card.code, card.image_small, card.image_large]
-  );
-  const [idx, setIdx] = useState(0);
-  const src = candidates[idx];
-
-  if (!src) {
-    return <div className="w-full card-aspect bg-muted flex items-center justify-center text-muted-foreground text-xs">No image</div>;
-  }
-
-  return <img src={src} alt={alt} loading="lazy" className={className} onError={() => setIdx((i) => i + 1)} />;
-}
-
-function SearchSkeleton() {
-  return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-      {Array.from({ length: 10 }).map((_, i) => (
-        <Card key={i} className="overflow-hidden bg-gradient-card">
-          <Skeleton className="w-full card-aspect" />
-          <div className="p-2 space-y-2">
-            <Skeleton className="h-4 w-3/4" />
-            <Skeleton className="h-3 w-1/2" />
-          </div>
-        </Card>
-      ))}
-    </div>
-  );
-}
-
-export function CardSearch({ game, autoLoad = true }: { game: Game; autoLoad?: boolean }) {
-  const { user } = useAuth();
-
-  const [query, setQuery] = useState("");
-  const [cards, setCards] = useState<CardRow[]>([]);
-  const [loading, setLoading] = useState(autoLoad);
-  const [loaded, setLoaded] = useState(!autoLoad);
-
-  const [ownedCardIds, setOwnedCardIds] = useState<Set<string>>(new Set());
-  const [ownedLangByCard, setOwnedLangByCard] = useState<Map<string, string>>(new Map());
-  const [wantedCardIds, setWantedCardIds] = useState<Set<string>>(new Set());
-  const [quickAddBusy, setQuickAddBusy] = useState<Set<string>>(new Set());
-  const [wishlistBusy, setWishlistBusy] = useState<Set<string>>(new Set());
-
-  const [picked, setPicked] = useState<CardRow | null>(null);
-  const [pickedOwned, setPickedOwned] = useState(false);
-  const [rarity, setRarity] = useState("");
-  const [language, setLanguage] = useState("EN");
-  const [quantity, setQuantity] = useState<number | "">(1);
-  const [pickedTotalCopies, setPickedTotalCopies] = useState(0);
-  const [savingCard, setSavingCard] = useState(false);
-
-  const loadOwned = async () => {
-    if (!game || !user) return;
-
-    const { data: rows, error } = await withDbRetry(() =>
-      supabase.from("collection_entries").select("card_id, language").eq("user_id", user.id).eq("game", game)
-    );
-
-    if (error) {
-      console.warn("CardSearch loadOwned failed", error);
+    if (ownedOnly && ownedCardIds && ownedCardIds.size > 0) {
+      const { data: local } = await supabase
+        .from("cards")
+        .select(SELECT_COLS)
+        .eq("game", game)
+        .in("id", Array.from(ownedCardIds))
+        .or(`name.ilike.%${term}%,code.ilike.%${term}%`)
+        .limit(50);
+      if (id !== reqIdRef.current) return;
+      setLoading(false);
+      const filtered = (local ?? []) as unknown as CardRow[];
+      setResults(filtered);
+      if (filtered.length > 0) refreshStatus(filtered);
+      else toast.info("No owned cards match your search");
       return;
     }
 
-    const ids = new Set<string>();
-    const langs = new Map<string, string>();
+    const { data: local } = await supabase
+      .from("cards")
+      .select(SELECT_COLS)
+      .eq("game", game)
+      .or(`name.ilike.%${term}%,code.ilike.%${term}%`)
+      .limit(50) as unknown as { data: CardRow[] | null };
+    if (id !== reqIdRef.current) return;
 
-    for (const row of (rows ?? []) as Array<{ card_id: string; language: string | null }>) {
-      if (!row.card_id) continue;
-      ids.add(row.card_id);
-      if (row.language && !langs.has(row.card_id)) langs.set(row.card_id, row.language);
+    const localFiltered = applyOwnedFilter(local ?? []);
+
+    if (localFiltered.length >= 10) {
+      setLoading(false);
+      setResults(localFiltered);
+      refreshStatus(localFiltered);
+      return;
     }
 
-    setOwnedCardIds(ids);
-    setOwnedLangByCard(langs);
-  };
+    const { data, error } = await supabase.functions.invoke("card-search", {
+      body: { game, query: term },
+    });
+    if (id !== reqIdRef.current) return;
+    setLoading(false);
+    if (error) { toast.error(error.message); return; }
 
-  const loadWishlist = async () => {
-    if (!game || !user) return;
-    try {
-      setWantedCardIds(new Set((await listWishlist(game)).map((item) => item.card_id)));
-    } catch (_) {}
-  };
-
-  const loadCards = async () => {
-    if (!game) return;
-
-    setLoading(true);
-    try {
-      const { data: remote, error } = await supabase.functions.invoke("card-search", {
-        body: { game, q: "", limit: 500 },
-      });
-
-      if (error) {
-        console.warn("CardSearch remote load failed", error);
-      }
-
-      const remoteCards = ((remote?.cards as CardRow[]) ?? []);
-
-      const { data: local } = await supabase.from("cards").select("*").eq("game", game).limit(3000);
-      const localCards = (local ?? []) as CardRow[];
-
-      const map = new Map<string, CardRow>();
-      for (const c of [...localCards, ...remoteCards]) {
-        const key = cardDedupKey(c);
-        if (!map.has(key)) map.set(key, c);
-      }
-
-      const merged = Array.from(map.values()).sort((a, b) =>
-        (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true, sensitivity: "base" })
-      );
-
-      setCards(merged);
-      setLoaded(true);
-    } finally {
-      setLoading(false);
+    const remoteCards = applyOwnedFilter((data?.cards as CardRow[]) ?? []);
+    if (remoteCards.length) {
+      setResults(remoteCards);
+      refreshStatus(remoteCards);
+    } else if (localFiltered.length) {
+      setResults(localFiltered);
+      refreshStatus(localFiltered);
+    } else {
+      setResults([]);
+      toast.info("No cards found");
     }
   };
 
   useEffect(() => {
-    setCards([]);
-    setQuery("");
-    setLoaded(!autoLoad);
-    setLoading(autoLoad);
-
-    if (autoLoad) {
-      loadCards();
+    const term = q.trim();
+    if (term.length < 2) {
+      if (onPick && autoLoad) {
+        (async () => {
+          setLoading(true);
+          if (ownedOnly && ownedCardIds && ownedCardIds.size > 0) {
+            const { data } = await supabase
+              .from("cards")
+              .select("*")
+              .eq("game", game)
+              .in("id", Array.from(ownedCardIds))
+              .order("name", { ascending: true })
+              .limit(80);
+            setLoading(false);
+            if (data) { setResults(data); refreshStatus(data); }
+            return;
+          }
+          const { data } = await supabase
+            .from("cards").select("*").eq("game", game)
+            .order("name", { ascending: true }).limit(40);
+          setLoading(false);
+          if (data) {
+            const filtered = applyOwnedFilter(data);
+            setResults(filtered);
+            refreshStatus(filtered);
+          }
+        })();
+      } else {
+        setResults([]);
+        setLoading(false);
+      }
+      return;
     }
+    const t = setTimeout(() => runSearch(term), 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, game, onPick, ownedOnly, ownedCardIds]);
 
-    loadOwned();
-    loadWishlist();
-  }, [game, user?.id, autoLoad]);
-
-  const filteredCards = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return cards;
-    return cards.filter((card) => searchIndex(card).includes(q));
-  }, [cards, query]);
-
-  const openCard = async (c: CardRow) => {
-    setPicked(c);
-    setPickedOwned(ownedCardIds.has(c.id));
-    setRarity(c.rarity ?? "");
-    setLanguage(ownedLangByCard.get(c.id) ?? "EN");
-    setQuantity(1);
-    setPickedTotalCopies(0);
-
-    if (ownedCardIds.has(c.id) && user) {
-      const { data } = await supabase
-        .from("collection_entries")
-        .select("quantity")
-        .eq("card_id", c.id)
-        .eq("user_id", user.id);
-
-      const total = (data ?? []).reduce((sum: number, r: any) => sum + (r.quantity ?? 1), 0);
-      setPickedTotalCopies(total);
-    }
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const term = q.trim();
+    if (term.length >= 2) runSearch(term);
   };
 
-  const quickAdd = async (c: CardRow) => {
-    if (!game || !user || quickAddBusy.has(c.id)) return;
-
-    setQuickAddBusy((prev) => new Set(prev).add(c.id));
-    const wasOwned = ownedCardIds.has(c.id);
-
-    const nextIds = new Set(ownedCardIds).add(c.id);
-    const nextLangs = new Map(ownedLangByCard);
-    if (!nextLangs.has(c.id)) nextLangs.set(c.id, "EN");
-
-    setOwnedCardIds(nextIds);
-    setOwnedLangByCard(nextLangs);
-
+  const addToCollection = async (c: CardRow) => {
+    if (!user) return toast.error("Not signed in");
+    if (busyIds.has(c.id)) return;
+    const quantity = Math.max(1, qty[c.id] ?? 1);
+    setBusy(c.id, true);
+    setOwnedIds((prev) => new Set(prev).add(c.id));
     try {
       const { data: existing } = await supabase
-        .from("collection_entries")
-        .select("id, quantity")
-        .eq("user_id", user.id)
-        .eq("card_id", c.id)
-        .maybeSingle();
-
+        .from("collection_entries").select("id, quantity")
+        .eq("user_id", user.id).eq("card_id", c.id).maybeSingle();
       let error;
       if (existing) {
         ({ error } = await withDbRetry(() =>
-          supabase.from("collection_entries").update({ quantity: existing.quantity + 1 }).eq("id", existing.id)
+          supabase.from("collection_entries").update({ quantity: existing.quantity + quantity }).eq("id", existing.id)
         ));
       } else {
         ({ error } = await withDbRetry(() =>
           supabase.from("collection_entries").insert({
-            user_id: user.id,
-            card_id: c.id,
-            game,
-            rarity: c.rarity ?? null,
-            language: "EN",
-            quantity: 1,
+            user_id: user.id, card_id: c.id, game,
+            rarity: c.rarity ?? null, language: "EN", quantity,
           })
         ));
       }
-
       if (error) {
-        const rollbackIds = new Set(ownedCardIds);
-        if (!wasOwned) rollbackIds.delete(c.id);
-        setOwnedCardIds(rollbackIds);
-        setOwnedLangByCard(ownedLangByCard);
+        setOwnedIds((prev) => { const n = new Set(prev); n.delete(c.id); return n; });
         return toast.error(error.message);
       }
-
-      toast.success(`Added ${c.name}`);
-      emitCollectionChanged({ game, cardId: c.id, card: c as any });
-    } finally {
-      setQuickAddBusy((prev) => {
-        const n = new Set(prev);
-        n.delete(c.id);
-        return n;
+      toast.success(`Added ${c.name} ×${quantity}`);
+      // ← Passa la carta nell'evento per aggiornamento ottimistico in MasterSets
+      emitCollectionChanged({
+        game,
+        cardId: c.id,
+        card: {
+          set_id: c.set_id ?? null,
+          set_name: c.set_name ?? null,
+          code: c.code ?? null,
+        },
       });
+    } finally {
+      setBusy(c.id, false);
     }
   };
 
   const toggleWanted = async (c: CardRow) => {
-    if (!game || !user || wishlistBusy.has(c.id)) return;
-
-    setWishlistBusy((prev) => new Set(prev).add(c.id));
-    const wasWanted = wantedCardIds.has(c.id);
-
-    setWantedCardIds((prev) => {
-      const n = new Set(prev);
-      wasWanted ? n.delete(c.id) : n.add(c.id);
-      return n;
-    });
-
+    if (!user) return;
+    const wasWanted = wantedIds.has(c.id);
+    setWantedIds((prev) => { const n = new Set(prev); wasWanted ? n.delete(c.id) : n.add(c.id); return n; });
     try {
-      if (wasWanted) {
-        await removeWishlistByCard(c.id, game);
-        toast.success("Removed from wishlist");
-      } else {
-        await addWishlist(c, game);
-        toast.success("Added to wishlist");
-      }
-    } catch (error) {
-      setWantedCardIds((prev) => {
-        const n = new Set(prev);
-        wasWanted ? n.add(c.id) : n.delete(c.id);
-        return n;
-      });
-      toast.error(error instanceof Error ? error.message : "Wishlist action failed");
-    } finally {
-      setWishlistBusy((prev) => {
-        const n = new Set(prev);
-        n.delete(c.id);
-        return n;
-      });
+      if (wasWanted) { await removeWishlistByCard(c.id, game); toast.success("Removed from wishlist"); }
+      else { await addWishlist(c, game); toast.success("Added to wishlist"); }
+    } catch {
+      setWantedIds((prev) => { const n = new Set(prev); wasWanted ? n.add(c.id) : n.delete(c.id); return n; });
     }
   };
 
-  const saveCard = async () => {
-    if (!picked || !game || !user || savingCard) return;
-
-    setSavingCard(true);
-    const qtyToAdd = Number(quantity) || 1;
-    const savedId = picked.id;
-    const wasOwned = ownedCardIds.has(savedId);
-
-    const nextIds = new Set(ownedCardIds).add(savedId);
-    const nextLangs = new Map(ownedLangByCard).set(savedId, language);
-    setOwnedCardIds(nextIds);
-    setOwnedLangByCard(nextLangs);
-    setPicked(null);
-
-    try {
-      const { data: existing } = await supabase
-        .from("collection_entries")
-        .select("id, quantity")
-        .eq("user_id", user.id)
-        .eq("card_id", savedId)
-        .maybeSingle();
-
-      let error;
-      if (existing) {
-        ({ error } = await withDbRetry(() =>
-          supabase.from("collection_entries").update({ quantity: existing.quantity + qtyToAdd }).eq("id", existing.id)
-        ));
-      } else {
-        ({ error } = await withDbRetry(() =>
-          supabase.from("collection_entries").insert({
-            user_id: user.id,
-            card_id: savedId,
-            game,
-            rarity: rarity === "__none__" ? null : rarity || null,
-            language,
-            quantity: qtyToAdd,
-          })
-        ));
-      }
-
-      if (error) {
-        const rollbackIds = new Set(ownedCardIds);
-        if (!wasOwned) rollbackIds.delete(savedId);
-        setOwnedCardIds(rollbackIds);
-        setOwnedLangByCard(ownedLangByCard);
-        return toast.error(error.message);
-      }
-
-      toast.success(`Added ${picked?.name ?? "card"} ×${qtyToAdd}`);
-      emitCollectionChanged({ game, cardId: savedId, card: picked as any });
-    } finally {
-      setSavingCard(false);
-    }
-  };
-
-  const gameRarities = RARITIES[game] ?? [];
+  if (authLoading) return null;
 
   return (
-    <div>
-      <div className="flex flex-col sm:flex-row gap-3 mb-6">
-        <div className="relative flex-1">
+    <div className="space-y-4">
+      <form onSubmit={onSubmit} className="flex gap-2">
+        <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Cerca per nome, codice, set, rarità..."
+            placeholder="Search by name or code…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
             className="pl-9"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
           />
         </div>
-        {!autoLoad && !loaded && (
-          <Button onClick={loadCards} disabled={loading}>
-            {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-            Carica carte
-          </Button>
-        )}
-      </div>
+        <Button type="submit" disabled={loading || q.trim().length < 2}>
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Search"}
+        </Button>
+      </form>
 
-      {loading ? (
-        <SearchSkeleton />
-      ) : filteredCards.length === 0 ? (
-        <p className="text-muted-foreground text-center py-12">
-          {loaded ? "Nessuna carta trovata." : "Premi “Carica carte” per iniziare la ricerca."}
+      {results.length === 0 && !loading && (
+        <p className="text-muted-foreground text-sm text-center py-8">
+          {q.trim().length < 2 ? "Type at least 2 characters to search." : "No results."}
         </p>
-      ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          {filteredCards.map((c) => {
-            const owned = ownedCardIds.has(c.id);
-            const wanted = wantedCardIds.has(c.id);
-            const busy = quickAddBusy.has(c.id);
-
-            return (
-              <Card key={cardDedupKey(c)} className={`overflow-hidden bg-gradient-card transition-all hover:shadow-card ${owned ? "ring-2 ring-primary/60" : ""}`}>
-                <button type="button" className="block w-full text-left" onClick={() => openCard(c)}>
-                  <div className="relative">
-                    <CardImg card={c} className="w-full card-aspect object-cover" alt={c.name} />
-                    {owned && <Badge className="absolute top-1 right-1 text-[10px] px-1 py-0 bg-primary/90">✓</Badge>}
-                    {!owned && wanted && (
-                      <Badge variant="outline" className="absolute top-1 right-1 text-[10px] px-1 py-0 border-yellow-400 text-yellow-500">
-                        ♡
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="p-2">
-                    <p className="text-xs font-semibold truncate">{c.name}</p>
-                    <p className="text-[10px] text-muted-foreground truncate">
-                      {c.code}
-                      {c.rarity ? ` · ${c.rarity}` : ""}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground truncate">
-                      {c.set_name ?? c.set_id ?? "—"}
-                    </p>
-                  </div>
-                </button>
-
-                <div className="px-2 pb-2 flex gap-1">
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="h-6 w-6 hover:bg-primary/10 hover:text-primary"
-                    disabled={busy}
-                    onClick={() => quickAdd(c)}
-                  >
-                    {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className={`h-6 w-6 ${wanted ? "text-yellow-500 hover:text-yellow-600" : "hover:text-yellow-500"}`}
-                    onClick={() => toggleWanted(c)}
-                  >
-                    <Heart className="h-3 w-3" fill={wanted ? "currentColor" : "none"} />
-                  </Button>
-                </div>
-              </Card>
-            );
-          })}
-        </div>
       )}
 
-      <Dialog open={!!picked} onOpenChange={(o) => !o && setPicked(null)}>
-        <DialogContent
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.target as HTMLElement).tagName !== "TEXTAREA") {
-              e.preventDefault();
-              saveCard();
-            }
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>{pickedOwned ? "Update collection" : "Add to collection"}</DialogTitle>
-          </DialogHeader>
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+        {results.map((c) => {
+          const owned = ownedIds.has(c.id);
+          const wanted = wantedIds.has(c.id);
+          const busy = busyIds.has(c.id);
+          const candidates = cardImageCandidates(c.game, c.code, c.image_small ?? c.image_large);
+          return (
+            <Card key={c.id} className="overflow-hidden bg-gradient-card group relative">
+              <button
+                type="button"
+                onClick={() => toggleWanted(c)}
+                className="absolute top-2 left-2 z-10 p-1.5 rounded-full bg-background/90 shadow hover:bg-background transition-colors"
+                title={wanted ? "Remove from wishlist" : "Add to wishlist"}
+              >
+                <Heart className={`h-4 w-4 ${wanted ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
+              </button>
 
-          {picked && (
-            <div className="grid grid-cols-[120px_1fr] gap-4">
-              <CardImg card={picked} className="rounded-lg w-full" alt="" />
-              <div className="space-y-3">
+              {onPick ? (
+                <button type="button" className="w-full text-left" onClick={() => onPick(c)}>
+                  <CardImage candidates={candidates} name={c.name} owned={owned} />
+                </button>
+              ) : (
+                <CardImage candidates={candidates} name={c.name} owned={owned} />
+              )}
+
+              <div className="p-2 space-y-2">
                 <div>
-                  <p className="font-semibold">{picked.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {picked.code} · {picked.set_name}
-                  </p>
-                  {pickedOwned && pickedTotalCopies > 0 && (
-                    <p className="text-xs mt-1 font-medium text-primary">
-                      Hai {pickedTotalCopies} {pickedTotalCopies === 1 ? "copia" : "copie"} in collezione
-                    </p>
-                  )}
+                  <p className="text-sm font-semibold truncate">{c.name}</p>
+                  <p className="text-xs text-muted-foreground truncate">{c.code}{c.rarity ? ` · ${c.rarity}` : ""}</p>
                 </div>
 
-                <div>
-                  <Label>Rarity</Label>
-                  {gameRarities.length > 0 ? (
-                    <Select value={rarity || "__none__"} onValueChange={(v) => setRarity(v === "__none__" ? "" : v)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Seleziona rarità" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__none__">— Nessuna —</SelectItem>
-                        {gameRarities.map((r) => (
-                          <SelectItem key={r} value={r}>
-                            {r}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <Input value={rarity} onChange={(e) => setRarity(e.target.value)} placeholder="e.g. Rare Holo" />
-                  )}
-                </div>
-
-                <div>
-                  <Label>Language</Label>
-                  <Select value={language} onValueChange={setLanguage}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {LANGS.map((l) => (
-                        <SelectItem key={l} value={l}>
-                          {LANG_FLAG[l]} {l}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div>
-                  <Label>Quantity</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={quantity}
-                    onChange={(e) => setQuantity(e.target.value === "" ? "" : parseInt(e.target.value) || 1)}
-                    onBlur={() => setQuantity((q) => (!q || Number(q) < 1 ? 1 : Number(q)))}
-                  />
-                </div>
-
-                <Button className="w-full" onClick={saveCard} disabled={savingCard}>
-                  {savingCard ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                  {pickedOwned ? `Add ${quantity} more` : "Add to collection"}
-                </Button>
+                {onPick ? (
+                  <Button size="sm" className="w-full h-7 text-xs" onClick={() => onPick(c)}>
+                    {pickLabel}
+                  </Button>
+                ) : (
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="number" min={1} value={qty[c.id] ?? 1}
+                      onChange={(e) => setQty((p) => ({ ...p, [c.id]: parseInt(e.target.value) || 1 }))}
+                      className="w-12 h-7 text-xs text-center border rounded bg-background"
+                    />
+                    <Button
+                      size="sm" className="flex-1 h-7 text-xs" disabled={busy}
+                      onClick={() => addToCollection(c)}
+                      variant={owned ? "secondary" : "default"}
+                    >
+                      {busy ? <Loader2 className="h-3 w-3 animate-spin" />
+                        : owned ? <><Check className="h-3 w-3 mr-1" />Add more</>
+                        : <><Plus className="h-3 w-3 mr-1" />Add</>}
+                    </Button>
+                  </div>
+                )}
               </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+            </Card>
+          );
+        })}
+      </div>
     </div>
+  );
+}
+
+function CardImage({ candidates, name, owned }: { candidates: string[]; name: string; owned: boolean }) {
+  const [idx, setIdx] = useState(0);
+  const src = candidates[idx];
+  if (!src) return <div className="w-full card-aspect bg-muted flex items-center justify-center text-muted-foreground text-xs">No image</div>;
+  return (
+    <img
+      src={src} alt={name} loading="lazy"
+      className={`w-full card-aspect object-cover transition-all ${owned ? "" : "opacity-60 grayscale"}`}
+      onError={() => setIdx((i) => i + 1)}
+    />
   );
 }

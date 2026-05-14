@@ -1,332 +1,93 @@
-export type Game = "onepiece" | "pokemon" | "yugioh";
+export type Game = "pokemon" | "onepiece" | "yugioh";
 
-const GAME_LABELS: Record<Game, string> = {
-  onepiece: "One Piece",
+const KEY = "tcg.activeGame";
+
+export function getActiveGame(): Game | null {
+  const v = localStorage.getItem(KEY);
+  return v === "pokemon" || v === "onepiece" || v === "yugioh" ? v : null;
+}
+export function setActiveGame(g: Game) { localStorage.setItem(KEY, g); }
+export function clearActiveGame() { localStorage.removeItem(KEY); }
+
+export const GAME_LABEL: Record<Game, string> = {
   pokemon: "Pokémon",
+  onepiece: "One Piece",
   yugioh: "Yu-Gi-Oh!",
 };
 
-const GAME_ROUTE_SEGMENTS: Record<Game, string> = {
-  onepiece: "onepiece",
-  pokemon: "pokemon",
-  yugioh: "yugioh",
-};
+import { supabase } from "@/integrations/supabase/client";
 
-const ACTIVE_GAME_KEY = "active_game";
+let cachedAccessToken: string | null = null;
+supabase.auth.getSession().then(({ data }) => {
+  cachedAccessToken = data.session?.access_token ?? null;
+});
+supabase.auth.onAuthStateChange((_event, session) => {
+  cachedAccessToken = session?.access_token ?? null;
+});
 
-function clean(value: string | null | undefined): string {
-  return String(value ?? "").trim();
-}
+const DIRECT_HOSTS = [
+  "optcgapi.com",
+  ".supabase.co",
+  ".supabase.in",
+];
 
-function upper(value: string | null | undefined): string {
-  return clean(value).toUpperCase();
-}
-
-function normalizeSetId(value: string | null | undefined): string {
-  return upper(value).replace(/[^A-Z0-9]/g, "");
-}
-
-function normalizeCardCode(value: string | null | undefined): string {
-  return upper(value).replace(/\s+/g, "");
-}
-
-function onePieceDashedSetId(value: string | null | undefined): string {
-  const raw = upper(value);
-  if (!raw) return "";
-  if (raw.includes("-")) return raw;
-  const m = raw.match(/^([A-Z]+)(\d+[A-Z]?)$/);
-  if (!m) return raw;
-  return `${m[1]}-${m[2]}`;
-}
-
-function onePieceCodeVariants(value: string | null | undefined): string[] {
-  const raw = normalizeCardCode(value);
-  if (!raw) return [];
-
-  const variants: string[] = [];
-  const push = (v: string) => {
-    const x = clean(v);
-    if (x && !variants.includes(x)) variants.push(x);
-  };
-
-  push(raw);
-
-  const noSpaces = raw.replace(/\s+/g, "");
-  push(noSpaces);
-
-  if (/^[A-Z]+\d+-\d+[A-Z]?$/i.test(noSpaces)) {
-    push(noSpaces.replace(/^([A-Z]+)(\d+)-(\d+[A-Z]?)$/i, "$1-$2-$3"));
-  }
-
-  if (/^[A-Z]+-\d+-\d+[A-Z]?$/i.test(noSpaces)) {
-    push(noSpaces.replace(/^([A-Z]+)-(\d+)-(\d+[A-Z]?)$/i, "$1$2-$3"));
-  }
-
-  const compactNoDash = noSpaces.replace(/-/g, "");
-  const m = compactNoDash.match(/^([A-Z]+)(\d{1,3}[A-Z]?)(\d{3}[A-Z]?)$/i);
-  if (m) {
-    push(`${m[1]}${m[2]}-${m[3]}`);
-    push(`${m[1]}-${m[2]}-${m[3]}`);
-  }
-
-  return variants;
-}
-
-function extractSetId(source: string | null | undefined): string | null {
-  const s = upper(source);
-  if (!s) return null;
-
-  const bracket = s.match(/\[([A-Z]{1,4}-?\d{1,3}[A-Z]?)\]/i);
-  if (bracket) return normalizeSetId(bracket[1]);
-
-  const tcg = s.match(/\b(OP|ST|EB|PRB|GC)-?(\d{1,3}[A-Z]?)\b/i);
-  if (tcg) return normalizeSetId(`${tcg[1]}${tcg[2]}`);
-
-  const alt = s.match(/\b([A-Z]{2,5}\d{1,3})\b/i);
-  if (alt) return normalizeSetId(alt[1]);
-
-  return null;
-}
-
-export const GAME_LABEL = GAME_LABELS;
-
-export function gameLabel(game: Game): string {
-  return GAME_LABELS[game];
-}
-
-export function setActiveGame(game: Game): void {
+export function proxiedImage(url?: string | null): string | undefined {
+  if (!url) return undefined;
   try {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(ACTIVE_GAME_KEY, game);
-    }
-  } catch {
-    // ignore storage errors
+    const host = new URL(url).hostname;
+    if (DIRECT_HOSTS.some((h) => host === h.replace(/^\./, "") || host.endsWith(h))) return url;
+  } catch (_) { return url; }
+  const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+  if (!projectId) return url;
+  const base = `https://${projectId}.supabase.co/functions/v1/image-proxy?url=${encodeURIComponent(url)}`;
+  return cachedAccessToken
+    ? `${base}&access_token=${encodeURIComponent(cachedAccessToken)}`
+    : base;
+}
+
+function ygoImageUrl(idOrCode: string): string {
+  if (/^\d+$/.test(idOrCode)) {
+    return `https://images.ygoprodeck.com/images/cards_small/${idOrCode}.jpg`;
   }
-}
-
-export function getActiveGame(): Game | null {
-  try {
-    if (typeof window === "undefined") return null;
-    const v = window.localStorage.getItem(ACTIVE_GAME_KEY);
-    return isValidGame(v) ? v : null;
-  } catch {
-    return null;
-  }
-}
-
-export function isValidGame(value: string | null | undefined): value is Game {
-  return value === "onepiece" || value === "pokemon" || value === "yugioh";
-}
-
-export function gameRouteSegment(game: Game): string {
-  return GAME_ROUTE_SEGMENTS[game];
-}
-
-export function proxiedImage(url: string | null | undefined): string {
-  const src = clean(url);
-  if (!src) return "";
-  if (src.startsWith("data:") || src.startsWith("blob:")) return src;
-
-  try {
-    const parsed = new URL(src);
-
-    if (
-      typeof window !== "undefined" &&
-      parsed.origin === window.location.origin
-    ) {
-      return src;
-    }
-
-    if (parsed.hostname.endsWith(".supabase.co")) {
-      return src;
-    }
-
-    const projectId =
-      import.meta.env.VITE_SUPABASE_PROJECT_ID ||
-      import.meta.env.VITE_SUPABASEPROJECTID;
-
-    if (!projectId) return src;
-
-    return `https://${projectId}.supabase.co/functions/v1/image-proxy?url=${encodeURIComponent(src)}`;
-  } catch {
-    return src;
-  }
+  return "";
 }
 
 export function cardImage(
-  game: string | null | undefined,
+  game: Game | string | null | undefined,
   code: string | null | undefined,
-  image: string | null | undefined,
-): string {
-  return cardImageCandidates(game, code, image)[0] ?? "";
+  imageUrl?: string | null,
+): string | undefined {
+  if (imageUrl) return proxiedImage(imageUrl);
+
+  if (game === "onepiece" && code) {
+    return proxiedImage(`https://en.onepiece-cardgame.com/images/cardlist/card/${code}.png`);
+  }
+
+  if (game === "yugioh" && code) {
+    const url = ygoImageUrl(code);
+    if (url) return proxiedImage(url);
+  }
+
+  return undefined;
 }
 
 export function cardImageCandidates(
-  game: string | null | undefined,
+  game: Game | string | null | undefined,
   code: string | null | undefined,
-  image: string | null | undefined
+  imageUrl?: string | null,
 ): string[] {
-  const normalizedGame = clean(game).toLowerCase() as Game | "";
-  const normalizedCode = normalizeCardCode(code);
-  const imageUrl = clean(image);
+  const urls: string[] = [];
+  if (imageUrl) urls.push(imageUrl);
 
-  const candidates: string[] = [];
-  const push = (value: string | null | undefined) => {
-    const raw = clean(value);
-    if (!raw) return;
-    const proxied = proxiedImage(raw);
-    if (proxied && !candidates.includes(proxied)) candidates.push(proxied);
-  };
-
-  push(imageUrl);
-
-  if (!normalizedCode) return candidates;
-
-  if (normalizedGame === "onepiece") {
-    for (const variant of onePieceCodeVariants(normalizedCode)) {
-      push(`https://en.onepiece-cardgame.com/images/cardlist/card/${variant}.png`);
-      push(`https://www.apitcg.com/images/cards/one-piece/${variant}.jpg`);
-      push(`https://www.apitcg.com/images/cards/one-piece/${variant}.png`);
-    }
-
-    const primary = onePieceCodeVariants(normalizedCode)[0] ?? normalizedCode;
-    const setPrefix = primary.split("-").slice(0, 2).join("-");
-    const setCompact = normalizeSetId(setPrefix);
-    const setDashed = onePieceDashedSetId(setCompact);
-
-    if (setCompact) {
-      push(`https://en.onepiece-cardgame.com/images/cardlist/card/${setCompact}-001.png`);
-      push(`https://en.onepiece-cardgame.com/images/cardlist/card/${setDashed}-001.png`);
-    }
+  if (game === "onepiece" && code) {
+    urls.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${code}.png`);
+    urls.push(`https://en.onepiece-cardgame.com/images/cardlist/card/${code.replace(/_p\d+$/i, "")}.png`);
   }
 
-  if (normalizedGame === "pokemon") {
-    const compact = normalizedCode.replace(/\s+/g, "");
-    push(`https://www.apitcg.com/images/cards/pokemon/${compact}.jpg`);
-    push(`https://www.apitcg.com/images/cards/pokemon/${compact}.png`);
+  if (game === "yugioh" && code) {
+    const url = ygoImageUrl(code);
+    if (url) urls.push(url);
   }
 
-  if (normalizedGame === "yugioh") {
-    const compact = normalizedCode.replace(/\s+/g, "");
-    push(`https://www.apitcg.com/images/cards/yugioh/${compact}.jpg`);
-    push(`https://www.apitcg.com/images/cards/yugioh/${compact}.png`);
-  }
-
-  return candidates;
-}
-
-export function setImageCandidates(game: Game, setId: string, logo?: string | null): string[] {
-  const candidates: string[] = [];
-  const push = (value: string | null | undefined) => {
-    const raw = clean(value);
-    if (!raw) return;
-    const proxied = proxiedImage(raw);
-    if (proxied && !candidates.includes(proxied)) candidates.push(proxied);
-  };
-
-  const cleanId = normalizeSetId(setId);
-  const dashedId = onePieceDashedSetId(setId);
-
-  push(logo);
-
-  if (game === "onepiece") {
-    push(`https://www.apitcg.com/images/sets/one-piece/${cleanId}-logo.png`);
-    push(`https://en.onepiece-cardgame.com/images/cardlist/card/${cleanId}-001.png`);
-    push(`https://en.onepiece-cardgame.com/images/cardlist/card/${dashedId}-001.png`);
-    push(`https://en.onepiece-cardgame.com/images/cardlist/card/${cleanId}-002.png`);
-    push(`https://en.onepiece-cardgame.com/images/cardlist/card/${dashedId}-002.png`);
-  }
-
-  if (game === "pokemon") {
-    push(`https://www.apitcg.com/images/sets/pokemon/${cleanId}-logo.png`);
-  }
-
-  if (game === "yugioh") {
-    push(`https://www.apitcg.com/images/sets/yugioh/${cleanId}-logo.png`);
-  }
-
-  return candidates;
-}
-
-export function setIdForCard(
-  game: Game,
-  card: { set_id?: string | null; set_name?: string | null; code?: string | null }
-): string | null {
-  if (game === "pokemon" || game === "yugioh") {
-    const normalized = normalizeSetId(card.set_id);
-    return normalized || extractSetId(card.set_name) || extractSetId(card.code);
-  }
-
-  const direct = upper(card.set_id);
-  if (direct) {
-    const compositeTrimmed = direct.split("-EB")[0].split("-OP")[0];
-    const normalized = normalizeSetId(compositeTrimmed);
-    if (normalized) return normalized;
-  }
-
-  return extractSetId(card.set_name) || extractSetId(card.code);
-}
-
-export function cardMatchesSet(
-  game: Game,
-  card: { set_id?: string | null; set_name?: string | null; code?: string | null },
-  setId: string
-): boolean {
-  const target = normalizeSetId(setId);
-  const targetDashed = onePieceDashedSetId(setId);
-  const cardSetId = normalizeSetId(card.set_id);
-  const cardSetFromName = extractSetId(card.set_name);
-  const cardCode = upper(card.code);
-
-  if (game === "pokemon" || game === "yugioh") {
-    return cardSetId === target || cardSetFromName === target;
-  }
-
-  if (cardSetId === target || cardSetFromName === target) return true;
-  if (cardCode.startsWith(`${target}-`) || cardCode.startsWith(`${targetDashed}-`)) return true;
-
-  return false;
-}
-
-export function cardSearchIndex(card: {
-  name?: string | null;
-  code?: string | null;
-  number?: string | null;
-  rarity?: string | null;
-  set_name?: string | null;
-  set_id?: string | null;
-  type?: string | null;
-  attribute?: string | null;
-  color?: string | null;
-}): string {
-  return [
-    card.name ?? "",
-    card.code ?? "",
-    card.number ?? "",
-    card.rarity ?? "",
-    card.set_name ?? "",
-    card.set_id ?? "",
-    card.type ?? "",
-    card.attribute ?? "",
-    card.color ?? "",
-  ]
-    .join(" ")
-    .toLowerCase();
-}
-
-export function cardDedupKey(card: {
-  game?: string | null;
-  code?: string | null;
-  rarity?: string | null;
-  set_id?: string | null;
-  image_small?: string | null;
-  image_large?: string | null;
-}): string {
-  return [
-    clean(card.game).toLowerCase(),
-    upper(card.code),
-    upper(card.rarity),
-    normalizeSetId(card.set_id),
-    clean(card.image_small ?? card.image_large),
-  ].join("::");
+  return Array.from(new Set(urls)).map((url) => proxiedImage(url)).filter(Boolean) as string[];
 }
