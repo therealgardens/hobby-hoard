@@ -36,7 +36,7 @@ export function classifyVariant(code: string | null | undefined, rarity?: string
   const r = (rarity ?? "").toUpperCase().trim();
   if (code && /_p\d+$/i.test(code)) return "parallel";
   if (r === "AA" || r === "ALT ART" || r === "ALTERNATE ART") return "alt_art";
-  if (r === "SEC" || r === "SECRET" || r === "SR") return "secret";
+  if (r === "SEC" || r === "SECRET" || r === "SECRET RARE") return "secret";
   if (r === "PR" || r === "PROMO" || r === "P") return "promo";
   return "base";
 }
