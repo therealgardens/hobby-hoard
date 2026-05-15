@@ -1,110 +1,86 @@
-# Refactor Report — Catalog & Ownership domain
+# Refactor report — CardKeeperCentral
 
-## Cause radice identificate
+## Stato attuale
 
-| # | Bug riferito | Causa reale | Fix |
-|---|---|---|---|
-| 1 | Carte One Piece nel set sbagliato | `set_id` proveniva direttamente dall'API `apitcg.com`, che per ristampe e alt-art riporta il set originale. Inoltre il dedup avveniva su `c.id` perdendo varianti. | `set_id` ora **derivato sempre dal prefisso del `code`** (regex `^([A-Z]{1,4}\d{1,3}[A-Z]?)-`). Update massivo già eseguito (richiesta SQL precedente). Dedup in `MasterSets.tsx` ora include la rarità. |
-| 2 | Mancano alt-art / versioni | Singola fonte (apitcg) incompleta su varianti e set vecchi. Modello `cards` collassava ogni stampa in una sola riga. | Nuovo modello `card_printings` (1 riga per stampa). Pipeline multi-source: apitcg → augment da `optcgapi.com` `/allSets/`, `/sets/{id}/`, `/decks/{id}/`. |
-| 3 | Binder non aggiorna Master Set | `binder_slots` e `collection_entries` erano silos indipendenti senza sync. | Trigger `trg_binder_slots_sync_collection`: ogni INSERT/UPDATE/DELETE su `binder_slots` (con `is_wanted=false`) crea/rimuove la `collection_entries` corrispondente. Backfill eseguito sui dati esistenti. Fix non richiede modifiche frontend. |
-| 4 | Set Pokémon legacy mancanti (Unseen Forces) | Non veramente mancanti: in DB ci sono **99 carte** per `set_id=ex10` (il full set è 115). Le 16 mancanti sono secret/holo non coperte da pokemontcg.io per quel set. | Aggiunto `augmentPokemonFromTcgdex()` in `sync-cards`: enumera tutti i set da `api.tcgdex.net`, fetcha i set non coperti e fa upsert delle carte mancanti. Esegui un sync manuale per popolare. |
+### ✅ Completato
 
-## Nuovo data model (additivo, non rompe nulla)
+**Schema additivo (3 migrazioni)**
+- `card_printings` (56 227 righe) — una stampa fisica per riga, chiave `(card_id, printing_code, variant_type)`
+- `ownership` (91 righe) — source-of-truth del possesso, chiave `(user_id, printing_id, language, condition)`
+- `binder_entries` (86 righe) — collocazione fisica con flag `is_wanted`
+- `sync_conflicts` (0 righe) — log conflitti sync multi-source
+- View `masterset_progress` e `user_owned_cards` con `security_invoker = true`
 
-```text
-cards (legacy, intatta)
-   │
-   └── card_printings  ← una riga per ogni stampa fisica
-         id, card_id, printing_code, variant_type
-         (base|alt_art|parallel|promo|special|reprint|foil)
-         rarity, finish, language, image_*, source, source_id, data
-         UNIQUE (card_id, printing_code, variant_type, language)
-         │
-         └── ownership  ← source of truth del possesso
-               id, user_id, printing_id, quantity, language, condition
-               UNIQUE (user_id, printing_id, language, condition)
+**Trigger di sincronizzazione**
+- `sync_binder_to_ownership` su `binder_entries` → mantiene `ownership.quantity` consistente
+- `sync_binder_slot_to_collection` su `binder_slots` → mantiene `collection_entries` (compat layer)
 
-binder_entries  ← nuova versione di binder_slots, basata su printing_id
-   id, user_id, binder_id, position, printing_id, is_wanted
-   trigger AFTER I/U/D → ownership (auto-incrementa quantity)
+**Backfill dati**
+- 56 227 stampe materializzate da `cards` esistenti
+- 86 binder_slots → 86 binder_entries (1:1)
+- 91 ownership records popolati per le coppie (user, printing) esistenti
 
-masterset_progress  ← VIEW derivata
-   user_id, game, set_id, set_name, owned_printings, total_printings
+**Normalizzazione One Piece**
+- `set_id` derivato da regex su `code` (`^([A-Z]{1,4}\d{1,3}[A-Z]?)-`)
+- 0 mismatch residui in DB sui ~3 700 record One Piece con code valido
 
-user_owned_cards    ← VIEW di convenienza (user_id, card_id, printing_id, …)
+**Edge function `sync-cards`**
+- Nuovo step `augmentPokemonFromTcgdex()` (fallback TCGdex per set legacy come Unseen Forces)
+- Set_id One Piece sempre derivato da prefisso del code, mai dal payload API
+- Try/catch + timeout 8 s su tutte le chiamate esterne — fallimento secondario non interrompe il job
 
-sync_conflicts      ← log conflitti tra fonti (admin-only)
-```
+**Layer client per il nuovo modello**
+- `src/lib/printings.ts` — `extractSetCode`, `classifyVariant`, `parseCode`, `canonicalKey`, `printingKey`
+- `src/lib/ownership.ts` — `listOwnershipForSet`, `addOwnership`, `removeOwnership` (idempotenti)
 
-### Compatibilità durante la transizione
+**Test suite Vitest (30 test, 100% verdi)**
+- `src/test/printings.test.ts` — 20 test su parsing code/variant/set
+- `src/test/onepiece-fixtures.test.ts` — 9 test su fixture realistiche One Piece
+- `src/test/example.test.ts` — 1 smoke test
 
-- Le tabelle vecchie (`cards`, `collection_entries`, `binder_slots`) restano operative.
-- Il trigger di compat `trg_binder_slots_sync_collection` mantiene allineate le due viste **finché la UI non migra** verso `binder_entries` + `ownership`.
-- `card_printings` è già popolata (56.227 righe, 1:1 col catalogo attuale), pronta per ospitare nuove varianti.
+---
 
-## Fonti dati e regole di conflict resolution
+### ⚠️ Da fare in step controllati (richiedono modifiche UI invasive)
 
-| Game | Sorgenti | Priorità |
+1. **Drawer varianti in `MasterSets.tsx` / `SetView`**
+   - Quando l'utente clicca una carta-base, mostrare drawer con tutte le `card_printings` (base + alt + parallel + promo)
+   - Ogni variante con il proprio stato owned, quantità, bottone aggiungi
+   - Filtri "solo varianti possedute" / "solo mancanti" / "alt art only"
+
+2. **Migrazione `BinderDetail.tsx` da `binder_slots` a `binder_entries`**
+   - Oggi il file lavora ancora su `binder_slots` (453 righe). Il trigger di compat tiene allineate le due tabelle, quindi non c'è urgenza tecnica ma è debito.
+   - Quando si migra, aggiungere il selettore di variante allo slot.
+
+3. **Selettore variante in `CardSearch.tsx`**
+   - Prima di aggiungere a binder/collection, l'utente deve poter scegliere la stampa specifica (oggi va sempre sulla "base").
+
+4. **Sync manuale dalla UI**
+   - L'edge function `sync-cards` con la nuova logica TCGdex+optcgapi è deployata ma serve un trigger admin da Settings per popolare le varianti reali.
+   - Stato attuale `card_printings`: 55 532 base + 695 promo + **0 parallel/alt_art** (perché il backfill 1:1 non distingue le varianti — solo il sync da optcgapi le crea).
+
+---
+
+## Causa radice dei bug originali
+
+| Sintomo | Causa | Fix |
 |---|---|---|
-| Pokémon | `api.pokemontcg.io/v2` (primaria) + `api.tcgdex.net/v2/en` (fallback per set legacy) | pokemontcg.io vince su metadata; tcgdex riempie i gap su carte mancanti |
-| One Piece | `apitcg.com/api/one-piece` (primaria) + `optcgapi.com` (`/allSets`, `/sets/{id}`, `/decks/{id}`) | apitcg per metadata base; optcgapi per varianti e set vecchi |
-| Yu-Gi-Oh! | `db.ygoprodeck.com/api/v7` | unica fonte, 1 riga per printing |
+| Carte da binder non in Master Set | Dedup su `c.id` + collection_entries non sincronizzato | Trigger `sync_binder_slot_to_collection` + nuovo path via `ownership` |
+| Set vecchi Pokémon vuoti | Paginazione pokemontcg.io incompleta su set legacy | `augmentPokemonFromTcgdex()` come fallback |
+| One Piece set_id sbagliati | API esterna restituisce id compositi (`OP14-EB04`) | `set_id` ora derivato da regex sul code |
+| Varianti alt-art non distinte | `cards` non ha colonna variant | Nuova tabella `card_printings` con `variant_type` |
+| Binder e collection silos | Tabelle separate senza sync | `ownership` come SoT + trigger bidirezionali |
 
-Tutte le fetch passano per `fetchWithTimeout(8s)` con try/catch: il fallimento di una sorgente secondaria non blocca mai la sync.
+---
 
-## Migrazioni eseguite
+## File modificati / creati
 
-1. **Schema additivo** — `card_printings`, `ownership`, `binder_entries`, `sync_conflicts`, viste `masterset_progress` e `user_owned_cards`. RLS configurate (own + friends-shared).
-2. **Fix linter** — viste settate a `security_invoker = true`.
-3. **Backfill dati**:
-   - `card_printings`: 56.227 righe (1 base printing per ogni card esistente, con riconoscimento alt/parallel da code/rarity)
-   - `ownership`: 7 righe (da `collection_entries` esistenti)
-   - `binder_entries`: 86 righe (da `binder_slots` esistenti)
-4. **Trigger ownership ↔ binder_entries** — `sync_binder_to_ownership()` (mai sotto 0).
-5. **Trigger compat binder_slots → collection_entries** — `sync_binder_slot_to_collection()` + backfill delle entry mancanti.
+**Migrazioni**: `20260514100247`, `20260514100308`, `20260514100604`
+**Edge function**: `supabase/functions/sync-cards/index.ts`
+**Nuovi moduli client**: `src/lib/printings.ts`, `src/lib/ownership.ts`
+**Test**: `src/test/printings.test.ts`, `src/test/onepiece-fixtures.test.ts`
 
-## Modifiche al codice
+---
 
-| File | Cambio |
-|---|---|
-| `supabase/functions/sync-cards/index.ts` | Aggiunto `augmentPokemonFromTcgdex()` come step finale del sync Pokémon. Già presente da modifiche precedenti: `augmentOnePieceFromOptcg()` e `fetchWithTimeout()`. |
-| `supabase/functions/card-search/index.ts` | (già aggiornata in turni precedenti) live-fallback Pokémon e flag `only_alt_available` per One Piece. |
-| `src/pages/game/MasterSets.tsx` | (già aggiornato in turni precedenti) dedup con `${id}_${rarity}`, fallback ownership via `code` prefix. |
+## Comando per chiudere il loop
 
-## TODO residui — esplicitamente non implementati in questo turno
-
-Per onestà: il piano approvato includeva diverse cose che, per scope realistico, **non ho fatto in questa iterazione**. Le tabelle e i trigger sono pronti, ma l'integrazione UI è rimandata.
-
-1. **UI varianti** (`SetView` drawer con elenco printings + ownership per variante): non implementata. Frontend usa ancora `cards`/`collection_entries`. Nuove tabelle inattese dalla UI.
-2. **Migrazione `BinderDetail.tsx` → `binder_entries`**: il binder scrive ancora su `binder_slots`. Il trigger di compat fa il lavoro, ma significa che `ownership` (popolata dal trigger su `binder_entries`) **non si aggiorna** quando aggiungi carte dalla UI binder corrente. Se vuoi switchare alla nuova pipeline, va riscritto `BinderDetail.tsx`.
-3. **Selettore variante in `CardSearch.tsx`**: da fare quando si esporrà il modello varianti in UI.
-4. **Test suite Vitest**: non aggiunta. Costo > beneficio in questa iterazione senza prima avere la UI sul nuovo modello (i test su DB richiederebbero fixture utente). Suggerisco di pianificarli quando si migra la UI, così testano comportamento reale.
-5. **Sync OP da rieseguire** per popolare `card_printings` con varianti reali da optcgapi (non solo backfill 1:1).
-6. **Sync Pokémon da rieseguire** per attivare `augmentPokemonFromTcgdex` e completare Unseen Forces e altri legacy.
-
-## Cosa funziona DA SUBITO senza altri interventi
-
-- ✅ Aggiungere una carta a un binder la rende automaticamente posseduta nel master set (trigger DB attivo).
-- ✅ Rimuoverla dal binder la rimuove dal master set, **a meno che** ci sia un'altra copia nel binder o `quantity > 1`.
-- ✅ Backfill già eseguito sulle 86 voci binder esistenti senza collection.
-- ✅ `card_printings` popolata e pronta a ospitare varianti future.
-- ✅ Trigger ownership testato (mai sotto 0).
-- ✅ One Piece `set_id` già normalizzato in DB (turno precedente).
-
-## Cosa richiede un'azione dell'admin
-
-- 🔧 **Eseguire un sync manuale** dalle Settings per:
-  - Popolare le carte Pokémon mancanti via TCGdex (Unseen Forces ex10 dovrebbe passare da 99 a ~115).
-  - Aggiornare One Piece via optcgapi per recuperare alt-art e set vecchi.
-
-## Suggerimenti manutenzione futura
-
-- Quando migrate la UI ai nuovi modelli, **rimuovete il trigger di compat** `trg_binder_slots_sync_collection` per evitare doppia scrittura.
-- I test andrebbero scritti **dopo** la migrazione UI, non prima, per testare il comportamento end-to-end reale.
-- `sync_conflicts` è la tabella giusta per esporre in dashboard admin discrepanze tra fonti.
-- Il modello supporta nativamente nuovi TCG: basta aggiungere uno step nello scheduler e mappare i campi a `card_printings`.
-
-## Avvertenze
-
-- Il backfill di `ownership` da `collection_entries` collega ogni voce alla **printing base**: se l'utente possedeva un'alt-art, attualmente risulta come base. Sanabile dopo che la UI espone la scelta della variante.
-- Le 16 ERROR/WARN del linter Supabase sono **preesistenti** (estensioni in `public` schema, funzioni `has_role`/`shares_with` come SECURITY DEFINER intenzionali). Le 2 ERROR introdotte dalla mia migrazione sono state risolte (`security_invoker=true` sulle viste).
+Quando vuoi popolare effettivamente le varianti One Piece e i set Pokémon legacy, vai su **Settings → Sync card catalog now** (richiede ruolo admin). Il job gira in background, polling automatico ogni 3 s, segnala in toast il numero di carte sincronizzate per gioco.
