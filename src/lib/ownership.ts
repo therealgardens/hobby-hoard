@@ -19,26 +19,22 @@ export interface OwnershipRow {
 /** Restituisce le ownership row di un utente per un set specifico (join client-side). */
 export async function listOwnershipForSet(userId: string, game: string, setId: string): Promise<OwnershipRow[]> {
   // Step 1: prendo i printing_id appartenenti al set
-  const { data: cards } = await withDbRetry(() =>
-    supabase.from("cards").select("id").eq("game", game).eq("set_id", setId),
-  );
-  if (!cards?.length) return [];
+  const cardsRes: any = await supabase.from("cards").select("id").eq("game", game).eq("set_id", setId);
+  const cards = cardsRes.data ?? [];
+  if (!cards.length) return [];
   const cardIds = cards.map((c: any) => c.id);
 
-  const { data: printings } = await withDbRetry(() =>
-    (supabase as any).from("card_printings").select("id").in("card_id", cardIds),
-  );
-  if (!printings?.length) return [];
-  const printingIds = (printings as any[]).map((p) => p.id);
+  const printingsRes: any = await (supabase as any).from("card_printings").select("id").in("card_id", cardIds);
+  const printings = printingsRes.data ?? [];
+  if (!printings.length) return [];
+  const printingIds = printings.map((p: any) => p.id);
 
-  const { data: own } = await withDbRetry(() =>
-    (supabase as any)
-      .from("ownership")
-      .select("id, user_id, printing_id, quantity, language, condition, notes")
-      .eq("user_id", userId)
-      .in("printing_id", printingIds),
-  );
-  return (own as OwnershipRow[]) ?? [];
+  const ownRes: any = await (supabase as any)
+    .from("ownership")
+    .select("id, user_id, printing_id, quantity, language, condition, notes")
+    .eq("user_id", userId)
+    .in("printing_id", printingIds);
+  return (ownRes.data as OwnershipRow[]) ?? [];
 }
 
 /** Aggiunge una copia di una stampa (printing) al possesso. Idempotente via UPSERT. */
