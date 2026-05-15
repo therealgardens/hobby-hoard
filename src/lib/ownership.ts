@@ -4,7 +4,7 @@
 // `sync_binder_slot_to_collection` (binder_slots → collection_entries).
 
 import { supabase } from "@/integrations/supabase/client";
-import { withDbRetry } from "@/lib/supabaseRetry";
+
 
 export interface OwnershipRow {
   id: string;
