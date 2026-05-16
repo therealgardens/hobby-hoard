@@ -11,6 +11,8 @@ import type { Tables } from "@/integrations/supabase/types";
 import { withDbRetry } from "@/lib/supabaseRetry";
 import { addWishlist, removeWishlistByCard, wishlistStatus } from "@/lib/wishlist";
 import { emitCollectionChanged } from "@/lib/collectionEvents";
+import { PrintingsDrawer } from "@/components/PrintingsDrawer";
+import { addOwnership } from "@/lib/ownership";
 
 type CardRow = Tables<"cards">;
 
