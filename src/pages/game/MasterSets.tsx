@@ -913,6 +913,18 @@ function SetView({
       setCards(Array.from(map.values()).sort((a, b) => (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })));
       setLoading(false);
 
+      // Carica conteggio printings per ogni carta (per badge "varianti")
+      try {
+        const allIds = Array.from(map.values()).map((c) => c.id);
+        if (allIds.length) {
+          const { data: prs } = await (supabase as any)
+            .from("card_printings").select("card_id").in("card_id", allIds);
+          const counts = new Map<string, number>();
+          for (const r of prs ?? []) counts.set(r.card_id, (counts.get(r.card_id) ?? 0) + 1);
+          setPrintingsCount(counts);
+        }
+      } catch (_) { /* best-effort */ }
+
       // Fallback "owned by code prefix": prendi tutte le entries dell'utente per questo
       // gioco, fai join con cards.code, e raccogli i codici che matchano il prefisso del set.
       try {
