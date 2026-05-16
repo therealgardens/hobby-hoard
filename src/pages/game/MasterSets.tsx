@@ -869,6 +869,8 @@ function SetView({
   // Codici (UPPER) di carte possedute il cui code matcha il prefisso di questo set —
   // fallback per carte il cui set_id era stato salvato in modo errato.
   const [ownedCodes, setOwnedCodes] = useState<Set<string>>(new Set());
+  const [printingsCount, setPrintingsCount] = useState<Map<string, number>>(new Map());
+  const [drawerCard, setDrawerCard] = useState<CardRow | null>(null);
 
   useEffect(() => { try { localStorage.setItem("masterset.view", view); } catch (_) {} }, [view]);
 
