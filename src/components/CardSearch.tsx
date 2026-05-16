@@ -58,14 +58,18 @@ export function CardSearch({
     const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const ids = cards.map((c) => c.id).filter((id) => uuidRe.test(id));
     if (ids.length === 0) return;
-    const [{ data: owned, error: ownedError }, wanted] = await Promise.all([
+    const [{ data: owned, error: ownedError }, wanted, { data: prs }] = await Promise.all([
       withDbRetry(() =>
         supabase.from("collection_entries").select("card_id").eq("user_id", user.id).in("card_id", ids)
       ),
       wishlistStatus(ids).catch(() => null),
+      (supabase as any).from("card_printings").select("card_id").in("card_id", ids),
     ]);
     if (!ownedError) setOwnedIds(new Set((owned ?? []).map((r: any) => r.card_id)));
     if (wanted) setWantedIds(wanted);
+    const counts = new Map<string, number>();
+    for (const r of (prs as any[]) ?? []) counts.set(r.card_id, (counts.get(r.card_id) ?? 0) + 1);
+    setPrintingsCount(counts);
   };
 
   const runSearch = async (term: string) => {
