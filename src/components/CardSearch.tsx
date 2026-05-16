@@ -11,6 +11,8 @@ import type { Tables } from "@/integrations/supabase/types";
 import { withDbRetry } from "@/lib/supabaseRetry";
 import { addWishlist, removeWishlistByCard, wishlistStatus } from "@/lib/wishlist";
 import { emitCollectionChanged } from "@/lib/collectionEvents";
+import { PrintingsDrawer } from "@/components/PrintingsDrawer";
+import { addOwnership } from "@/lib/ownership";
 
 type CardRow = Tables<"cards">;
 
@@ -39,6 +41,8 @@ export function CardSearch({
   const [ownedIds, setOwnedIds] = useState<Set<string>>(new Set());
   const [wantedIds, setWantedIds] = useState<Set<string>>(new Set());
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  const [printingsCount, setPrintingsCount] = useState<Map<string, number>>(new Map());
+  const [variantPickCard, setVariantPickCard] = useState<CardRow | null>(null);
   const reqIdRef = useRef(0);
 
   const setBusy = (id: string, busy: boolean) =>
@@ -54,14 +58,18 @@ export function CardSearch({
     const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const ids = cards.map((c) => c.id).filter((id) => uuidRe.test(id));
     if (ids.length === 0) return;
-    const [{ data: owned, error: ownedError }, wanted] = await Promise.all([
+    const [{ data: owned, error: ownedError }, wanted, { data: prs }] = await Promise.all([
       withDbRetry(() =>
         supabase.from("collection_entries").select("card_id").eq("user_id", user.id).in("card_id", ids)
       ),
       wishlistStatus(ids).catch(() => null),
+      (supabase as any).from("card_printings").select("card_id").in("card_id", ids),
     ]);
     if (!ownedError) setOwnedIds(new Set((owned ?? []).map((r: any) => r.card_id)));
     if (wanted) setWantedIds(wanted);
+    const counts = new Map<string, number>();
+    for (const r of (prs as any[]) ?? []) counts.set(r.card_id, (counts.get(r.card_id) ?? 0) + 1);
+    setPrintingsCount(counts);
   };
 
   const runSearch = async (term: string) => {
@@ -172,6 +180,11 @@ export function CardSearch({
   const addToCollection = async (c: CardRow) => {
     if (!user) return toast.error("Not signed in");
     if (busyIds.has(c.id)) return;
+    // Se la carta ha più stampe (alt-art, parallel, ecc.), apri il drawer per scegliere quale
+    if ((printingsCount.get(c.id) ?? 0) > 1) {
+      setVariantPickCard(c);
+      return;
+    }
     const quantity = Math.max(1, qty[c.id] ?? 1);
     setBusy(c.id, true);
     setOwnedIds((prev) => new Set(prev).add(c.id));
@@ -307,6 +320,44 @@ export function CardSearch({
           );
         })}
       </div>
+      <PrintingsDrawer
+        open={!!variantPickCard}
+        onOpenChange={(v) => { if (!v) setVariantPickCard(null); }}
+        card={variantPickCard}
+        pickLabel="Aggiungi"
+        onPick={async (p) => {
+          if (!user || !variantPickCard) return;
+          const c = variantPickCard;
+          const quantity = Math.max(1, qty[c.id] ?? 1);
+          setBusy(c.id, true);
+          setOwnedIds((prev) => new Set(prev).add(c.id));
+          try {
+            // Scrive sia ownership (variant-level) sia collection_entries (legacy, per dedup MasterSets)
+            await addOwnership(user.id, p.id, { language: p.language, quantity });
+            const { data: existing } = await supabase
+              .from("collection_entries").select("id, quantity")
+              .eq("user_id", user.id).eq("card_id", c.id).maybeSingle();
+            if (existing) {
+              await supabase.from("collection_entries").update({ quantity: existing.quantity + quantity }).eq("id", existing.id);
+            } else {
+              await supabase.from("collection_entries").insert({
+                user_id: user.id, card_id: c.id, game,
+                rarity: p.rarity ?? c.rarity ?? null, language: p.language, quantity,
+              });
+            }
+            toast.success(`Aggiunto ${c.name} ×${quantity}`);
+            emitCollectionChanged({
+              game, cardId: c.id,
+              card: { set_id: c.set_id ?? null, set_name: c.set_name ?? null, code: c.code ?? null },
+            });
+          } catch (e: any) {
+            setOwnedIds((prev) => { const n = new Set(prev); n.delete(c.id); return n; });
+            toast.error(e?.message ?? "Errore");
+          } finally {
+            setBusy(c.id, false);
+          }
+        }}
+      />
     </div>
   );
 }

@@ -18,7 +18,9 @@ import { addWishlist, listWishlist, removeWishlistByCard } from "@/lib/wishlist"
 import { withDbRetry } from "@/lib/supabaseRetry";
 import { emitCollectionChanged, onCollectionChanged } from "@/lib/collectionEvents";
 import { CardSearch } from "@/components/CardSearch";
+import { PrintingsDrawer } from "@/components/PrintingsDrawer";
 import { useAuth } from "@/hooks/useAuth";
+import { Layers } from "lucide-react";
 
 type CardRow = Tables<"cards">;
 
@@ -867,6 +869,8 @@ function SetView({
   // Codici (UPPER) di carte possedute il cui code matcha il prefisso di questo set —
   // fallback per carte il cui set_id era stato salvato in modo errato.
   const [ownedCodes, setOwnedCodes] = useState<Set<string>>(new Set());
+  const [printingsCount, setPrintingsCount] = useState<Map<string, number>>(new Map());
+  const [drawerCard, setDrawerCard] = useState<CardRow | null>(null);
 
   useEffect(() => { try { localStorage.setItem("masterset.view", view); } catch (_) {} }, [view]);
 
@@ -908,6 +912,18 @@ function SetView({
       }
       setCards(Array.from(map.values()).sort((a, b) => (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })));
       setLoading(false);
+
+      // Carica conteggio printings per ogni carta (per badge "varianti")
+      try {
+        const allIds = Array.from(map.values()).map((c) => c.id);
+        if (allIds.length) {
+          const { data: prs } = await (supabase as any)
+            .from("card_printings").select("card_id").in("card_id", allIds);
+          const counts = new Map<string, number>();
+          for (const r of prs ?? []) counts.set(r.card_id, (counts.get(r.card_id) ?? 0) + 1);
+          setPrintingsCount(counts);
+        }
+      } catch (_) { /* best-effort */ }
 
       // Fallback "owned by code prefix": prendi tutte le entries dell'utente per questo
       // gioco, fai join con cards.code, e raccogli i codici che matchano il prefisso del set.
@@ -1018,6 +1034,13 @@ function SetView({
                       onClick={(e) => { e.stopPropagation(); onToggleWanted(c); }}>
                       <Heart className="h-3 w-3" fill={wanted ? "currentColor" : "none"} />
                     </Button>
+                    {(printingsCount.get(c.id) ?? 0) > 1 && (
+                      <Button size="icon" variant="ghost" className="h-6 w-6 ml-auto text-primary"
+                        title={`${printingsCount.get(c.id)} varianti`}
+                        onClick={(e) => { e.stopPropagation(); setDrawerCard(c); }}>
+                        <Layers className="h-3 w-3" />
+                      </Button>
+                    )}
                   </div>
                 </div>
               </Card>
@@ -1049,12 +1072,24 @@ function SetView({
                     onClick={(e) => { e.stopPropagation(); onToggleWanted(c); }}>
                     <Heart className="h-3 w-3" fill={wanted ? "currentColor" : "none"} />
                   </Button>
+                  {(printingsCount.get(c.id) ?? 0) > 1 && (
+                    <Button size="icon" variant="ghost" className="h-7 w-7 text-primary"
+                      title={`${printingsCount.get(c.id)} varianti`}
+                      onClick={(e) => { e.stopPropagation(); setDrawerCard(c); }}>
+                      <Layers className="h-3 w-3" />
+                    </Button>
+                  )}
                 </div>
               </Card>
             );
           })}
         </div>
       )}
+      <PrintingsDrawer
+        open={!!drawerCard}
+        onOpenChange={(v) => { if (!v) setDrawerCard(null); }}
+        card={drawerCard}
+      />
     </div>
   );
 }
