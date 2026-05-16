@@ -1034,6 +1034,13 @@ function SetView({
                       onClick={(e) => { e.stopPropagation(); onToggleWanted(c); }}>
                       <Heart className="h-3 w-3" fill={wanted ? "currentColor" : "none"} />
                     </Button>
+                    {(printingsCount.get(c.id) ?? 0) > 1 && (
+                      <Button size="icon" variant="ghost" className="h-6 w-6 ml-auto text-primary"
+                        title={`${printingsCount.get(c.id)} varianti`}
+                        onClick={(e) => { e.stopPropagation(); setDrawerCard(c); }}>
+                        <Layers className="h-3 w-3" />
+                      </Button>
+                    )}
                   </div>
                 </div>
               </Card>
