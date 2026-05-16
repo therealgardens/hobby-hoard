@@ -18,7 +18,9 @@ import { addWishlist, listWishlist, removeWishlistByCard } from "@/lib/wishlist"
 import { withDbRetry } from "@/lib/supabaseRetry";
 import { emitCollectionChanged, onCollectionChanged } from "@/lib/collectionEvents";
 import { CardSearch } from "@/components/CardSearch";
+import { PrintingsDrawer } from "@/components/PrintingsDrawer";
 import { useAuth } from "@/hooks/useAuth";
+import { Layers } from "lucide-react";
 
 type CardRow = Tables<"cards">;
 
