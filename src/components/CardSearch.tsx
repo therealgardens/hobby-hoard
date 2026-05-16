@@ -320,6 +320,44 @@ export function CardSearch({
           );
         })}
       </div>
+      <PrintingsDrawer
+        open={!!variantPickCard}
+        onOpenChange={(v) => { if (!v) setVariantPickCard(null); }}
+        card={variantPickCard}
+        pickLabel="Aggiungi"
+        onPick={async (p) => {
+          if (!user || !variantPickCard) return;
+          const c = variantPickCard;
+          const quantity = Math.max(1, qty[c.id] ?? 1);
+          setBusy(c.id, true);
+          setOwnedIds((prev) => new Set(prev).add(c.id));
+          try {
+            // Scrive sia ownership (variant-level) sia collection_entries (legacy, per dedup MasterSets)
+            await addOwnership(user.id, p.id, { language: p.language, quantity });
+            const { data: existing } = await supabase
+              .from("collection_entries").select("id, quantity")
+              .eq("user_id", user.id).eq("card_id", c.id).maybeSingle();
+            if (existing) {
+              await supabase.from("collection_entries").update({ quantity: existing.quantity + quantity }).eq("id", existing.id);
+            } else {
+              await supabase.from("collection_entries").insert({
+                user_id: user.id, card_id: c.id, game,
+                rarity: p.rarity ?? c.rarity ?? null, language: p.language, quantity,
+              });
+            }
+            toast.success(`Aggiunto ${c.name} ×${quantity}`);
+            emitCollectionChanged({
+              game, cardId: c.id,
+              card: { set_id: c.set_id ?? null, set_name: c.set_name ?? null, code: c.code ?? null },
+            });
+          } catch (e: any) {
+            setOwnedIds((prev) => { const n = new Set(prev); n.delete(c.id); return n; });
+            toast.error(e?.message ?? "Errore");
+          } finally {
+            setBusy(c.id, false);
+          }
+        }}
+      />
     </div>
   );
 }
