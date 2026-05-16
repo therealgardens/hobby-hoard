@@ -180,6 +180,11 @@ export function CardSearch({
   const addToCollection = async (c: CardRow) => {
     if (!user) return toast.error("Not signed in");
     if (busyIds.has(c.id)) return;
+    // Se la carta ha più stampe (alt-art, parallel, ecc.), apri il drawer per scegliere quale
+    if ((printingsCount.get(c.id) ?? 0) > 1) {
+      setVariantPickCard(c);
+      return;
+    }
     const quantity = Math.max(1, qty[c.id] ?? 1);
     setBusy(c.id, true);
     setOwnedIds((prev) => new Set(prev).add(c.id));
