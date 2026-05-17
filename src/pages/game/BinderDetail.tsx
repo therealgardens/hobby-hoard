@@ -85,19 +85,50 @@ export default function BinderDetail() {
     if (!b) { setLoading(false); if (!binder) setLoadError("Binder not found"); return; }
     setBinder(b);
 
-    const { data: s, error: sErr } = await withDbRetry(() =>
-      supabase.from("binder_slots").select("*").eq("binder_id", binderId).eq("user_id", user.id).order("position"),
+    // Sorgente primaria: binder_entries (printing_id-aware)
+    const { data: e, error: eErr } = await withDbRetry(() =>
+      (supabase as any)
+        .from("binder_entries")
+        .select("id, binder_id, user_id, position, is_wanted, printing_id")
+        .eq("binder_id", binderId)
+        .eq("user_id", user.id)
+        .order("position"),
     );
-    if (sErr) { toast.error("Could not load slots"); setSlots([]); setLoading(false); return; }
+    if (eErr) { toast.error("Could not load slots"); setSlots([]); setLoading(false); return; }
 
-    const slotRows = (s ?? []) as Tables<"binder_slots">[];
-    const cardIds = Array.from(new Set(slotRows.map((r) => r.card_id).filter(Boolean) as string[]));
-    let cardsById = new Map<string, Tables<"cards">>();
+    const entries = (e ?? []) as Array<{
+      id: string; binder_id: string; user_id: string; position: number;
+      is_wanted: boolean; printing_id: string | null;
+    }>;
+
+    const printingIds = Array.from(new Set(entries.map((r) => r.printing_id).filter(Boolean) as string[]));
+    let printingsById = new Map<string, { id: string; card_id: string }>();
+    if (printingIds.length) {
+      const { data: prs } = await withDbRetry(() =>
+        (supabase as any).from("card_printings").select("id, card_id").in("id", printingIds),
+      );
+      printingsById = new Map(((prs as any[]) ?? []).map((p) => [p.id, p]));
+    }
+    const cardIds = Array.from(new Set(Array.from(printingsById.values()).map((p) => p.card_id)));
+    let cardsById = new Map<string, CardRow>();
     if (cardIds.length) {
       const { data: cards } = await withDbRetry(() => supabase.from("cards").select("*").in("id", cardIds));
       cardsById = new Map((cards ?? []).map((c: any) => [c.id, c]));
     }
-    setSlots(slotRows.map((row) => ({ ...row, card: row.card_id ? (cardsById.get(row.card_id) ?? null) : null })));
+    setSlots(entries.map((row) => {
+      const pr = row.printing_id ? printingsById.get(row.printing_id) ?? null : null;
+      const card = pr ? cardsById.get(pr.card_id) ?? null : null;
+      return {
+        id: row.id,
+        binder_id: row.binder_id,
+        user_id: row.user_id,
+        position: row.position,
+        is_wanted: row.is_wanted,
+        printing_id: row.printing_id,
+        card_id: card?.id ?? null,
+        card,
+      };
+    }));
     setLoading(false);
   }, [binderId, user?.id]);
 
