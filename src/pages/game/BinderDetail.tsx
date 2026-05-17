@@ -17,6 +17,9 @@ import type { Tables } from "@/integrations/supabase/types";
 import { addWishlist } from "@/lib/wishlist";
 import { withDbRetry } from "@/lib/supabaseRetry";
 import { useAuth } from "@/hooks/useAuth";
+import { PrintingsDrawer } from "@/components/PrintingsDrawer";
+import { addOwnership } from "@/lib/ownership";
+import { Layers } from "lucide-react";
 
 type Binder = Tables<"binders">;
 type Slot = Tables<"binder_slots"> & { card: Tables<"cards"> | null };
@@ -135,7 +138,7 @@ export default function BinderDetail() {
   };
 
   // ─── PLACE — single batched upsert on (binder_id, position) ──────────────
-  const place = async (card: CardRow) => {
+  const place = async (card: CardRow, printingId?: string) => {
     if (pickingPos === null || !binderId || !user) return;
     const pos = pickingPos;
     const wanted = isWanted;
@@ -197,6 +200,9 @@ export default function BinderDetail() {
       } catch (wErr) {
         toast.error(wErr instanceof Error ? wErr.message : "Could not add to wishlist");
       }
+    } else if (printingId) {
+      // Variante scelta esplicitamente → registra ownership della stampa specifica
+      try { await addOwnership(user.id, printingId); } catch { /* compat trigger gestisce comunque la base */ }
     }
 
     toast.success(`Placed ${card.name}`);
@@ -384,10 +390,12 @@ export default function BinderDetail() {
 
 // ─── Ricerca semplice per binder ──────────────────────────────────────────────
 
-function BinderCardPicker({ game, onPick }: { game: Game; onPick: (card: CardRow) => void }) {
+function BinderCardPicker({ game, onPick }: { game: Game; onPick: (card: CardRow, printingId?: string) => void }) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<CardRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [printingsCount, setPrintingsCount] = useState<Map<string, number>>(new Map());
+  const [variantPickCard, setVariantPickCard] = useState<CardRow | null>(null);
 
   useEffect(() => {
     const term = q.trim();
@@ -398,10 +406,28 @@ function BinderCardPicker({ game, onPick }: { game: Game; onPick: (card: CardRow
         .from("cards").select("*").eq("game", game)
         .or(`name.ilike.%${term}%,code.ilike.%${term}%`).limit(30);
       setLoading(false);
-      setResults(data ?? []);
+      const rows = (data ?? []) as CardRow[];
+      setResults(rows);
+      // Conta stampe per ogni carta (per mostrare badge "varianti")
+      if (rows.length) {
+        const ids = rows.map((r) => r.id);
+        const { data: prs } = await (supabase as any)
+          .from("card_printings").select("card_id").in("card_id", ids);
+        const counts = new Map<string, number>();
+        for (const r of (prs as any[]) ?? []) counts.set(r.card_id, (counts.get(r.card_id) ?? 0) + 1);
+        setPrintingsCount(counts);
+      } else setPrintingsCount(new Map());
     }, 300);
     return () => clearTimeout(t);
   }, [q, game]);
+
+  const handlePick = (c: CardRow) => {
+    if ((printingsCount.get(c.id) ?? 0) > 1) {
+      setVariantPickCard(c);
+    } else {
+      onPick(c);
+    }
+  };
 
   return (
     <div className="space-y-3">
@@ -429,8 +455,9 @@ function BinderCardPicker({ game, onPick }: { game: Game; onPick: (card: CardRow
       <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
         {results.map((c) => {
           const img = cardImage(c.game, c.code, c.image_small);
+          const variants = printingsCount.get(c.id) ?? 0;
           return (
-            <button key={c.id} type="button" onClick={() => onPick(c)} className="text-left group">
+            <button key={c.id} type="button" onClick={() => handlePick(c)} className="text-left group relative">
               <Card className="overflow-hidden bg-gradient-card hover:shadow-card transition-shadow">
                 {img
                   ? <img src={img} alt={c.name} loading="lazy"
@@ -444,10 +471,28 @@ function BinderCardPicker({ game, onPick }: { game: Game; onPick: (card: CardRow
                   <p className="text-[10px] text-muted-foreground truncate">{c.code}</p>
                 </div>
               </Card>
+              {variants > 1 && (
+                <span className="absolute top-1 right-1 text-[10px] bg-primary text-primary-foreground px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
+                  <Layers className="h-2.5 w-2.5" /> {variants}
+                </span>
+              )}
             </button>
           );
         })}
       </div>
+
+      <PrintingsDrawer
+        open={!!variantPickCard}
+        onOpenChange={(o) => !o && setVariantPickCard(null)}
+        card={variantPickCard}
+        showOwnershipControls={false}
+        pickLabel="Posiziona"
+        onPick={(p) => {
+          const c = variantPickCard;
+          setVariantPickCard(null);
+          if (c) onPick(c, p.id);
+        }}
+      />
     </div>
   );
 }
