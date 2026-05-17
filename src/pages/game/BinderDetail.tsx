@@ -138,7 +138,7 @@ export default function BinderDetail() {
   };
 
   // ─── PLACE — single batched upsert on (binder_id, position) ──────────────
-  const place = async (card: CardRow) => {
+  const place = async (card: CardRow, printingId?: string) => {
     if (pickingPos === null || !binderId || !user) return;
     const pos = pickingPos;
     const wanted = isWanted;
