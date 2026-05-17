@@ -200,6 +200,9 @@ export default function BinderDetail() {
       } catch (wErr) {
         toast.error(wErr instanceof Error ? wErr.message : "Could not add to wishlist");
       }
+    } else if (printingId) {
+      // Variante scelta esplicitamente → registra ownership della stampa specifica
+      try { await addOwnership(user.id, printingId); } catch { /* compat trigger gestisce comunque la base */ }
     }
 
     toast.success(`Placed ${card.name}`);
