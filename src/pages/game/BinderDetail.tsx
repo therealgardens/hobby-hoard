@@ -175,24 +175,31 @@ export default function BinderDetail() {
     setPageIdx(newPageIdx);
     setSlots((prev) => prev.filter((s) => s.position < start || s.position > end));
     setConfirmRemovePage(false);
-    const [{ error: delErr }, { error: updErr }] = await Promise.all([
+    const [{ error: delEntriesErr }, { error: delSlotsErr }, { error: updErr }] = await Promise.all([
+      (supabase as any).from("binder_entries").delete().eq("binder_id", binderId).gte("position", start).lte("position", end),
       supabase.from("binder_slots").delete().eq("binder_id", binderId).gte("position", start).lte("position", end),
       supabase.from("binders").update({ pages: newPages } as any).eq("id", binderId),
     ]);
-    if (delErr || updErr) {
-      toast.error((delErr ?? updErr)?.message ?? "Could not remove page");
+    if (delEntriesErr || delSlotsErr || updErr) {
+      toast.error((delEntriesErr ?? delSlotsErr ?? updErr)?.message ?? "Could not remove page");
       load();
     }
   };
 
-  // ─── PLACE — single batched upsert on (binder_id, position) ──────────────
+  // ─── PLACE — upsert su binder_entries (primario) + binder_slots (compat) ──
   const place = async (card: CardRow, printingId?: string) => {
     if (pickingPos === null || !binderId || !user) return;
     const pos = pickingPos;
     const wanted = isWanted;
     const prevSlot = slotMap.get(pos) ?? null;
 
-    // Lightweight optimistic update: replace the one slot in place
+    // Risolvi printing: scelta esplicita > printing precedente > default base della carta
+    let resolvedPrintingId: string | null = printingId ?? null;
+    if (!resolvedPrintingId && !wanted) {
+      resolvedPrintingId = await resolveDefaultPrintingId(card.id);
+    }
+
+    // Optimistic update
     setSlots((prev) => {
       const next = prev.filter((s) => s.position !== pos);
       next.push({
@@ -200,45 +207,55 @@ export default function BinderDetail() {
         binder_id: binderId,
         user_id: user.id,
         position: pos,
-        card_id: card.id,
         is_wanted: wanted,
-        ...(prevSlot ? {} : {}),
+        printing_id: resolvedPrintingId,
+        card_id: card.id,
         card,
-      } as Slot);
+      });
       return next;
     });
     setPickingPos(null);
     setIsWanted(false);
 
-    const { data: upserted, error } = await withDbRetry(() =>
-      supabase
-        .from("binder_slots")
-        .upsert(
-          {
-            binder_id: binderId,
-            user_id: user.id,
-            position: pos,
-            card_id: card.id,
-            is_wanted: wanted,
-          },
-          { onConflict: "binder_id,position" },
-        )
-        .select()
-        .maybeSingle(),
-    );
+    // 1) Sorgente primaria: binder_entries (richiede printing_id se non wanted)
+    const entryPayload: Record<string, unknown> = {
+      binder_id: binderId,
+      user_id: user.id,
+      position: pos,
+      is_wanted: wanted,
+      printing_id: resolvedPrintingId,
+    };
+    const { data: upserted, error: entryErr } = await (supabase as any)
+      .from("binder_entries")
+      .upsert(entryPayload, { onConflict: "binder_id,position" })
+      .select()
+      .maybeSingle();
 
-    if (error) {
-      console.error("[BinderDetail] place error:", error);
-      toast.error(error.message || "Could not place card");
-      // Refetch only on actual DB failure
+    if (entryErr) {
+      console.error("[BinderDetail] place(binder_entries) error:", entryErr);
+      toast.error(entryErr.message || "Could not place card");
       load();
       return;
     }
 
-    // Reconcile real id from DB (no array churn)
+    // 2) Compat: binder_slots con card_id → mantiene allineati collection_entries via trigger
+    const { error: slotErr } = await withDbRetry(() =>
+      supabase
+        .from("binder_slots")
+        .upsert(
+          { binder_id: binderId, user_id: user.id, position: pos, card_id: card.id, is_wanted: wanted },
+          { onConflict: "binder_id,position" },
+        ),
+    );
+    if (slotErr) console.warn("[BinderDetail] place(binder_slots) compat warn:", slotErr.message);
+
     if (upserted) {
       setSlots((prev) =>
-        prev.map((s) => (s.position === pos ? { ...upserted, card } : s)),
+        prev.map((s) =>
+          s.position === pos
+            ? { ...s, id: upserted.id, printing_id: upserted.printing_id ?? resolvedPrintingId }
+            : s,
+        ),
       );
     }
 
@@ -249,8 +266,8 @@ export default function BinderDetail() {
         toast.error(wErr instanceof Error ? wErr.message : "Could not add to wishlist");
       }
     } else if (printingId) {
-      // Variante scelta esplicitamente → registra ownership della stampa specifica
-      try { await addOwnership(user.id, printingId); } catch { /* compat trigger gestisce comunque la base */ }
+      // Variante esplicita: assicura ownership della stampa scelta (trigger già la conta, ma resta idempotente)
+      try { await addOwnership(user.id, printingId); } catch { /* noop */ }
     }
 
     toast.success(`Placed ${card.name}`);
@@ -259,13 +276,23 @@ export default function BinderDetail() {
   const clear = async (slotId: string) => {
     const removed = slots.find((s) => s.id === slotId) ?? null;
     setSlots((prev) => prev.filter((s) => s.id !== slotId));
-    const { error } = await withDbRetry(() =>
-      supabase.from("binder_slots").delete().eq("id", slotId),
-    );
-    if (error) {
-      toast.error(error.message || "Could not clear slot");
-      // Restore the removed slot locally instead of full refetch
+    // Cancella binder_entries primario + compat binder_slots (per posizione, perché gli id non coincidono)
+    const [{ error: eErr }, slotsRes] = await Promise.all([
+      (supabase as any).from("binder_entries").delete().eq("id", slotId),
+      removed
+        ? supabase
+            .from("binder_slots").delete()
+            .eq("binder_id", removed.binder_id)
+            .eq("position", removed.position)
+        : Promise.resolve({ error: null }),
+    ]);
+    if (eErr) {
+      toast.error(eErr.message || "Could not clear slot");
       if (removed) setSlots((prev) => [...prev, removed]);
+      return;
+    }
+    if ((slotsRes as any)?.error) {
+      console.warn("[BinderDetail] clear(binder_slots) compat warn:", (slotsRes as any).error.message);
     }
   };
 
