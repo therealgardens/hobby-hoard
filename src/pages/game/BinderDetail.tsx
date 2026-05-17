@@ -22,8 +22,29 @@ import { addOwnership } from "@/lib/ownership";
 import { Layers } from "lucide-react";
 
 type Binder = Tables<"binders">;
-type Slot = Tables<"binder_slots"> & { card: Tables<"cards"> | null };
 type CardRow = Tables<"cards">;
+// Slot UI = riga di binder_entries + denormalizzazione card per il rendering
+type Slot = {
+  id: string;
+  binder_id: string;
+  user_id: string;
+  position: number;
+  is_wanted: boolean;
+  printing_id: string | null;
+  card_id: string | null;
+  card: CardRow | null;
+};
+
+/** Risolve la printing "default" per una carta (preferisce variant_type='base', fallback prima disponibile). */
+async function resolveDefaultPrintingId(cardId: string): Promise<string | null> {
+  const { data } = await (supabase as any)
+    .from("card_printings")
+    .select("id, variant_type")
+    .eq("card_id", cardId);
+  const rows = (data as { id: string; variant_type: string }[] | null) ?? [];
+  if (!rows.length) return null;
+  return (rows.find((r) => r.variant_type === "base")?.id) ?? rows[0].id;
+}
 
 const binderCacheKey = (game: string, userId: string) => `tcg.binders.${game}.${userId}.v1`;
 
