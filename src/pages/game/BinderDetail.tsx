@@ -102,9 +102,7 @@ export default function BinderDetail() {
     const printingIds = Array.from(new Set(entries.map((r) => r.printing_id).filter(Boolean) as string[]));
     let printingsById = new Map<string, { id: string; card_id: string }>();
     if (printingIds.length) {
-      const { data: prs } = await withDbRetry(() =>
-        (supabase as any).from("card_printings").select("id, card_id").in("id", printingIds),
-      );
+      const { data: prs } = await (supabase as any).from("card_printings").select("id, card_id").in("id", printingIds);
       printingsById = new Map(((prs as any[]) ?? []).map((p) => [p.id, p]));
     }
     const cardIds = Array.from(new Set(Array.from(printingsById.values()).map((p) => p.card_id)));
