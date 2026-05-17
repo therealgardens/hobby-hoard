@@ -17,6 +17,9 @@ import type { Tables } from "@/integrations/supabase/types";
 import { addWishlist } from "@/lib/wishlist";
 import { withDbRetry } from "@/lib/supabaseRetry";
 import { useAuth } from "@/hooks/useAuth";
+import { PrintingsDrawer } from "@/components/PrintingsDrawer";
+import { addOwnership } from "@/lib/ownership";
+import { Layers } from "lucide-react";
 
 type Binder = Tables<"binders">;
 type Slot = Tables<"binder_slots"> & { card: Tables<"cards"> | null };
