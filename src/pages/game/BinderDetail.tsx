@@ -86,14 +86,12 @@ export default function BinderDetail() {
     setBinder(b);
 
     // Sorgente primaria: binder_entries (printing_id-aware)
-    const { data: e, error: eErr } = await withDbRetry(() =>
-      (supabase as any)
-        .from("binder_entries")
-        .select("id, binder_id, user_id, position, is_wanted, printing_id")
-        .eq("binder_id", binderId)
-        .eq("user_id", user.id)
-        .order("position"),
-    );
+    const { data: e, error: eErr } = await (supabase as any)
+      .from("binder_entries")
+      .select("id, binder_id, user_id, position, is_wanted, printing_id")
+      .eq("binder_id", binderId)
+      .eq("user_id", user.id)
+      .order("position");
     if (eErr) { toast.error("Could not load slots"); setSlots([]); setLoading(false); return; }
 
     const entries = (e ?? []) as Array<{
