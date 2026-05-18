@@ -64,30 +64,40 @@ function chainStep(body: Record<string, unknown>) {
   }).catch((e) => console.error("[sync-cards] chain failed", e));
 }
 
+function mapPokemonCard(c: any) {
+  return {
+    game: "pokemon", external_id: c.id, code: c.id, name: c.name,
+    set_id: c.set?.id ?? null, set_name: c.set?.name ?? null,
+    number: c.number ?? null, rarity: c.rarity ?? null,
+    image_small: c.images?.small ?? null, image_large: c.images?.large ?? null,
+    pokedex_number: Array.isArray(c.nationalPokedexNumbers) ? c.nationalPokedexNumbers[0] : null,
+    data: c,
+  };
+}
+
+// IMPORTANT: paginate by `id` (unique). The previous `orderBy=number` ordering
+// was NOT unique across sets (e.g. "1", "2", ..., letters, "!", "?"), so the
+// pokemontcg.io paginator returned overlapping/skipped rows and entire chunks
+// of Ultra Rare / EX / Secret cards were silently dropped.
+// We also do NOT filter on rarity / supertype: every card the API returns is
+// upserted, including LV.X / EX / ex / GX / VMAX / Full Art / Secret etc.
 async function stepPokemon(cursor: number, deadline: number) {
   let page = Math.max(1, cursor);
   let count = 0;
   const PAGE_SIZE = 250;
   while (Date.now() < deadline) {
-    const res = await fetch(`https://api.pokemontcg.io/v2/cards?page=${page}&pageSize=${PAGE_SIZE}&orderBy=number`);
+    const res = await fetch(
+      `https://api.pokemontcg.io/v2/cards?page=${page}&pageSize=${PAGE_SIZE}&orderBy=id`,
+    );
     if (!res.ok) return { done: true, count, cursor: page };
     const json = await res.json();
     const data = json.data || [];
     if (data.length === 0) {
-      // Final page reached — augment from TCGdex for legacy sets pokemontcg.io misses
       try { count += await augmentPokemonFromTcgdex(deadline); }
       catch (e) { console.warn("[sync-cards] tcgdex augment failed", e); }
       return { done: true, count, cursor: page };
     }
-    const rows = data.map((c: any) => ({
-      game: "pokemon", external_id: c.id, code: c.id, name: c.name,
-      set_id: c.set?.id ?? null, set_name: c.set?.name ?? null,
-      number: c.number ?? null, rarity: c.rarity ?? null,
-      image_small: c.images?.small ?? null, image_large: c.images?.large ?? null,
-      pokedex_number: Array.isArray(c.nationalPokedexNumbers) ? c.nationalPokedexNumbers[0] : null,
-      data: c,
-    }));
-    count += await upsertBatch(rows);
+    count += await upsertBatch(data.map(mapPokemonCard));
     if (data.length < PAGE_SIZE) {
       try { count += await augmentPokemonFromTcgdex(deadline); }
       catch (e) { console.warn("[sync-cards] tcgdex augment failed", e); }
