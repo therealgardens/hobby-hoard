@@ -12,7 +12,9 @@ import { withDbRetry } from "@/lib/supabaseRetry";
 import { addWishlist, removeWishlistByCard, wishlistStatus } from "@/lib/wishlist";
 import { emitCollectionChanged } from "@/lib/collectionEvents";
 import { PrintingsDrawer } from "@/components/PrintingsDrawer";
+import { VariantsDialog, groupCardsByCanonical, isValidCard } from "@/components/VariantsDialog";
 import { addOwnership } from "@/lib/ownership";
+import { Layers } from "lucide-react";
 
 type CardRow = Tables<"cards">;
 
