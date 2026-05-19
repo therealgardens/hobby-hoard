@@ -91,7 +91,7 @@ export function CardSearch({
         .limit(50);
       if (id !== reqIdRef.current) return;
       setLoading(false);
-      const filtered = (local ?? []) as unknown as CardRow[];
+      const filtered = ((local ?? []) as unknown as CardRow[]).filter(isValidCard);
       setResults(filtered);
       if (filtered.length > 0) refreshStatus(filtered);
       else toast.info("No owned cards match your search");
