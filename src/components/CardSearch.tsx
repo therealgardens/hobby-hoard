@@ -51,8 +51,9 @@ export function CardSearch({
     setBusyIds((prev) => { const n = new Set(prev); busy ? n.add(id) : n.delete(id); return n; });
 
   const applyOwnedFilter = (cards: CardRow[]): CardRow[] => {
-    if (!ownedOnly || !ownedCardIds) return cards;
-    return cards.filter((c) => ownedCardIds.has(c.id));
+    const valid = cards.filter(isValidCard);
+    if (!ownedOnly || !ownedCardIds) return valid;
+    return valid.filter((c) => ownedCardIds.has(c.id));
   };
 
   const refreshStatus = async (cards: CardRow[]) => {
