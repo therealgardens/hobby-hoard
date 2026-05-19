@@ -4,6 +4,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Search, Plus, Loader2, Heart, Check } from "lucide-react";
 import { toast } from "sonner";
 import { cardImageCandidates, type Game } from "@/lib/game";
