@@ -242,6 +242,12 @@ export function CardSearch({
 
   if (authLoading) return null;
 
+  // Raggruppa i risultati per codice canonico: una sola card per gruppo (la base).
+  const resultGroups = groupCardsByCanonical(results);
+  const [variantsDialog, setVariantsDialog] = [
+    // local state simulato via React.useState non possibile qui; usa stato vero sotto
+  ] as any;
+
   return (
     <div className="space-y-4">
       <form onSubmit={onSubmit} className="flex gap-2">
@@ -266,28 +272,38 @@ export function CardSearch({
       )}
 
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-        {results.map((c) => {
-          const owned = ownedIds.has(c.id);
-          const wanted = wantedIds.has(c.id);
+        {resultGroups.map(({ base: c, variants }) => {
+          const hasVariants = variants.length > 1;
+          const owned = variants.some((v) => ownedIds.has(v.id));
+          const wanted = variants.some((v) => wantedIds.has(v.id));
           const busy = busyIds.has(c.id);
           const candidates = cardImageCandidates(c.game, c.code, c.image_small ?? c.image_large);
+          const openVariants = () => setVariantsForDialog(variants);
           return (
             <Card key={c.id} className="overflow-hidden bg-gradient-card group relative">
               <button
                 type="button"
-                onClick={() => toggleWanted(c)}
+                onClick={() => hasVariants ? openVariants() : toggleWanted(c)}
                 className="absolute top-2 left-2 z-10 p-1.5 rounded-full bg-background/90 shadow hover:bg-background transition-colors"
-                title={wanted ? "Remove from wishlist" : "Add to wishlist"}
+                title={hasVariants ? "Mostra varianti" : wanted ? "Remove from wishlist" : "Add to wishlist"}
               >
                 <Heart className={`h-4 w-4 ${wanted ? "fill-red-500 text-red-500" : "text-muted-foreground"}`} />
               </button>
 
+              {hasVariants && (
+                <Badge className="absolute top-2 right-2 z-10 text-[10px] px-1.5 py-0 bg-accent text-accent-foreground gap-1">
+                  <Layers className="h-3 w-3" /> Versioni: {variants.length}
+                </Badge>
+              )}
+
               {onPick ? (
-                <button type="button" className="w-full text-left" onClick={() => onPick(c)}>
+                <button type="button" className="w-full text-left" onClick={() => hasVariants ? openVariants() : onPick(c)}>
                   <CardImage candidates={candidates} name={c.name} owned={owned} />
                 </button>
               ) : (
-                <CardImage candidates={candidates} name={c.name} owned={owned} />
+                <button type="button" className="w-full text-left" onClick={() => hasVariants && openVariants()}>
+                  <CardImage candidates={candidates} name={c.name} owned={owned} />
+                </button>
               )}
 
               <div className="p-2 space-y-2">
@@ -297,8 +313,8 @@ export function CardSearch({
                 </div>
 
                 {onPick ? (
-                  <Button size="sm" className="w-full h-7 text-xs" onClick={() => onPick(c)}>
-                    {pickLabel}
+                  <Button size="sm" className="w-full h-7 text-xs" onClick={() => hasVariants ? openVariants() : onPick(c)}>
+                    {hasVariants ? `Scegli (${variants.length})` : pickLabel}
                   </Button>
                 ) : (
                   <div className="flex items-center gap-1">
@@ -309,10 +325,11 @@ export function CardSearch({
                     />
                     <Button
                       size="sm" className="flex-1 h-7 text-xs" disabled={busy}
-                      onClick={() => addToCollection(c)}
+                      onClick={() => hasVariants ? openVariants() : addToCollection(c)}
                       variant={owned ? "secondary" : "default"}
                     >
                       {busy ? <Loader2 className="h-3 w-3 animate-spin" />
+                        : hasVariants ? <><Layers className="h-3 w-3 mr-1" />Versioni</>
                         : owned ? <><Check className="h-3 w-3 mr-1" />Add more</>
                         : <><Plus className="h-3 w-3 mr-1" />Add</>}
                     </Button>
@@ -323,6 +340,18 @@ export function CardSearch({
           );
         })}
       </div>
+      <VariantsDialog
+        open={!!variantsForDialog}
+        onOpenChange={(v) => { if (!v) setVariantsForDialog(null); }}
+        variants={variantsForDialog ?? []}
+        ownedCardIds={ownedIds}
+        wantedCardIds={wantedIds}
+        busyIds={busyIds}
+        onAdd={(c) => onPick ? onPick(c) : addToCollection(c)}
+        onToggleWanted={(c) => toggleWanted(c)}
+        addLabel={onPick ? pickLabel : "Aggiungi"}
+      />
+
       <PrintingsDrawer
         open={!!variantPickCard}
         onOpenChange={(v) => { if (!v) setVariantPickCard(null); }}
