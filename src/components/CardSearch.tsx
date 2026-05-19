@@ -245,9 +245,6 @@ export function CardSearch({
 
   // Raggruppa i risultati per codice canonico: una sola card per gruppo (la base).
   const resultGroups = groupCardsByCanonical(results);
-  const [variantsDialog, setVariantsDialog] = [
-    // local state simulato via React.useState non possibile qui; usa stato vero sotto
-  ] as any;
 
   return (
     <div className="space-y-4">
