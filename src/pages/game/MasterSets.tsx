@@ -948,12 +948,17 @@ function SetView({
   const isOwned = (c: CardRow) =>
     ownedCardIds.has(c.id) || ownedCodes.has(String(c.code ?? "").toUpperCase());
 
-  const visibleCards = useMemo(
-    () => showOnlyOwned ? cards.filter(isOwned) : cards,
-    [cards, showOnlyOwned, ownedCardIds, ownedCodes]
+  // Raggruppa per codice canonico: una sola card visibile per gruppo (la "base").
+  const groups = useMemo(() => groupCardsByCanonical(cards), [cards]);
+  const visibleGroups = useMemo(
+    () => showOnlyOwned
+      ? groups.filter((g) => g.variants.some(isOwned))
+      : groups,
+    [groups, showOnlyOwned, ownedCardIds, ownedCodes]
   );
 
-  const ownedCount = cards.filter(isOwned).length;
+  const ownedCount = groups.filter((g) => g.variants.some(isOwned)).length;
+  const totalCount = groups.length;
 
   return (
     <div>
@@ -969,7 +974,7 @@ function SetView({
           </Button>
         )}
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <span>{ownedCount}/{cards.length}</span>
+          <span>{ownedCount}/{totalCount}</span>
           <button
             type="button"
             onClick={() => setShowOnlyOwned((v) => !v)}
@@ -994,42 +999,42 @@ function SetView({
         onCreated={onBinderCreated}
       />
 
-      {loading ? <SetViewSkeleton /> : visibleCards.length === 0 ? (
+      {loading ? <SetViewSkeleton /> : visibleGroups.length === 0 ? (
         <p className="text-muted-foreground text-center py-12">
           {showOnlyOwned ? "Non possiedi ancora nessuna carta di questo set." : "No cards found for this set."}
         </p>
       ) : view === "grid" ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          {visibleCards.map((c) => {
-            const owned = isOwned(c);
-            const wanted = wantedCardIds.has(c.id);
+          {visibleGroups.map(({ base: c, variants }) => {
+            const hasVariants = variants.length > 1;
+            const owned = variants.some(isOwned);
+            const wanted = variants.some((v) => wantedCardIds.has(v.id));
             const busy = quickAddBusy.has(c.id);
+            const openAction = () => hasVariants ? setVariantsForDialog(variants) : onPickCard(c);
             return (
-              <Card key={`${c.id}_${c.rarity ?? "normal"}`} className={`overflow-hidden cursor-pointer bg-gradient-card transition-all hover:shadow-card ${owned ? "ring-2 ring-primary/60" : ""}`} onClick={() => onPickCard(c)}>
+              <Card key={c.id} className={`overflow-hidden cursor-pointer bg-gradient-card transition-all hover:shadow-card ${owned ? "ring-2 ring-primary/60" : ""}`} onClick={openAction}>
                 <div className="relative">
                   <CardImg card={c} className="w-full card-aspect object-cover" alt={c.name} />
                   {owned && <Badge className="absolute top-1 right-1 text-[10px] px-1 py-0 bg-primary/90">✓</Badge>}
                   {!owned && wanted && <Badge variant="outline" className="absolute top-1 right-1 text-[10px] px-1 py-0 border-yellow-400 text-yellow-500">♡</Badge>}
+                  {hasVariants && (
+                    <Badge className="absolute bottom-1 left-1 text-[10px] px-1.5 py-0 bg-accent text-accent-foreground gap-1">
+                      <Layers className="h-3 w-3" /> Versioni: {variants.length}
+                    </Badge>
+                  )}
                 </div>
                 <div className="p-2">
                   <p className="text-xs font-semibold truncate">{c.name}</p>
                   <p className="text-[10px] text-muted-foreground truncate">{c.code}{c.rarity ? ` · ${c.rarity}` : ""}</p>
                   <div className="flex gap-1 mt-1.5">
                     <Button size="icon" variant="ghost" className="h-6 w-6 hover:bg-primary/10 hover:text-primary" disabled={busy}
-                      onClick={(e) => { e.stopPropagation(); onQuickAdd(c); }}>
+                      onClick={(e) => { e.stopPropagation(); hasVariants ? setVariantsForDialog(variants) : onQuickAdd(c); }}>
                       {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
                     </Button>
                     <Button size="icon" variant="ghost" className={`h-6 w-6 ${wanted ? "text-yellow-500 hover:text-yellow-600" : "hover:text-yellow-500"}`}
-                      onClick={(e) => { e.stopPropagation(); onToggleWanted(c); }}>
+                      onClick={(e) => { e.stopPropagation(); hasVariants ? setVariantsForDialog(variants) : onToggleWanted(c); }}>
                       <Heart className="h-3 w-3" fill={wanted ? "currentColor" : "none"} />
                     </Button>
-                    {(printingsCount.get(c.id) ?? 0) > 1 && (
-                      <Button size="icon" variant="ghost" className="h-6 w-6 ml-auto text-primary"
-                        title={`${printingsCount.get(c.id)} varianti`}
-                        onClick={(e) => { e.stopPropagation(); setDrawerCard(c); }}>
-                        <Layers className="h-3 w-3" />
-                      </Button>
-                    )}
                   </div>
                 </div>
               </Card>
@@ -1038,47 +1043,53 @@ function SetView({
         </div>
       ) : (
         <div className="flex flex-col gap-1">
-          {visibleCards.map((c) => {
-            const owned = isOwned(c);
-            const wanted = wantedCardIds.has(c.id);
+          {visibleGroups.map(({ base: c, variants }) => {
+            const hasVariants = variants.length > 1;
+            const owned = variants.some(isOwned);
+            const wanted = variants.some((v) => wantedCardIds.has(v.id));
             const busy = quickAddBusy.has(c.id);
             const lang = ownedLangByCard.get(c.id);
+            const openAction = () => hasVariants ? setVariantsForDialog(variants) : onPickCard(c);
             return (
-              <Card key={`${c.id}_${c.rarity ?? "normal"}`} className={`flex items-center gap-3 px-3 py-2 cursor-pointer bg-gradient-card hover:shadow-card transition-all ${owned ? "ring-1 ring-primary/40" : ""}`} onClick={() => onPickCard(c)}>
+              <Card key={c.id} className={`flex items-center gap-3 px-3 py-2 cursor-pointer bg-gradient-card hover:shadow-card transition-all ${owned ? "ring-1 ring-primary/40" : ""}`} onClick={openAction}>
                 <CardImg card={c} className="h-10 w-8 object-cover rounded shrink-0" alt="" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold truncate">{c.name}</p>
                   <p className="text-xs text-muted-foreground truncate">{c.code}{c.rarity ? ` · ${c.rarity}` : ""}</p>
                 </div>
+                {hasVariants && (
+                  <Badge variant="outline" className="text-[10px] shrink-0 gap-1">
+                    <Layers className="h-3 w-3" /> {variants.length}
+                  </Badge>
+                )}
                 {owned && <Badge className="text-[10px] shrink-0">{lang ? `${LANG_FLAG[lang] ?? ""} ${lang}` : "✓"}</Badge>}
                 {!owned && wanted && <Badge variant="outline" className="text-[10px] border-yellow-400 text-yellow-500 shrink-0">Wanted</Badge>}
                 <div className="flex gap-1 shrink-0">
                   <Button size="icon" variant="ghost" className="h-7 w-7 hover:bg-primary/10 hover:text-primary" disabled={busy}
-                    onClick={(e) => { e.stopPropagation(); onQuickAdd(c); }}>
+                    onClick={(e) => { e.stopPropagation(); hasVariants ? setVariantsForDialog(variants) : onQuickAdd(c); }}>
                     {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
                   </Button>
                   <Button size="icon" variant="ghost" className={`h-7 w-7 ${wanted ? "text-yellow-500 hover:text-yellow-600" : "hover:text-yellow-500"}`}
-                    onClick={(e) => { e.stopPropagation(); onToggleWanted(c); }}>
+                    onClick={(e) => { e.stopPropagation(); hasVariants ? setVariantsForDialog(variants) : onToggleWanted(c); }}>
                     <Heart className="h-3 w-3" fill={wanted ? "currentColor" : "none"} />
                   </Button>
-                  {(printingsCount.get(c.id) ?? 0) > 1 && (
-                    <Button size="icon" variant="ghost" className="h-7 w-7 text-primary"
-                      title={`${printingsCount.get(c.id)} varianti`}
-                      onClick={(e) => { e.stopPropagation(); setDrawerCard(c); }}>
-                      <Layers className="h-3 w-3" />
-                    </Button>
-                  )}
                 </div>
               </Card>
             );
           })}
         </div>
       )}
-      <PrintingsDrawer
-        open={!!drawerCard}
-        onOpenChange={(v) => { if (!v) setDrawerCard(null); }}
-        card={drawerCard}
+      <VariantsDialog
+        open={!!variantsForDialog}
+        onOpenChange={(v) => { if (!v) setVariantsForDialog(null); }}
+        variants={variantsForDialog ?? []}
+        ownedCardIds={ownedCardIds}
+        wantedCardIds={wantedCardIds}
+        busyIds={quickAddBusy}
+        onAdd={(c) => onQuickAdd(c)}
+        onToggleWanted={(c) => onToggleWanted(c)}
       />
     </div>
+
   );
 }
