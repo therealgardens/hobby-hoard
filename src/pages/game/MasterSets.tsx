@@ -894,7 +894,7 @@ function SetView({
         )
         .limit(500);
 
-      const remoteFiltered = game === "pokemon" ? remote : remote.filter((c) => {
+      const remoteFiltered = (game === "pokemon" ? remote : remote.filter((c) => {
         const code = (c.code ?? "").toUpperCase();
         const sid = (c.set_id ?? "").toUpperCase().replace(/-/g, "");
         return (
@@ -902,28 +902,16 @@ function SetView({
           code.startsWith(setIdClean + "-") ||
           code.startsWith(setIdDashed + "-")
         );
-      });
-      // Dedup per (id + rarity) così le varianti alt-art (stessa carta base, rarità diversa)
-      // sono trattate come entry distinte invece di essere collassate.
+      })).filter(isValidCard);
+      const localValid = (local ?? []).filter(isValidCard);
+      // Dedup per id mantenendo TUTTE le varianti (grouping avviene in render).
       const map = new Map<string, CardRow>();
-      for (const c of [...(local ?? []), ...remoteFiltered]) {
-        const key = `${c.id}_${c.rarity ?? "normal"}`;
-        if (!map.has(key)) map.set(key, c);
+      for (const c of [...localValid, ...remoteFiltered]) {
+        if (!map.has(c.id)) map.set(c.id, c);
       }
       setCards(Array.from(map.values()).sort((a, b) => (a.code ?? "").localeCompare(b.code ?? "", undefined, { numeric: true })));
       setLoading(false);
 
-      // Carica conteggio printings per ogni carta (per badge "varianti")
-      try {
-        const allIds = Array.from(map.values()).map((c) => c.id);
-        if (allIds.length) {
-          const { data: prs } = await (supabase as any)
-            .from("card_printings").select("card_id").in("card_id", allIds);
-          const counts = new Map<string, number>();
-          for (const r of prs ?? []) counts.set(r.card_id, (counts.get(r.card_id) ?? 0) + 1);
-          setPrintingsCount(counts);
-        }
-      } catch (_) { /* best-effort */ }
 
       // Fallback "owned by code prefix": prendi tutte le entries dell'utente per questo
       // gioco, fai join con cards.code, e raccogli i codici che matchano il prefisso del set.
