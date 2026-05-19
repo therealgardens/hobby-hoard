@@ -346,7 +346,7 @@ export function CardSearch({
         ownedCardIds={ownedIds}
         wantedCardIds={wantedIds}
         busyIds={busyIds}
-        onAdd={(c) => onPick ? onPick(c) : addToCollection(c)}
+        onAdd={async (c) => { if (onPick) onPick(c); else await addToCollection(c); }}
         onToggleWanted={(c) => toggleWanted(c)}
         addLabel={onPick ? pickLabel : "Aggiungi"}
       />
