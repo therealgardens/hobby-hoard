@@ -46,6 +46,7 @@ export function CardSearch({
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [printingsCount, setPrintingsCount] = useState<Map<string, number>>(new Map());
   const [variantPickCard, setVariantPickCard] = useState<CardRow | null>(null);
+  const [variantsForDialog, setVariantsForDialog] = useState<CardRow[] | null>(null);
   const reqIdRef = useRef(0);
 
   const setBusy = (id: string, busy: boolean) =>
