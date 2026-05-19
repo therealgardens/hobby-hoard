@@ -79,7 +79,7 @@ export function CardSearch({
     const id = ++reqIdRef.current;
     setLoading(true);
 
-    const SELECT_COLS = "id, code, name, image_small, image_large, set_id, set_name, rarity, game";
+    const SELECT_COLS = "id, code, name, image_small, image_large, set_id, set_name, rarity, game, external_id";
 
     if (ownedOnly && ownedCardIds && ownedCardIds.size > 0) {
       const { data: local } = await supabase
