@@ -75,12 +75,6 @@ function mapPokemonCard(c: any) {
   };
 }
 
-// IMPORTANT: paginate by `id` (unique). The previous `orderBy=number` ordering
-// was NOT unique across sets (e.g. "1", "2", ..., letters, "!", "?"), so the
-// pokemontcg.io paginator returned overlapping/skipped rows and entire chunks
-// of Ultra Rare / EX / Secret cards were silently dropped.
-// We also do NOT filter on rarity / supertype: every card the API returns is
-// upserted, including LV.X / EX / ex / GX / VMAX / Full Art / Secret etc.
 async function stepPokemon(cursor: number, deadline: number) {
   let page = Math.max(1, cursor);
   let count = 0;
@@ -109,8 +103,6 @@ async function stepPokemon(cursor: number, deadline: number) {
   return { done: false, count, cursor: page };
 }
 
-// TCGdex fallback: enumerates every set, fetches each set, upserts cards
-// not already covered by pokemontcg.io. Best-effort, never blocks completion.
 async function augmentPokemonFromTcgdex(deadline: number): Promise<number> {
   const setsRes = await fetchWithTimeout("https://api.tcgdex.net/v2/en/sets", 8000).catch(() => null);
   if (!setsRes || !setsRes.ok) return 0;
@@ -149,7 +141,6 @@ async function augmentPokemonFromTcgdex(deadline: number): Promise<number> {
   return count;
 }
 
-// Hard-timeout fetch helper — secondary sources must never hang the chain.
 async function fetchWithTimeout(url: string, ms = 8000, init?: RequestInit) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
@@ -160,19 +151,20 @@ async function fetchWithTimeout(url: string, ms = 8000, init?: RequestInit) {
   }
 }
 
-// Map an optcgapi card object to a `cards` row. Falls back to the alternate
-// art image when no normal image is available so we still capture the card.
 function mapOptcgCard(c: any) {
   const code: string = c.id ?? c.set_id ?? "";
   if (!code) return null;
   const derivedSetId =
     code.match(/^([A-Z]{1,4}\d{1,3}[A-Z]?)-/i)?.[1]?.toUpperCase() ?? null;
+  
+  const isAltArt = c.is_alternate || c.variant || String(c.id).includes("-") && !String(c.id).endsWith("-001");
+  const altImg = c.images?.alternate ?? c.alternate_art_url ?? c.image_url_alternate ?? null;
   const normalImg = c.images?.small ?? c.images?.large ?? c.image_url ?? null;
-  const altImg = c.images?.alternate ?? c.alternate_art_url ?? null;
-  const image = normalImg ?? altImg;
+  const image = isAltArt && altImg ? altImg : (normalImg ?? altImg);
+
   return {
     game: "onepiece",
-    external_id: code,
+    external_id: c.id ? String(c.id) : code,
     code,
     name: c.name,
     set_id: derivedSetId,
@@ -202,30 +194,32 @@ async function stepOnePiece(cursor: number, deadline: number) {
     if (data.length === 0) return { done: true, count, cursor: page };
     const rows = data.map((c: any) => {
       const code: string = c.code ?? c.id ?? "";
-      // Deriva set_id SEMPRE dal prefisso del code — non fidarsi del set_id dell'API
-      // es: "OP10-045" → "OP10", "ST22-001" → "ST22", "EB04-001" → "EB04"
       const derivedSetId =
         code.match(/^([A-Z]{1,4}\d{1,3}[A-Z]?)-/i)?.[1]?.toUpperCase() ??
         c.set?.id ?? c.set_id ?? null;
+
+      const isSpecial = c.variant_type && c.variant_type !== "Regular" || c.is_special || c.is_alternate;
+      const variantImg = c.images?.alternate || c.images?.parallel || c.images?.special || c.image_url_alternate || c.alternate_image;
+      const baseImg = c.images?.large ?? c.images?.small ?? c.image ?? null;
+      const finalImg = isSpecial && variantImg ? variantImg : (baseImg ?? variantImg);
+
       return {
         game: "onepiece",
-        external_id: c.id ?? code,
+        external_id: c.id ? String(c.id) : code,
         code,
         name: c.name,
         set_id: derivedSetId,
         set_name: c.set?.name ?? null,
         number: c.number ?? null,
         rarity: c.rarity ?? null,
-        image_small: c.images?.small ?? c.image ?? null,
-        image_large: c.images?.large ?? c.image ?? null,
+        image_small: finalImg,
+        image_large: finalImg,
         pokedex_number: null,
         data: c,
       };
     });
     count += await upsertBatch(rows);
     if (data.length < LIMIT) {
-      // Final page reached — try to augment from optcgapi for old sets / alt art
-      // that apitcg sometimes misses. Best-effort, never blocks completion.
       try {
         count += await augmentOnePieceFromOptcg(deadline);
       } catch (e) { console.warn("[sync-cards] optcg augment failed", e); }
@@ -237,8 +231,6 @@ async function stepOnePiece(cursor: number, deadline: number) {
   return { done: false, count, cursor: page };
 }
 
-// Pull every known set from optcgapi /allSets/, then for each one fetch the
-// per-set card list and upsert anything that wasn't covered by apitcg.
 async function augmentOnePieceFromOptcg(deadline: number): Promise<number> {
   const allRes = await fetchWithTimeout("https://optcgapi.com/api/allSets/", 8000).catch(() => null);
   if (!allRes || !allRes.ok) return 0;
@@ -252,7 +244,6 @@ async function augmentOnePieceFromOptcg(deadline: number): Promise<number> {
   let count = 0;
   for (const sid of setIds) {
     if (Date.now() > deadline) break;
-    // Try /sets/ first, fall back to /decks/ for ST starters.
     const urls = /^ST/.test(sid)
       ? [`https://optcgapi.com/api/decks/${sid}/`, `https://optcgapi.com/api/sets/${sid}/`]
       : [`https://optcgapi.com/api/sets/${sid}/`, `https://optcgapi.com/api/decks/${sid}/`];
@@ -328,8 +319,6 @@ async function runStep(jobId: string, game: Game, cursor: number, prevCount: num
     return;
   }
 
-  // FIX CRITICO: usa increment_sync_summary (funzione SQL atomica) invece di
-  // read-modify-write — questo evita che i contatori rimangano a 0 nella UI
   const newCount = prevCount + result.count;
   try {
     await admin.rpc("increment_sync_summary", {
@@ -338,7 +327,6 @@ async function runStep(jobId: string, game: Game, cursor: number, prevCount: num
       delta: result.count,
     });
   } catch (_) {
-    // Fallback se la funzione SQL non esiste ancora
     const { data } = await admin.from("sync_jobs").select("summary").eq("id", jobId).maybeSingle();
     const s = (data?.summary as any) ?? {};
     await admin.from("sync_jobs").update({
@@ -421,7 +409,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    // action === "start" — cleanup job stuck + avvio nuovo job
     try { await admin.rpc("cleanup_stuck_sync_jobs"); } catch (_) {}
 
     const jobId = crypto.randomUUID();
