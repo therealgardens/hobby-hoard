@@ -150,6 +150,7 @@ export function CardSearch({
               .from("cards")
               .select("*")
               .eq("game", game)
+              .not("image_small", "is", null).not("image_large", "is", null)
               .in("id", Array.from(ownedCardIds))
               .order("name", { ascending: true })
               .limit(80);
@@ -159,6 +160,7 @@ export function CardSearch({
           }
           const { data } = await supabase
             .from("cards").select("*").eq("game", game)
+            .not("image_small", "is", null).not("image_large", "is", null)
             .order("name", { ascending: true }).limit(40);
           setLoading(false);
           if (data) {
