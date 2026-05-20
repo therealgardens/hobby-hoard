@@ -887,10 +887,10 @@ function SetView({
       const setIdDashed = dashed.toUpperCase();
 
       const { data: local } = await supabase.from("cards").select("*").eq("game", game)
+        .not("image_small", "is", null).not("image_large", "is", null)
         .or(
           game === "pokemon"
             ? `set_id.eq.${set.id}`
-            // FIX: cerca sia il formato senza trattino (ST22) che con trattino (ST-22) in set_name e code
             : `set_name.ilike.%[${setIdClean}]%,set_name.ilike.%[${setIdDashed}]%,code.ilike.${setIdClean}-%,code.ilike.${setIdDashed}-%`
         )
         .limit(500);

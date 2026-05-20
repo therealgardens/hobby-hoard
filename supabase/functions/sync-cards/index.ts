@@ -151,16 +151,30 @@ async function fetchWithTimeout(url: string, ms = 8000, init?: RequestInit) {
   }
 }
 
+function appendVariantSuffixToUrl(url: string | null | undefined, suffix: string): string | null {
+  if (!url || !suffix) return url ?? null;
+  if (url.includes(`_${suffix}.`) || url.includes(`_${suffix}_`)) return url;
+  return url.replace(/(\.[a-zA-Z0-9]+)(\?|$)/, `_${suffix}$1$2`);
+}
+
+function extractVariantSuffix(id: string | null | undefined): string | null {
+  if (!id) return null;
+  const m = String(id).match(/_([a-z0-9]+)$/i);
+  return m ? m[1].toLowerCase() : null;
+}
+
 function mapOptcgCard(c: any) {
   const code: string = c.id ?? c.set_id ?? "";
   if (!code) return null;
   const derivedSetId =
     code.match(/^([A-Z]{1,4}\d{1,3}[A-Z]?)-/i)?.[1]?.toUpperCase() ?? null;
-  
-  const isAltArt = c.is_alternate || c.variant || String(c.id).includes("-") && !String(c.id).endsWith("-001");
+
+  const suffix = extractVariantSuffix(c.id);
+  const isAltArt = !!suffix || c.is_alternate || c.variant;
   const altImg = c.images?.alternate ?? c.alternate_art_url ?? c.image_url_alternate ?? null;
   const normalImg = c.images?.small ?? c.images?.large ?? c.image_url ?? null;
-  const image = isAltArt && altImg ? altImg : (normalImg ?? altImg);
+  let image = isAltArt && altImg ? altImg : (normalImg ?? altImg);
+  if (suffix && image) image = appendVariantSuffixToUrl(image, suffix);
 
   return {
     game: "onepiece",
@@ -198,10 +212,12 @@ async function stepOnePiece(cursor: number, deadline: number) {
         code.match(/^([A-Z]{1,4}\d{1,3}[A-Z]?)-/i)?.[1]?.toUpperCase() ??
         c.set?.id ?? c.set_id ?? null;
 
-      const isSpecial = c.variant_type && c.variant_type !== "Regular" || c.is_special || c.is_alternate;
+      const suffix = extractVariantSuffix(c.id ?? c.code);
+      const isSpecial = !!suffix || (c.variant_type && c.variant_type !== "Regular") || c.is_special || c.is_alternate;
       const variantImg = c.images?.alternate || c.images?.parallel || c.images?.special || c.image_url_alternate || c.alternate_image;
       const baseImg = c.images?.large ?? c.images?.small ?? c.image ?? null;
-      const finalImg = isSpecial && variantImg ? variantImg : (baseImg ?? variantImg);
+      let finalImg = isSpecial && variantImg ? variantImg : (baseImg ?? variantImg);
+      if (suffix && finalImg) finalImg = appendVariantSuffixToUrl(finalImg, suffix);
 
       return {
         game: "onepiece",
