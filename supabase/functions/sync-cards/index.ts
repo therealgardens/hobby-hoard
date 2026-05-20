@@ -212,10 +212,12 @@ async function stepOnePiece(cursor: number, deadline: number) {
         code.match(/^([A-Z]{1,4}\d{1,3}[A-Z]?)-/i)?.[1]?.toUpperCase() ??
         c.set?.id ?? c.set_id ?? null;
 
-      const isSpecial = c.variant_type && c.variant_type !== "Regular" || c.is_special || c.is_alternate;
+      const suffix = extractVariantSuffix(c.id ?? c.code);
+      const isSpecial = !!suffix || (c.variant_type && c.variant_type !== "Regular") || c.is_special || c.is_alternate;
       const variantImg = c.images?.alternate || c.images?.parallel || c.images?.special || c.image_url_alternate || c.alternate_image;
       const baseImg = c.images?.large ?? c.images?.small ?? c.image ?? null;
-      const finalImg = isSpecial && variantImg ? variantImg : (baseImg ?? variantImg);
+      let finalImg = isSpecial && variantImg ? variantImg : (baseImg ?? variantImg);
+      if (suffix && finalImg) finalImg = appendVariantSuffixToUrl(finalImg, suffix);
 
       return {
         game: "onepiece",
