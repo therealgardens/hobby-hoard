@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
         finished_at: new Date().toISOString(),
       })
       .eq("status", "running")
-      .lt("started_at", new Date(Date.now() - 15 * 60 * 1000).toISOString());
+      .lt("started_at", new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString());
   } catch (e) {
     console.warn("[sync-scheduler] cleanup failed", e);
   }
