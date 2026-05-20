@@ -88,6 +88,7 @@ export function CardSearch({
         .from("cards")
         .select(SELECT_COLS)
         .eq("game", game)
+        .not("image_small", "is", null).not("image_large", "is", null)
         .in("id", Array.from(ownedCardIds))
         .or(`name.ilike.%${term}%,code.ilike.%${term}%`)
         .limit(50);
@@ -104,6 +105,7 @@ export function CardSearch({
       .from("cards")
       .select(SELECT_COLS)
       .eq("game", game)
+      .not("image_small", "is", null).not("image_large", "is", null)
       .or(`name.ilike.%${term}%,code.ilike.%${term}%`)
       .limit(50) as unknown as { data: CardRow[] | null };
     if (id !== reqIdRef.current) return;
