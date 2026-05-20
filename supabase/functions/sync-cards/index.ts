@@ -22,21 +22,31 @@ async function upsertBatch(rows: any[]) {
   const seen = new Set<string>();
   const deduped = rows.filter((r) => {
     if (!r.external_id) return false;
+    if (!r.name || String(r.name).trim() === "") return false;
+    if (!r.image_small && !r.image_large) return false;
     const k = `${r.game}:${r.external_id}`;
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
   });
-  const CHUNK = 500;
+  const CHUNK = 100;
   let total = 0;
   for (let i = 0; i < deduped.length; i += CHUNK) {
     const slice = deduped.slice(i, i + CHUNK);
-    const { error } = await admin.from("cards").upsert(slice, {
-      onConflict: "game,external_id",
-      defaultToNull: false,
-    });
-    if (error) console.error("[sync-cards] upsert error", error.message);
-    else total += slice.length;
+    let attempt = 0;
+    while (attempt < 4) {
+      const { error } = await admin.from("cards").upsert(slice, {
+        onConflict: "game,external_id",
+        defaultToNull: false,
+      });
+      if (!error) { total += slice.length; break; }
+      const msg = String(error.message ?? "").toLowerCase();
+      const retriable = msg.includes("timeout") || msg.includes("statement") || msg.includes("connection") || msg.includes("recovery");
+      console.error("[sync-cards] upsert error", error.message, "attempt", attempt);
+      if (!retriable || attempt === 3) break;
+      attempt++;
+      await wait(500 * 2 ** attempt);
+    }
   }
   return total;
 }
